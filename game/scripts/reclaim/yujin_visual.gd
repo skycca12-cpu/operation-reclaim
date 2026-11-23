@@ -35,10 +35,12 @@ const FOOT_OFFSET := 40.0
 var _attack_left := 0.0
 var _cut_clock := 0.0
 var _clock := 0.0
+var _run_clock := 0.0
 
 
-func update(delta: float) -> void:
+func update(delta: float, moving := false) -> void:
 	_clock += delta
+	_run_clock = _run_clock + delta if moving else 0.0
 	if _attack_left > 0.0:
 		_cut_clock += delta
 	_attack_left = maxf(0.0, _attack_left - delta)
@@ -53,6 +55,7 @@ func attack(interval: float) -> void:
 func reset() -> void:
 	_attack_left = 0.0
 	_clock = 0.0
+	_run_clock = 0.0
 
 
 func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, dashing: bool) -> void:
@@ -60,14 +63,17 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	var progress := fposmod(_cut_clock * 13.0 / CUT.size(), 1.0) if attacking else 0.0
 	var side := absf(facing.x) > absf(facing.y)
 	var back := not side and facing.y < 0.0
-	var frames := CUT if attacking else WALK if moving else IDLE
-	var frame := mini(int(progress * frames.size()), frames.size() - 1) if attacking else int(_clock * (9.0 if moving else 4.0)) % frames.size()
+	var running := moving or dashing
+	var stride := _run_clock * (15.0 if dashing else 11.0)
+	var frames := WALK if running else CUT if attacking else IDLE
+	var frame := int(stride) % frames.size() if running else int(progress * frames.size()) if attacking else int(_clock * 4.0) % frames.size()
 	var sprite: Texture2D = frames[frame] if side else BACK if back else FRONT
-	var bob := -1.5 * absf(sin(_clock * 16.0)) if moving and not side else 0.0
+	var bob := -roundf(5.0 * absf(sin(stride * PI * 0.5))) if running else 0.0
 	var height := SIDE_HEIGHT if side else BACK_HEIGHT if back else FRONT_HEIGHT
 	var size := sprite.get_size() * (height / sprite.get_height())
 	var center := position + Vector2(0.0, FOOT_OFFSET + bob)
-	var lean := facing * (sin(progress * PI) * 3.0) if attacking else Vector2.ZERO
+	var lean := facing * (sin(progress * PI) * 4.0) if attacking else Vector2.ZERO
+	var front_cut := attacking and not side and not back
 	if dashing:
 		canvas.draw_circle(position, 24.0, Color("#739de33b"))
 	canvas.draw_set_transform(position + Vector2(0.0, FOOT_OFFSET - 2.0), 0.0, Vector2(1.0, 0.35))
@@ -80,8 +86,25 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	var anchor_x := size.x * 0.33 if side else size.x * 0.5
 	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false)
 	canvas.draw_set_transform(Vector2.ZERO)
-	if not side and not back:
+	if front_cut:
+		_draw_front_cut(canvas, center + lean, progress)
+	elif not side and not back:
 		_draw_saw(canvas, center + lean, facing, progress)
+
+
+func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> void:
+	var sweep := sin(progress * TAU)
+	var grip := (center + Vector2(0.0, -25.0)).round()
+	var angle := PI * 0.5 + sweep * 0.27
+	# The blade in the source image is tilted up from its handle.
+	canvas.draw_set_transform(grip, angle + deg_to_rad(27.0))
+	canvas.draw_texture_rect(SAW, Rect2(-18.0, -23.0, 66.0, 43.0), false)
+	canvas.draw_set_transform(Vector2.ZERO)
+	if progress >= 0.17 and progress <= 0.70:
+		var arc_end := angle + 0.32
+		var alpha := sin(inverse_lerp(0.17, 0.70, progress) * PI)
+		canvas.draw_arc(grip, 42.0, arc_end - 1.16, arc_end, 14, Color(0.95, 0.28, 0.16, alpha), 4.0)
+		canvas.draw_arc(grip, 41.0, arc_end - 0.9, arc_end, 12, Color(1.0, 0.79, 0.53, alpha), 1.5)
 
 
 func _draw_saw(canvas: CanvasItem, center: Vector2, direction: Vector2, progress: float) -> void:

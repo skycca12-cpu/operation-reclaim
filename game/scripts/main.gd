@@ -214,7 +214,7 @@ func _process(delta: float) -> void:
 		return
 	_update_player(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
-	_yujin_visual.update(delta)
+	_yujin_visual.update(delta, player_motion.length_squared() > 36.0)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	_update_spawn(delta)
 	_update_enemies(delta)
@@ -847,7 +847,7 @@ func _update_landing(delta: float) -> void:
 	player_motion = (player_pos - before) / maxf(delta, 0.001)
 	if player_motion.length() > 1.0:
 		player_facing = player_motion.normalized()
-	_yujin_visual.update(delta)
+	_yujin_visual.update(delta, player_motion.length_squared() > 36.0)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	hq_build_ratio = maxf(0.0, landing.hq_ratio())
 	if landing.done:
@@ -1540,8 +1540,10 @@ func _attack_player() -> void:
 	player_magazine -= 1
 	if player_magazine == 0:
 		player_reload_timer = float(hero.reload)
+	var muzzle_offset := Vector2.ZERO
 	if kind == "harin":
-		_harin_visual.trigger_attack()
+		_harin_visual.trigger_attack(player_facing)
+		muzzle_offset = _harin_visual.muzzle_offset(player_facing)
 	if sound_on:
 		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
 	player_attack_timer = interval
@@ -1552,7 +1554,7 @@ func _attack_player() -> void:
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 if kind == "tae" else 0.0)
-		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1), color)
+		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1), color, muzzle_offset)
 
 
 func _update_spawn(delta: float) -> void:
@@ -2462,8 +2464,13 @@ func _draw_world() -> void:
 	for enemy in enemies: _draw_enemy(enemy, camera)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
-		var tip := _world_to_screen(shot.pos)
-		draw_line(tip - shot.direction * 12.0, tip, shot.color, 2.0)
+		var traveled: float = shot.traveled
+		var tail_length := minf(12.0, traveled)
+		var offset: Vector2 = shot.muzzle_offset
+		var tip := _world_to_screen(shot.pos) + offset * maxf(0.0, 1.0 - traveled / 96.0)
+		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length)
+		tail += offset * maxf(0.0, 1.0 - (traveled - tail_length) / 96.0)
+		draw_line(tail, tip, shot.color, 2.0)
 	for effect in effects: _draw_effect(effect)
 	if screen != "landing" or landing.player_visible():
 		_draw_player()

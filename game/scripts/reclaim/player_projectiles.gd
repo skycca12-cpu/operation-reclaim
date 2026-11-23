@@ -7,10 +7,11 @@ const SPEED := 1150.0
 var shots: Array[Dictionary] = []
 
 
-func fire(origin: Vector2, direction: Vector2, distance: float, damage: float, hits: int, color: Color) -> void:
+func fire(origin: Vector2, direction: Vector2, distance: float, damage: float, hits: int, color: Color, muzzle_offset := Vector2.ZERO) -> void:
 	shots.append({
 		"pos": origin, "direction": direction, "remaining": distance,
 		"damage": damage, "hits": hits, "color": color, "hit_ids": {},
+		"muzzle_offset": muzzle_offset, "traveled": 0.0,
 	})
 
 
@@ -48,6 +49,7 @@ func update(delta: float, enemies: Array[Dictionary], damage_enemy: Callable) ->
 			damage_enemy.call(closest, shot.damage, "player")
 		shot.pos = start + direction * travel
 		shot.remaining -= travel
+		shot.traveled += travel
 		if shot.remaining <= 0.0 or shot.hits <= 0:
 			shots.remove_at(i)
 
