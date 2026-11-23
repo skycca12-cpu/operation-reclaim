@@ -62,3 +62,13 @@ func stop_all() -> void:
 	_rotor.stop()
 	for p in _voices:
 		p.stop()
+
+
+func _exit_tree() -> void:
+	if is_instance_valid(_rotor):
+		_rotor.stop()
+		_rotor.stream = null
+	for voice in _voices:
+		if is_instance_valid(voice):
+			voice.stop()
+			voice.stream = null

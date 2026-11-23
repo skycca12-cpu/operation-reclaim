@@ -189,7 +189,7 @@
     "assets/reclaim/characters/harin_sheet.png": {
       "declaredUseEvidence": [],
       "generator": {},
-      "inputs": [],
+      "inputs": ["seo_harin_godot_sprites_v1.zip/source_transparency_processed.png"],
       "license": {},
       "origin": "unknown",
       "referenceEvidence": [
@@ -197,9 +197,9 @@
         "scripts/reclaim/flow/boot_screen.gd"
       ],
       "regions": [],
-      "sha256": "sha256:7e437d6c129f46315faebb844cc9e508a8447a9ea1bb84d52e0c855f322b7c45",
+      "sha256": "sha256:37349ff750eb002c5fe8ff644bfdc5aa09846487399a99e7d61ce1c0efa78c9c",
       "shipped": null,
-      "size": 3923495,
+      "size": 555031,
       "source": {},
       "status": "present",
       "transformations": [],
