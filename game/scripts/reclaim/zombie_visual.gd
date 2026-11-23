@@ -10,6 +10,13 @@ const SHEETS: Array[Texture2D] = [
 	preload("res://assets/reclaim/zombies/zombie_07_soldier.png"),
 	preload("res://assets/reclaim/zombies/zombie_08_elderly.png"),
 ]
+const ATTACK_PARTS: Texture2D = preload("res://assets/reclaim/zombies/attack_parts.png")
+# Shoulder hinges measured in the source cells before applying the shared display scale.
+const SHOULDERS: Array[Vector2] = [
+	Vector2(98, 85), Vector2(98, 87), Vector2(102, 87), Vector2(103, 87),
+	Vector2(98, 82), Vector2(101, 86), Vector2(102, 88), Vector2(103, 87),
+]
+const SPRITE_CENTER := Vector2(80.0, 86.0)
 const CELL := 160.0
 # 128 opaque pixels become ~50 world pixels. Harin's standing art is 80–86 px.
 const SCALE := 0.39
@@ -75,34 +82,31 @@ static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, c
 
 static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2, progress: float, camera: Transform2D) -> void:
 	var direction: Vector2 = enemy.attack_direction
+	var variant: int = enemy.variant
 	var row := facing_row(direction)
-	var strike := 1.0 - smoothstep(0.10, 0.74, progress)
-	var column := 12 + mini(int(progress * 6.0), 5)
-	canvas.draw_set_transform_matrix(camera * Transform2D(direction.x * strike * 0.055, center))
-	_draw_frame(canvas, enemy.variant, row, column, Vector2.ZERO)
+	var mirror := -1.0 if row == 1 else 1.0
+	var reach := 1.0 - smoothstep(0.13, 0.87, progress)
+	var shoulder := (SHOULDERS[variant] - SPRITE_CENTER) * SCALE
+	shoulder.x *= mirror
+	var body := camera * Transform2D(direction.x * reach * 0.035, center)
+	var source := Rect2(Vector2(variant * CELL, 0.0), Vector2.ONE * CELL)
+	var body_rect := Rect2(-SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
+	var arm_rect := Rect2(-SHOULDERS[variant] * SCALE, body_rect.size)
+	var turn := lerp_angle(0.0, angle_difference(PI * 0.5, direction.angle()), reach)
+	# Forward reach is foreshortened; the joint stays attached in every direction.
+	var arm_scale := Vector2(mirror, 1.0 + 0.24 * reach)
+	var body_transform := body * Transform2D(0.0, Vector2(mirror, 1.0), 0.0, Vector2.ZERO)
+	var arm_transform := body * Transform2D(turn, arm_scale, 0.0, shoulder)
+	var arm_source := Rect2(source.position + Vector2(0.0, CELL), source.size)
+	if row == 2 or row == 3:
+		canvas.draw_set_transform_matrix(arm_transform)
+		canvas.draw_texture_rect_region(ATTACK_PARTS, arm_rect, arm_source)
+	canvas.draw_set_transform_matrix(body_transform)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, body_rect, source)
+	if row == 0 or row == 1:
+		canvas.draw_set_transform_matrix(arm_transform)
+		canvas.draw_texture_rect_region(ATTACK_PARTS, arm_rect, arm_source)
 	canvas.draw_set_transform_matrix(camera)
-	if strike <= 0.02:
-		return
-	# The temporary sheets keep the arms close to the body. Extend a visible
-	# shoulder, elbow, forearm and open hand while the feet stay planted.
-	var side := direction.orthogonal()
-	if direction.y > 0.0 or direction.x < 0.0:
-		side = -side
-	var shoulder := center + side * 8.0 - Vector2(0, 5)
-	var elbow := shoulder + direction * (3.0 + 6.0 * strike) + side * (4.0 - 2.0 * strike)
-	var hand := shoulder + direction * (5.0 + 15.0 * strike) - side * (5.0 * strike)
-	var sleeve := Color("#57534e")
-	var skin := Color("#a9a68b")
-	var outline := Color("#252522")
-	canvas.draw_line(shoulder, elbow, outline, 7.0, true)
-	canvas.draw_line(elbow, hand, outline, 6.0, true)
-	canvas.draw_line(shoulder, elbow, sleeve, 4.0, true)
-	canvas.draw_line(elbow, hand, skin.darkened(0.2), 3.5, true)
-	canvas.draw_circle(hand, 2.8, skin, true)
-	for finger in range(3):
-		var spread := float(finger - 1)
-		canvas.draw_line(hand + side * spread * 1.3, hand + direction * (3.5 + strike) + side * spread * 2.0,
-			skin, 1.2, true)
 
 
 static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:
@@ -112,5 +116,5 @@ static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, n
 
 static func _draw_frame(canvas: CanvasItem, variant: int, row: int, column: int, center: Vector2) -> void:
 	var source := Rect2(Vector2(column, row) * CELL, Vector2.ONE * CELL)
-	var destination := Rect2(center - Vector2(80.0, 86.0) * SCALE, Vector2.ONE * CELL * SCALE)
+	var destination := Rect2(center - SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
 	canvas.draw_texture_rect_region(SHEETS[variant], destination, source)
