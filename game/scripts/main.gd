@@ -1,6 +1,7 @@
 extends Control
 
 const PlayerProjectiles = preload("res://scripts/reclaim/player_projectiles.gd")
+const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
@@ -59,6 +60,7 @@ var difficulty: Dictionary = {}
 var structures: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
 var enemy_pool: Array[Dictionary] = []
+var zombie_corpses: Array[Dictionary] = []
 var enemy_shots: Array[Dictionary] = []
 var effects: Array[Dictionary] = []
 var selected_build := ""
@@ -185,6 +187,7 @@ func _process(delta: float) -> void:
 	_update_turrets(delta)
 	_update_projectiles(delta)
 	_update_effects(delta)
+	_update_zombie_corpses(run_seconds + delta)
 	_update_facilities(delta)
 	_update_progress(delta)
 	run_seconds += delta
@@ -700,6 +703,7 @@ func _reset_run() -> void:
 	picked_augment_ids.clear()
 	structures.clear()
 	enemies.clear()
+	zombie_corpses.clear()
 	enemy_pool.clear()
 	enemy_shots.clear()
 	player_projectiles.shots.clear()
@@ -801,10 +805,14 @@ func _load_saved_run() -> void:
 	if structures.is_empty():
 		structures.append({"kind": "hq", "cell": BASE_CELL, "hp": 1200.0, "max_hp": 1200.0, "level": 1, "cool": 0.0, "built": true})
 	enemies.clear()
+	zombie_corpses.clear()
 	for entry in state.get("enemies", []):
 		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), Vector2(float(entry.get("x", 0.0)), float(entry.get("y", 0.0))), bool(entry.get("boss", false)))
 		enemy.hp = float(entry.get("hp", enemy.max_hp))
 		enemy.cool = float(entry.get("cool", 0.5))
+		var saved_variant := int(entry.get("variant", -1))
+		if enemy.has("variant") and saved_variant >= 0 and saved_variant < ZombieVisual.SHEETS.size():
+			enemy.variant = saved_variant
 		enemies.append(enemy)
 	boss_40_spawned = stage >= 40
 	boss_80_spawned = stage >= 80
@@ -1378,6 +1386,12 @@ func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
 	enemy.merge({"kind": kind, "name": String(data.name), "pos": pos, "hp": hp, "max_hp": hp, "speed": float(data.speed) * (1.0 + float(stage) * 0.0012), "attack": float(data.attack) * float(difficulty.get("attack", 1.0)), "color": data.color, "ranged": bool(data.get("ranged", is_boss)), "boss": is_boss, "cool": 1.0, "charge": 0.0, "target": "player", "slow": 0.0, "pattern_timer": 3.0, "reward": 8 if is_boss else 2 if kind == "normal" or kind == "runner" else 4}, true)
 	enemy_spawn_id += 1
 	enemy.spawn_id = enemy_spawn_id
+	if kind == "normal" and not is_boss:
+		enemy.variant = _random.randi_range(0, ZombieVisual.SHEETS.size() - 1)
+		enemy.row = 0
+		enemy.moving = false
+		enemy.hit_until = 0.0
+		enemy.attack_until = 0.0
 	return enemy
 
 
@@ -1400,15 +1414,18 @@ func _count_live_bosses() -> int:
 
 
 func _update_enemies(delta: float) -> void:
+	var hq_pos := _hq_position()
 	for i in range(enemies.size() - 1, -1, -1):
 		var e: Dictionary = enemies[i]
+		var previous_pos: Vector2 = e.pos
+		var animated := e.has("variant")
+		var body_radius := ZombieVisual.RADIUS if animated else 11.0
 		e.cool = maxf(0.0, float(e.cool) - delta)
 		e.slow = maxf(0.0, float(e.slow) - delta)
 		if bool(e.boss): _update_boss_pattern(e, delta)
 		if String(e.kind) == "bomber":
 			var d_player: float = e.pos.distance_to(player_pos)
-			var hq := _hq_position()
-			var d_hq: float = e.pos.distance_to(hq)
+			var d_hq: float = e.pos.distance_to(hq_pos)
 			if float(e.charge) > 0.0:
 				e.charge -= delta
 				if e.charge <= 0.0:
@@ -1420,12 +1437,13 @@ func _update_enemies(delta: float) -> void:
 				e.target = "player" if d_player < d_hq else "hq"
 			continue
 		var d_to_player: float = e.pos.distance_to(player_pos)
-		var hq_pos := _hq_position()
 		var d_to_hq: float = e.pos.distance_to(hq_pos)
 		var target_player: bool = d_to_player < d_to_hq and d_to_player < 440.0
 		e.target = "player" if target_player else "hq"
 		var target_pos: Vector2 = player_pos if target_player else hq_pos
 		var dist: float = e.pos.distance_to(target_pos)
+		if animated and dist > 0.01:
+			e.row = ZombieVisual.facing_row(target_pos - e.pos)
 		if bool(e.ranged) and dist < 390.0:
 			if float(e.charge) > 0.0:
 				e.charge -= delta
@@ -1441,25 +1459,29 @@ func _update_enemies(delta: float) -> void:
 				var move_speed := float(e.speed) * (0.48 if float(e.slow) > 0.0 else 1.0)
 				var move_dir: Vector2 = (target_pos - e.pos).normalized()
 				var proposed: Vector2 = e.pos + move_dir * move_speed * delta
-				var blocker := _blocking_structure(proposed, 11.0 if not bool(e.boss) else 24.0)
+				var blocker := _blocking_structure(proposed, body_radius if not bool(e.boss) else 24.0)
 				if blocker < 0:
 					e.pos = proposed
 				elif String(structures[blocker].kind) != "hq" and float(e.cool) <= 0.0:
 					_damage_structure(blocker, float(e.attack))
+					if animated: e.attack_until = run_seconds + ZombieVisual.ATTACK_TIME
 					e.cool = 1.15
 				else:
 					var flank_a: Vector2 = e.pos + move_dir.rotated(0.92) * move_speed * delta
 					var flank_b: Vector2 = e.pos + move_dir.rotated(-0.92) * move_speed * delta
-					if _blocking_structure(flank_a, 11.0) < 0: e.pos = flank_a
-					elif _blocking_structure(flank_b, 11.0) < 0: e.pos = flank_b
+					if _blocking_structure(flank_a, body_radius) < 0: e.pos = flank_a
+					elif _blocking_structure(flank_b, body_radius) < 0: e.pos = flank_b
 			elif float(e.cool) <= 0.0:
 				if target_player:
 					_player_take_damage(float(e.attack), "적의 근접 공격")
 				else:
 					_damage_hq(float(e.attack))
+				if animated: e.attack_until = run_seconds + ZombieVisual.ATTACK_TIME
 				e.cool = 1.0 if not bool(e.boss) else 0.65
 		if e.pos.distance_to(player_pos) < 22.0 and float(e.charge) <= 0.0 and not bool(e.ranged):
 			e.pos += (e.pos - player_pos).normalized() * 6.0
+		if animated:
+			e.moving = not previous_pos.is_equal_approx(e.pos)
 
 
 func _update_boss_pattern(e: Dictionary, delta: float) -> void:
@@ -1525,13 +1547,27 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 			medals += 1
 		_remove_enemy(index)
 		_check_level_up()
+	elif enemy.has("variant"):
+		enemy.hit_until = run_seconds + ZombieVisual.HIT_TIME
 
 
 func _remove_enemy(index: int) -> void:
 	if index < 0 or index >= enemies.size(): return
 	var dead: Dictionary = enemies[index]
 	enemies.remove_at(index)
+	if dead.has("variant") and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_ENEMIES:
+		zombie_corpses.append({"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds})
 	if enemy_pool.size() < MAX_ENEMIES: enemy_pool.append(dead)
+
+
+func _update_zombie_corpses(now: float) -> void:
+	# Corpses are inserted chronologically and carry no gameplay state.
+	while not zombie_corpses.is_empty() and now - float(zombie_corpses.front().start) >= ZombieVisual.DEATH_TIME:
+		zombie_corpses.pop_front()
+
+
+func _zombie_on_screen(point: Vector2) -> bool:
+	return Rect2(Vector2.ZERO, size).grow(40.0).has_point(point)
 
 
 func _explode_damage_center(center: Vector2, radius: float, damage: float) -> void:
@@ -1850,7 +1886,7 @@ func _save_all() -> void:
 			structure_rows.append({"kind": String(s.kind), "x": cell.x, "y": cell.y, "hp": float(s.hp), "max_hp": float(s.max_hp), "level": int(s.level)})
 		var enemy_rows: Array[Dictionary] = []
 		for e in enemies:
-			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss)})
+			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1))})
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
 		var boss_flags: Array[int] = []
 		if boss_40_spawned: boss_flags.append(40)
@@ -1953,6 +1989,10 @@ func _draw_world() -> void:
 		_draw_build_grid()
 	for entry in structures:
 		if float(entry.hp) > 0.0: _draw_structure(entry)
+	for corpse in zombie_corpses:
+		var center := _world_to_screen(corpse.pos)
+		if _zombie_on_screen(center):
+			ZombieVisual.draw_dead(self, corpse, center, run_seconds)
 	for enemy in enemies: _draw_enemy(enemy)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
@@ -2060,6 +2100,14 @@ func _draw_enemy(enemy: Dictionary) -> void:
 	var p := _world_to_screen(enemy.pos)
 	var boss := bool(enemy.get("boss", false))
 	var radius := PlayerProjectiles.enemy_radius(enemy)
+	if enemy.has("variant"):
+		if not _zombie_on_screen(p): return
+		ZombieVisual.draw_alive(self, enemy, p, run_seconds)
+		if float(enemy.hp) < float(enemy.max_hp):
+			var ratio := clampf(float(enemy.hp) / float(enemy.max_hp), 0.0, 1.0)
+			draw_rect(Rect2(p.x - 12, p.y - 33, 24, 3), Color(0, 0, 0, 0.65))
+			draw_rect(Rect2(p.x - 12, p.y - 33, 24 * ratio, 3), PALETTE.green)
+		return
 	if String(enemy.kind) == "bomber" and float(enemy.get("charge", 0)) > 0.0:
 		var pulse := 56.0 - 28.0 * maxf(0.0, float(enemy.charge)) / 0.72
 		draw_arc(p, pulse, 0, TAU, 44, Color(PALETTE.red, 0.92), 3.0)

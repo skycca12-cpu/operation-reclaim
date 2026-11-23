@@ -1,5 +1,7 @@
 extends RefCounted
 
+const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
+
 const SPEED := 1150.0
 
 var shots: Array[Dictionary] = []
@@ -53,4 +55,6 @@ func update(delta: float, enemies: Array[Dictionary], damage_enemy: Callable) ->
 static func enemy_radius(enemy: Dictionary) -> float:
 	if enemy.boss:
 		return 34.0
+	if enemy.kind == "normal":
+		return ZombieVisual.RADIUS
 	return 15.0 if enemy.kind == "brute" else 12.0

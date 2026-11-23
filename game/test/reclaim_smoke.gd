@@ -1,5 +1,6 @@
 extends SceneTree
 
+const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 var failures: Array[String] = []
 
@@ -123,7 +124,8 @@ func _run() -> void:
 	pursuer.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
-	_check(game.get("player_hp") < health_before, "normal zombie damages the player in melee range")
+	_check(game.get("player_hp") < health_before and pursuer.attack_until > game.get("run_seconds"), "normal zombie damages the player and starts its attack animation")
+	_test_normal_zombies(game, pursuer)
 	enemies.clear()
 	game.set("stage_elapsed", 21.95)
 	game.call("_update_spawn", 0.1)
@@ -139,6 +141,9 @@ func _run() -> void:
 	game.set("player_reload_timer", 0.8)
 	var saved_position: Vector2 = game.get("player_pos")
 	var saved_structure_count := structures.size()
+	enemies.clear()
+	var saved_zombie := _spawn_test_zombie(game, saved_position + Vector2(300, 0), 100.0)
+	var saved_variant: int = saved_zombie.variant
 	game.call("_save_all")
 	game.queue_free()
 	await process_frame
@@ -148,6 +153,8 @@ func _run() -> void:
 	_check(resumed.get("screen") == "play" and resumed.get("stage") == 2, "continue restores the saved wave from disk")
 	_check(resumed.get("player_pos").is_equal_approx(saved_position) and resumed.get("structures").size() == saved_structure_count, "continue restores player position and built structures")
 	_check(resumed.get("manual_attack") and resumed.get("player_magazine") == 0 and is_equal_approx(resumed.get("player_reload_timer"), 0.8), "continue preserves manual mode and reload progress")
+	var resumed_enemies: Array = resumed.get("enemies")
+	_check(resumed_enemies.size() == 1 and resumed_enemies[0].variant == saved_variant, "continue restores the saved zombie appearance")
 	_check(not resumed.get("manual_trigger"), "continue requires a fresh manual trigger press")
 	resumed.call("_update_player_attack", 0.9)
 	_check(resumed.get("player_magazine") == 30 and resumed.get("player_projectiles").shots.is_empty(), "continued reload finishes without an unintended shot")
@@ -160,6 +167,35 @@ func _run() -> void:
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
+	var enemies: Array = game.get("enemies")
+	var slot := enemies.find(enemy)
+	var now: float = game.get("run_seconds")
+	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME)
+	var bodies: Array = game.get("zombie_corpses")
+	var deaths_before := bodies.size()
+	var kills_before: int = game.get("kills")
+	var money_before: int = game.get("money")
+	game.call("_damage_enemy", slot, 1.0, "test")
+	_check(enemy.hit_until > now and enemies.has(enemy), "nonlethal damage starts the hit animation")
+	game.call("_damage_enemy", slot, enemy.hp, "test")
+	_check(not enemies.has(enemy) and game.get("kills") == kills_before + 1 and game.get("money") == money_before + 2, "death immediately removes the gameplay enemy and awards once")
+	_check(bodies.size() == deaths_before + 1, "visible death creates one cosmetic corpse")
+	var death_variant: int = bodies.back().variant if not bodies.is_empty() else -1
+	var random: RandomNumberGenerator = game.get("_random")
+	random.seed = 212
+	var variants := {}
+	for i in range(96):
+		var zombie: Dictionary = game.call("_make_enemy", "normal", Vector2(800.0, 0.0), false)
+		variants[zombie.variant] = [zombie.hp, zombie.speed, zombie.attack, zombie.reward]
+	_check(variants.size() == 8 and variants.values().all(func(stats): return stats == variants.values()[0]), "eight random appearances share exactly the same normal zombie stats")
+	_check(not bodies.is_empty() and bodies.back().variant == death_variant, "pool reuse cannot change a corpse visual")
+	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME * 0.5)
+	_check(bodies.size() == deaths_before + 1, "corpse remains during its visible death frames")
+	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME + 0.01)
+	_check(bodies.is_empty(), "corpse is removed at the end of the death animation")
 
 
 func _test_attack_modes(game: Control, origin: Vector2) -> void:
@@ -303,7 +339,7 @@ func _check(condition: bool, context: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI, timed stages, pause and save/continue")
+		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI and variants, timed stages, pause and save/continue")
 		quit(0)
 	else:
 		for failure in failures: push_error("[reclaim-tests] " + failure)
