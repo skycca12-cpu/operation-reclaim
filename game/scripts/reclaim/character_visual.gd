@@ -1,11 +1,14 @@
 extends RefCounted
 
 const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.png")
+const FRONT_ATTACK = preload("res://assets/reclaim/characters/harin_front_attack.png")
+const FRONT_FRAME_SIZE := Vector2(112, 132)
+const FRONT_FRAME_ORIGIN := Vector2(-56, -52)
 const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
 const RUN_FPS := 11.0
 const FLASH_HOLD := 0.078
-const MUZZLES := [Vector2(34, 4), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
+const MUZZLES := [Vector2(0, 43), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
 const ATTACK_HOLD := 0.16
 const HURT_HOLD := 0.22
 
@@ -56,7 +59,12 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 	var origin := center - Vector2.ONE * DRAW_SIZE * 0.5 + Vector2(0, _run_lift(running))
 	var source := Rect2(Vector2(column, row) * CELL_SIZE, Vector2.ONE * CELL_SIZE)
 	var tint := Color(1.0, 0.72, 0.72) if hurt_timer > 0.0 else Color.WHITE
-	if running and shooting:
+	var front_shot := shooting and row == 0
+	if front_shot:
+		var frame := clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 6.0), 0, 5)
+		var target := center + FRONT_FRAME_ORIGIN + Vector2(0, _run_lift(running))
+		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE), tint)
+	elif running and shooting:
 		# Keep the firing pose above the waist while the stride continues below it.
 		const SPLIT := 71.0
 		var upper := Vector2(CELL_SIZE, SPLIT)
@@ -66,7 +74,7 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin + lower_offset, lower), Rect2(Vector2(run_frame, row) * CELL_SIZE + lower_offset, lower), tint)
 	else:
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin, Vector2.ONE * DRAW_SIZE), source, tint)
-	if attack_timer > ATTACK_HOLD - FLASH_HOLD:
+	if not front_shot and attack_timer > ATTACK_HOLD - FLASH_HOLD:
 		var barrel: Vector2 = MUZZLES[row]
 		_draw_flash(canvas, center + Vector2(0, _run_lift(running)) + barrel, Vector2(signf(barrel.x), 0))
 	if dashing:

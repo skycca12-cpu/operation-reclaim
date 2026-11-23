@@ -1,8 +1,9 @@
 extends RefCounted
 
-const FRONT = preload("res://assets/characters/yujin/down.png")
+const FRONT_ATTACK = preload("res://assets/characters/yujin/yujin_front_attack.png")
+const FRONT_FRAME_SIZE := Vector2(112, 132)
+const FRONT_FOOT_ANCHOR := Vector2(56, 92)
 const BACK = preload("res://assets/characters/yujin/up.png")
-const FRONT_SAW = preload("res://assets/characters/yujin/front_saw.png")
 const SAW = preload("res://assets/characters/yujin/weapon.png")
 const IDLE := [
 	preload("res://assets/characters/yujin/idle0.png"),
@@ -28,7 +29,6 @@ const CUT := [
 
 # Match the occupied idle-frame heights and foot baseline of Harin's
 # 96 px atlas cells. These source textures are cropped to the artwork.
-const FRONT_HEIGHT := 86.0
 const SIDE_HEIGHT := 80.0
 const BACK_HEIGHT := 83.0
 const FOOT_OFFSET := 40.0
@@ -68,12 +68,7 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	var back := not side and facing.y < 0.0
 	var running := moving or dashing
 	var stride := _run_clock * (15.0 if dashing else 11.0)
-	var frames := WALK if running else CUT if attacking else IDLE
-	var frame := int(stride) % frames.size() if running else int(progress * frames.size()) if attacking else int(_clock * 4.0) % frames.size()
-	var sprite: Texture2D = frames[frame] if side else BACK if back else FRONT
 	var bob := -roundf(5.0 * absf(sin(stride * PI * 0.5))) if running else 0.0
-	var height := SIDE_HEIGHT if side else BACK_HEIGHT if back else FRONT_HEIGHT
-	var size := sprite.get_size() * (height / sprite.get_height())
 	var center := position + Vector2(0.0, FOOT_OFFSET + bob)
 	var lean := facing * (sin(progress * PI) * 4.0) if attacking else Vector2.ZERO
 	if dashing:
@@ -81,51 +76,23 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	canvas.draw_set_transform(position + Vector2(0.0, FOOT_OFFSET - 2.0), 0.0, Vector2(1.0, 0.35))
 	canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
 	canvas.draw_set_transform(Vector2.ZERO)
+	if not side and not back:
+		var front_frame := clampi(int(progress * 6.0), 0, 5)
+		var target := center.round() - FRONT_FOOT_ANCHOR
+		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(front_frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE))
+		return
 	if back:
 		_draw_saw(canvas, center + lean, facing, progress)
+	var frames := WALK if running else CUT if attacking else IDLE
+	var frame := int(stride) % frames.size() if running else int(progress * frames.size()) if attacking else int(_clock * 4.0) % frames.size()
+	var sprite: Texture2D = BACK if back else frames[frame]
+	var height := BACK_HEIGHT if back else SIDE_HEIGHT
+	var size := sprite.get_size() * (height / sprite.get_height())
 	var sprite_scale := Vector2(-1, 1) if side and facing.x < 0.0 else Vector2.ONE
 	canvas.draw_set_transform((center + lean).round(), 0.0, sprite_scale)
 	var anchor_x := size.x * 0.33 if side else size.x * 0.5
 	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false)
 	canvas.draw_set_transform(Vector2.ZERO)
-	if not side and not back:
-		_draw_front_cut(canvas, center + lean, progress)
-
-
-func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> void:
-	const SAW_RECT := Rect2(-11.0, -4.0, 22.0, 42.0)
-	const TIP_DISTANCE := SAW_RECT.end.y - 1.0
-	var grip := (center + Vector2(0.0, -30.0)).round()
-	var tilt := _front_cut_tilt(progress)
-	if progress > 0.13 and progress < 0.88:
-		var warmup := smoothstep(0.13, 0.35, progress)
-		var fade := 1.0 - smoothstep(0.63, 0.88, progress)
-		var leading_angle := _front_cut_tilt(clampf(progress, 0.22, 0.60))
-		var trailing_angle := -0.28 - warmup * 0.21
-		var ribbon := PackedVector2Array()
-		for i in range(13):
-			var fraction := float(i) / 12.0
-			var angle := lerpf(trailing_angle, leading_angle, fraction)
-			ribbon.append(grip + Vector2.DOWN.rotated(angle) * (TIP_DISTANCE + 2.0 + sin(fraction * PI) * 4.0))
-		for i in range(12, -1, -1):
-			var fraction := float(i) / 12.0
-			var angle := lerpf(trailing_angle, leading_angle, fraction)
-			ribbon.append(grip + Vector2.DOWN.rotated(angle) * (TIP_DISTANCE + 1.0 - sin(fraction * PI) * 3.0))
-		canvas.draw_colored_polygon(ribbon, Color(0.88, 0.19, 0.12, warmup * fade * 0.88))
-		var edge := ribbon.slice(0, 13)
-		canvas.draw_polyline(edge, Color(1.0, 0.75, 0.52, warmup * fade), 2.0, true)
-	canvas.draw_set_transform(grip, tilt)
-	canvas.draw_texture_rect(FRONT_SAW, SAW_RECT, false)
-	canvas.draw_set_transform(Vector2.ZERO)
-
-
-func _front_cut_tilt(progress: float) -> float:
-	# Hold the blade straight, cock it right, sweep left, then settle.
-	if progress < 0.22:
-		return -0.27 * smoothstep(0.06, 0.22, progress)
-	if progress < 0.60:
-		return lerpf(-0.27, 0.30, smoothstep(0.22, 0.60, progress))
-	return 0.30 * (1.0 - smoothstep(0.60, 0.94, progress))
 
 
 func _draw_saw(canvas: CanvasItem, center: Vector2, direction: Vector2, progress: float) -> void:
