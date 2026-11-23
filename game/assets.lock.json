@@ -105,9 +105,9 @@
       "used": true
     },
     "assets/reclaim/characters/harin_sheet.png": {
-      "path": "/manus-storage/game/sha256/7e437d6c129f46315faebb844cc9e508a8447a9ea1bb84d52e0c855f322b7c45.png",
-      "sha256": "sha256:7e437d6c129f46315faebb844cc9e508a8447a9ea1bb84d52e0c855f322b7c45",
-      "size": 3923495,
+      "path": "assets/reclaim/characters/harin_sheet.png",
+      "sha256": "sha256:6da3c1f1efb401670961e30cc504cf593cd3b12b1b037a4a372b56fdc88b836a",
+      "size": 1949122,
       "assetType": "image",
       "groupId": "characters",
       "used": true

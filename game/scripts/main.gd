@@ -2102,7 +2102,10 @@ func _draw_player() -> void:
 	var p := _world_to_screen(player_pos)
 	var dir := player_facing.normalized()
 	if Data.CHARACTERS[player_index].id == "harin":
-		_harin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0, player_drone_level)
+		var reload_progress := -1.0
+		if player_reload_timer > 0.0:
+			reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
+		_harin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0, player_drone_level, reload_progress)
 	else:
 		var color: Color = Data.CHARACTERS[player_index].color
 		if dash_timer > 0.0:
