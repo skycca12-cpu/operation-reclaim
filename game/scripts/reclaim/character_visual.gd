@@ -1,14 +1,11 @@
 extends RefCounted
 
-const WeaponGrip = preload("res://scripts/reclaim/weapon_grip.gd")
 const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.png")
-const FRONT_M16 = preload("res://assets/reclaim/characters/harin_front_m16.png")
-const FRONT_M16_RECT := Rect2(-9, 7, 18, 28)
 const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
 const RUN_FPS := 11.0
 const FLASH_HOLD := 0.078
-const MUZZLES := [Vector2(0, FRONT_M16_RECT.end.y), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
+const MUZZLES := [Vector2(34, 4), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
 const ATTACK_HOLD := 0.16
 const HURT_HOLD := 0.22
 
@@ -57,12 +54,9 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 	elif reload_progress >= 0.0:
 		column = 9 + clampi(int(reload_progress * 4.0), 0, 3)
 	var origin := center - Vector2.ONE * DRAW_SIZE * 0.5 + Vector2(0, _run_lift(running))
-	var front_shot := shooting and row == 0
-	if front_shot:
-		column = run_frame if running else 0
 	var source := Rect2(Vector2(column, row) * CELL_SIZE, Vector2.ONE * CELL_SIZE)
 	var tint := Color(1.0, 0.72, 0.72) if hurt_timer > 0.0 else Color.WHITE
-	if running and shooting and not front_shot:
+	if running and shooting:
 		# Keep the firing pose above the waist while the stride continues below it.
 		const SPLIT := 71.0
 		var upper := Vector2(CELL_SIZE, SPLIT)
@@ -72,27 +66,14 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin + lower_offset, lower), Rect2(Vector2(run_frame, row) * CELL_SIZE + lower_offset, lower), tint)
 	else:
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin, Vector2.ONE * DRAW_SIZE), source, tint)
-	if row == 0 and (shooting or reload_progress < 0.0):
-		_draw_front_rifle(canvas, center + Vector2(0, _run_lift(running)))
 	if attack_timer > ATTACK_HOLD - FLASH_HOLD:
 		var barrel: Vector2 = MUZZLES[row]
-		_draw_flash(canvas, center + Vector2(0, _run_lift(running)) + barrel, Vector2.DOWN if front_shot else Vector2(signf(barrel.x), 0))
+		_draw_flash(canvas, center + Vector2(0, _run_lift(running)) + barrel, Vector2(signf(barrel.x), 0))
 	if dashing:
 		canvas.draw_line(center - facing.normalized() * 27.0, center - facing.normalized() * 11.0, Color("#9dd9e6", 0.7), 2.0)
 	if drone_level > 0:
 		_draw_support_drone(canvas, center, drone_level)
 
-
-func _draw_front_rifle(canvas: CanvasItem, center: Vector2) -> void:
-	var body := center.round()
-	var trigger_hand := body + Vector2(-4, 15)
-	var support_hand := body + Vector2(3, 23)
-	var sleeve := Color("#534451")
-	WeaponGrip.draw_sleeve(canvas, body + Vector2(-14, 1), body + Vector2(-13, 11), trigger_hand, sleeve)
-	WeaponGrip.draw_sleeve(canvas, body + Vector2(14, 1), body + Vector2(12, 15), support_hand, sleeve)
-	canvas.draw_texture_rect(FRONT_M16, Rect2(body + FRONT_M16_RECT.position, FRONT_M16_RECT.size), false)
-	WeaponGrip.draw_glove(canvas, trigger_hand, Color("#705661"))
-	WeaponGrip.draw_glove(canvas, support_hand, Color("#705661"))
 
 func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2) -> void:
 	var normal := direction.orthogonal()
