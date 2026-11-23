@@ -1663,6 +1663,9 @@ func _update_enemies(delta: float) -> void:
 		var body_radius := ZombieVisual.RADIUS if animated else 11.0
 		e.cool = maxf(0.0, float(e.cool) - delta)
 		e.slow = maxf(0.0, float(e.slow) - delta)
+		if e.has("strike_remaining"):
+			_resolve_normal_strike(e, delta)
+			continue
 		if bool(e.boss): _update_boss_pattern(e, delta)
 		if String(e.kind) == "bomber":
 			var d_player: float = e.pos.distance_to(player_pos)
@@ -1737,8 +1740,10 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 			return
 	elif toward.length_squared() <= 30.0 * 30.0:
 		if float(enemy.cool) <= 0.0:
-			_player_take_damage(float(enemy.attack), "적의 근접 공격")
-			if enemy.has("variant"): _animate_zombie_attack(enemy, toward)
+			if enemy.has("variant"):
+				_queue_normal_strike(enemy, toward)
+			else:
+				_player_take_damage(float(enemy.attack), "적의 근접 공격")
 			enemy.cool = 0.65 if enemy.boss else 1.0
 		return
 	var speed := float(enemy.speed) * (0.48 if float(enemy.slow) > 0.0 else 1.0)
@@ -1754,9 +1759,39 @@ func _strike_structure(enemy: Dictionary, index: int) -> void:
 	if float(enemy.cool) > 0.0:
 		return
 	var toward: Vector2 = _entry_world_center(structures[index]) - enemy.pos
-	_damage_structure(index, float(enemy.attack))
-	if enemy.has("variant"): _animate_zombie_attack(enemy, toward)
+	if enemy.has("variant"):
+		_queue_normal_strike(enemy, toward, structures[index])
+	else:
+		_damage_structure(index, float(enemy.attack))
 	enemy.cool = 1.15
+
+
+func _queue_normal_strike(enemy: Dictionary, toward: Vector2, target: Variant = null) -> void:
+	enemy.strike_remaining = ZombieVisual.IMPACT_TIME
+	enemy.strike_target = target
+	_animate_zombie_attack(enemy, toward)
+
+
+func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
+	enemy.strike_remaining = float(enemy.strike_remaining) - delta
+	if float(enemy.strike_remaining) > 0.0001:
+		return
+	var target: Variant = enemy.strike_target
+	enemy.erase("strike_remaining")
+	enemy.erase("strike_target")
+	if target == null:
+		var offset: Vector2 = player_pos - enemy.pos
+		if offset.length_squared() <= 30.0 * 30.0 and offset.dot(enemy.attack_direction) >= 0.0:
+			_player_take_damage(float(enemy.attack), "적의 근접 공격")
+		return
+	for index in range(structures.size()):
+		if not is_same(structures[index], target) or float(target.hp) <= 0.0:
+			continue
+		var kind := String(target.kind)
+		var width := 2 if kind == "hq" or _is_building(kind) else 1
+		if _structure_overlap_depth(enemy.pos, _entry_world_center(target), width, ZombieVisual.RADIUS + 5.0) >= 0.0:
+			_damage_structure(index, float(enemy.attack))
+		return
 
 
 func _play_zombie_ambient() -> void:

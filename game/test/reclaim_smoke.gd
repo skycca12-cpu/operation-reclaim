@@ -137,7 +137,17 @@ func _run() -> void:
 	pursuer.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
+	_check(game.get("player_hp") == health_before, "the raise phase does not inflict damage")
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(game.get("player_hp") < health_before and pursuer.attack_until > game.get("run_seconds") and pursuer.attack_direction.is_equal_approx(Vector2.LEFT), "normal zombie damages the player and starts its attack animation")
+	var saved_player_pos: Vector2 = game.get("player_pos")
+	pursuer.cool = 0.0
+	game.call("_update_enemies", 0.01)
+	var before_dodge: float = game.get("player_hp")
+	game.set("player_pos", saved_player_pos + Vector2(-80.0, 0.0))
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
+	_check(game.get("player_hp") == before_dodge, "stepping out of reach before impact makes the swing miss")
+	game.set("player_pos", saved_player_pos)
 	_test_normal_zombies(game, pursuer)
 	enemies.clear()
 	_test_structure_targets(game)
@@ -286,6 +296,8 @@ func _test_structure_targets(game: Node) -> void:
 	attacker.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
+	_check(wall.hp == 100.0, "wall is not damaged before the impact pose")
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(attacker.target == "wall" and wall.hp < 100.0 and game.get("player_hp") == health_before, "a nearby wall takes priority over an in-reach player")
 	var waiting_position: Vector2 = attacker.pos
 	game.call("_update_enemies", 0.1)
@@ -303,6 +315,7 @@ func _test_structure_targets(game: Node) -> void:
 	hq_attacker.cool = 0.0
 	var hq_before: float = hq.hp
 	game.call("_update_enemies", 0.1)
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(hq.hp < hq_before, "zombie can damage the full-width HQ from the collision perimeter")
 	enemies.clear()
 	var facility := {"kind": "supply", "cell": Vector2i(5, 5), "hp": 100.0, "max_hp": 100.0}
@@ -312,6 +325,7 @@ func _test_structure_targets(game: Node) -> void:
 	game.set("player_pos", facility_center - Vector2(70, 0))
 	blocked.cool = 0.0
 	game.call("_update_enemies", 0.1)
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(facility.hp < 100.0, "a facility blocking the pursuit route takes melee damage")
 	structures.pop_back()
 

@@ -11,10 +11,24 @@ const SHEETS: Array[Texture2D] = [
 	preload("res://assets/reclaim/zombies/zombie_08_elderly.png"),
 ]
 const ATTACK_PARTS: Texture2D = preload("res://assets/reclaim/zombies/attack_parts.png")
-# Shoulder hinges measured in the source cells before applying the shared display scale.
-const SHOULDERS: Array[Vector2] = [
-	Vector2(98, 85), Vector2(98, 87), Vector2(102, 87), Vector2(103, 87),
-	Vector2(98, 82), Vector2(101, 86), Vector2(102, 88), Vector2(103, 87),
+# Left and right pivots follow each original garment seam.
+const SHOULDERS := [
+	[Vector2(62, 85), Vector2(98, 85)], [Vector2(62, 87), Vector2(98, 87)],
+	[Vector2(60, 87), Vector2(102, 87)], [Vector2(59, 87), Vector2(103, 87)],
+	[Vector2(62, 82), Vector2(98, 82)], [Vector2(61, 86), Vector2(101, 86)],
+	[Vector2(61, 88), Vector2(102, 88)], [Vector2.ZERO, Vector2(103, 87)],
+]
+const ELBOWS := [
+	[Vector2(56, 103), Vector2(104, 103)], [Vector2(55, 104), Vector2(105, 103)],
+	[Vector2(54, 106), Vector2(108, 106)], [Vector2(54, 106), Vector2(108, 106)],
+	[Vector2(55, 102), Vector2(104, 102)], [Vector2(54, 105), Vector2(109, 105)],
+	[Vector2(53, 105), Vector2(109, 105)], [Vector2.ZERO, Vector2(111, 108)],
+]
+# Eight beats from the reference: rest, brace, raise, high guard, impact, follow-through, recover, rest.
+const POSES := [
+	Vector3(0.0, 0.0, 0.0), Vector3(0.28, 0.38, 0.4), Vector3(0.66, 0.57, -0.5),
+	Vector3(1.0, 0.32, -2.0), Vector3(0.39, 0.45, 4.0), Vector3(0.47, 0.36, 3.0),
+	Vector3(0.18, 0.18, 1.5), Vector3(0.0, 0.0, 0.0),
 ]
 const SPRITE_CENTER := Vector2(80.0, 86.0)
 const CELL := 160.0
@@ -22,6 +36,7 @@ const CELL := 160.0
 const SCALE := 0.39
 const RADIUS := 14.0
 const ATTACK_TIME := 0.6
+const IMPACT_TIME := ATTACK_TIME * 4.0 / 8.0
 const HIT_TIME := 0.4
 # The supplied last death cell (column 27) is fully transparent in every row.
 const DEATH_FRAMES := 5
@@ -85,28 +100,50 @@ static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2,
 	var variant: int = enemy.variant
 	var row := facing_row(direction)
 	var mirror := -1.0 if row == 1 else 1.0
-	var reach := 1.0 - smoothstep(0.13, 0.87, progress)
-	var shoulder := (SHOULDERS[variant] - SPRITE_CENTER) * SCALE
-	shoulder.x *= mirror
-	var body := camera * Transform2D(direction.x * reach * 0.035, center)
+	var phase := minf(progress * 8.0, 7.0)
+	var pose: Vector3 = POSES[int(phase)].lerp(POSES[mini(int(phase) + 1, 7)], fposmod(phase, 1.0))
+	var lean := direction * maxf(0.0, pose.z) * 0.65 + Vector2(0.0, pose.z)
+	var compression := 1.0 - maxf(0.0, pose.z) * 0.018
+	var body := camera * Transform2D(direction.x * pose.z * 0.012,
+		Vector2(mirror, compression), 0.0, center + lean)
+	var cell_rect := Rect2(-SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
 	var source := Rect2(Vector2(variant * CELL, 0.0), Vector2.ONE * CELL)
-	var body_rect := Rect2(-SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
-	var arm_rect := Rect2(-SHOULDERS[variant] * SCALE, body_rect.size)
-	var turn := lerp_angle(0.0, angle_difference(PI * 0.5, direction.angle()), reach)
-	# Forward reach is foreshortened; the joint stays attached in every direction.
-	var arm_scale := Vector2(mirror, 1.0 + 0.24 * reach)
-	var body_transform := body * Transform2D(0.0, Vector2(mirror, 1.0), 0.0, Vector2.ZERO)
-	var arm_transform := body * Transform2D(turn, arm_scale, 0.0, shoulder)
-	var arm_source := Rect2(source.position + Vector2(0.0, CELL), source.size)
-	if row == 2 or row == 3:
-		canvas.draw_set_transform_matrix(arm_transform)
-		canvas.draw_texture_rect_region(ATTACK_PARTS, arm_rect, arm_source)
-	canvas.draw_set_transform_matrix(body_transform)
-	canvas.draw_texture_rect_region(ATTACK_PARTS, body_rect, source)
-	if row == 0 or row == 1:
-		canvas.draw_set_transform_matrix(arm_transform)
-		canvas.draw_texture_rect_region(ATTACK_PARTS, arm_rect, arm_source)
+	if row != 0:
+		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose)
+	canvas.draw_set_transform_matrix(body)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, cell_rect, source)
+	if row == 0:
+		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose)
+	_draw_attack_arm(canvas, body, variant, 1, direction, mirror, pose)
 	canvas.draw_set_transform_matrix(camera)
+
+
+static func _draw_attack_arm(canvas: CanvasItem, body: Transform2D, variant: int, arm: int,
+		direction: Vector2, mirror: float, pose: Vector3) -> void:
+	if variant == 7 and arm == 0:
+		return
+	var shoulder: Vector2 = SHOULDERS[variant][arm]
+	var elbow: Vector2 = ELBOWS[variant][arm]
+	var side := -1.0 if arm == 0 else 1.0
+	var aimed := Vector2(direction.x * mirror, direction.y)
+	var aim_angle := angle_difference(PI * 0.5, aimed.angle())
+	# Fan both sleeves out around the head during the wind-up, then turn toward impact.
+	var raised := -side * (PI - 0.43)
+	var lift := smoothstep(0.48, 0.94, pose.x)
+	var extension := lerpf(aim_angle, raised, lift)
+	var angle := extension * minf(1.0, pose.x * 2.2)
+	if absf(direction.y) > absf(direction.x):
+		angle += side * pose.y * 1.15 * (1.0 - lift)
+	var upper := body * Transform2D(angle, (shoulder - SPRITE_CENTER) * SCALE)
+	var lower := upper * Transform2D(side * pose.y * 0.9 * (1.0 - lift),
+		Vector2.ONE * (1.0 + maxf(0.0, pose.z) * 0.035), 0.0, (elbow - shoulder) * SCALE)
+	var size := Vector2.ONE * CELL * SCALE
+	var cell := Vector2.ONE * CELL
+	var source := Vector2(variant * CELL, (1 + arm * 2) * CELL)
+	canvas.draw_set_transform_matrix(upper)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-shoulder * SCALE, size), Rect2(source, cell))
+	canvas.draw_set_transform_matrix(lower)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-elbow * SCALE, size), Rect2(source + Vector2(0.0, CELL), cell))
 
 
 static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:
