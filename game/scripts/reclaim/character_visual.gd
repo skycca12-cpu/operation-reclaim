@@ -1,7 +1,7 @@
 extends RefCounted
 
 const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.png")
-const CELL_SIZE := 192.0
+const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
 const WALK_FPS := 7.0
 const ATTACK_HOLD := 0.16
