@@ -93,7 +93,8 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 
 
 func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> void:
-	const TIP_DISTANCE := 51.0
+	const SAW_RECT := Rect2(-11.0, -4.0, 22.0, 42.0)
+	const TIP_DISTANCE := SAW_RECT.end.y - 1.0
 	var grip := (center + Vector2(0.0, -34.0)).round()
 	var tilt := _front_cut_tilt(progress)
 	if progress > 0.13 and progress < 0.88:
@@ -105,7 +106,7 @@ func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> vo
 		for i in range(13):
 			var fraction := float(i) / 12.0
 			var angle := lerpf(trailing_angle, leading_angle, fraction)
-			ribbon.append(grip + Vector2.DOWN.rotated(angle) * (TIP_DISTANCE + 3.0 + sin(fraction * PI) * 5.0))
+			ribbon.append(grip + Vector2.DOWN.rotated(angle) * (TIP_DISTANCE + 2.0 + sin(fraction * PI) * 4.0))
 		for i in range(12, -1, -1):
 			var fraction := float(i) / 12.0
 			var angle := lerpf(trailing_angle, leading_angle, fraction)
@@ -114,7 +115,7 @@ func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> vo
 		var edge := ribbon.slice(0, 13)
 		canvas.draw_polyline(edge, Color(1.0, 0.75, 0.52, warmup * fade), 2.0, true)
 	canvas.draw_set_transform(grip, tilt)
-	canvas.draw_texture_rect(FRONT_SAW, Rect2(-17.0, -4.0, 34.0, 56.0), false)
+	canvas.draw_texture_rect(FRONT_SAW, SAW_RECT, false)
 	canvas.draw_set_transform(Vector2.ZERO)
 
 

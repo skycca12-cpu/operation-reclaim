@@ -1,11 +1,13 @@
 extends RefCounted
 
 const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.png")
+const FRONT_M16 = preload("res://assets/reclaim/characters/harin_front_m16.png")
+const FRONT_M16_RECT := Rect2(-9, 7, 18, 28)
 const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
 const RUN_FPS := 11.0
 const FLASH_HOLD := 0.078
-const MUZZLES := [Vector2(0, 47), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
+const MUZZLES := [Vector2(0, FRONT_M16_RECT.end.y), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
 const ATTACK_HOLD := 0.16
 const HURT_HOLD := 0.22
 
@@ -81,23 +83,8 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 
 
 func _draw_front_rifle(canvas: CanvasItem, center: Vector2) -> void:
-	# Foreshortened rifle and gloves for the six-o'clock pose.
-	var p := center.round()
-	canvas.draw_colored_polygon(PackedVector2Array([
-		p + Vector2(-6, 0), p + Vector2(6, 0), p + Vector2(11, 14),
-		p + Vector2(8, 26), p + Vector2(4, 29), p + Vector2(4, 46),
-		p + Vector2(-4, 46), p + Vector2(-4, 29), p + Vector2(-8, 26),
-		p + Vector2(-11, 14),
-	]), Color("#201b25"))
-	canvas.draw_rect(Rect2(p + Vector2(-5, 4), Vector2(10, 21)), Color("#48424c"))
-	canvas.draw_rect(Rect2(p + Vector2(-2, 5), Vector2(3, 35)), Color("#8c818b"))
-	canvas.draw_rect(Rect2(p + Vector2(-2, 26), Vector2(5, 16)), Color("#57515b"))
-	canvas.draw_rect(Rect2(p + Vector2(-3, 42), Vector2(6, 3)), Color("#aba2a8"))
-	for side in [-1.0, 1.0]:
-		var glove := p + Vector2(side * 8.0, 15.0)
-		canvas.draw_rect(Rect2(glove - Vector2(4, 3), Vector2(8, 8)), Color("#332933"))
-		canvas.draw_rect(Rect2(glove - Vector2(2, 3), Vector2(5, 3)), Color("#b68169"))
-
+	var destination := Rect2(center.round() + FRONT_M16_RECT.position, FRONT_M16_RECT.size)
+	canvas.draw_texture_rect(FRONT_M16, destination, false)
 
 func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2) -> void:
 	var normal := direction.orthogonal()
