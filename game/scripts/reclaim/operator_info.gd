@@ -1,5 +1,6 @@
 extends CenterContainer
 
+const Data = preload("res://scripts/reclaim/data.gd")
 const UI = preload("res://scripts/reclaim/operation_ui.gd")
 
 signal closed
@@ -110,6 +111,9 @@ func fill(heading: String, portrait: Texture2D, rows: Array, cards: Array, note:
 
 func _show_effect(card: Dictionary) -> void:
 	var count := int(card.get("count", 1))
+	if card.get("id") == Data.HARIN_MAGAZINE_AUGMENT:
+		_detail.text = "%s · 최대 탄창 +%d발 · 중첩 %d/%d" % [card.name, count * Data.MAGAZINE_AUGMENT_ROUNDS, count, Data.MAGAZINE_AUGMENT_LIMIT]
+		return
 	var prefix := "%s · %d회 획득" % [card.name, count] if count > 1 else String(card.name)
 	var applied: Array = card.get("effects_applied", [])
 	var description := " / ".join(PackedStringArray(applied)) if count > 1 and not applied.is_empty() else String(card.description)

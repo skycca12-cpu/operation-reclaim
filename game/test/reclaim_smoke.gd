@@ -29,7 +29,7 @@ func _run() -> void:
 	_check(Data.CHARACTERS.size() == 4, "four selectable operators in data")
 	_check(Data.ENEMIES.size() == 5, "five enemy families in data")
 	_check(Data.TURRETS.size() == 7, "seven turret families in data")
-	_check(Data.augment_catalog().size() == 50, "30 common and 20 hero augments in data")
+	_check(Data.augment_catalog().size() == 52, "30 common and 22 hero augments in data")
 	game.set("player_index", 1)
 	game.set("difficulty_index", 1)
 	game.call("_start_new_run")
@@ -205,9 +205,59 @@ func _run() -> void:
 	await create_timer(0.45).timeout
 	_test_yujin(resumed)
 	_test_spawn_multiplier(resumed)
+	_test_character_augments(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_character_augments(game: Control) -> void:
+	game.set("player_index", 3)
+	game.call("_reset_run")
+	var options: Array = game.call("_eligible_augments")
+	_check(options.any(func(card): return card.get("hero") == "yujin") and not options.any(func(card): return card.get("hero") == "harin"),
+		"Yujin receives her own exclusive options without Harin cards")
+	for card in options:
+		if card.id == Data.YUJIN_REACH_AUGMENT:
+			var reach: float = game.call("_weapon_range", Data.CHARACTERS[3])
+			card.stars = 1
+			game.call("_choose_augment", card)
+			var upgraded: float = game.call("_weapon_range", Data.CHARACTERS[3])
+			_check(is_equal_approx(upgraded, reach + 12.0) and is_equal_approx(game.get("player_mod_range"), 1.0),
+				"Yujin extends the chainsaw without changing the turret range multiplier")
+			break
+	game.set("player_index", 2)
+	game.call("_reset_run")
+	options = game.call("_eligible_augments")
+	var index := -1
+	for i in range(options.size()):
+		if options[i].id == Data.HARIN_MAGAZINE_AUGMENT:
+			index = i
+			break
+	_check(index >= 0 and not options.any(func(card): return card.get("hero") == "yujin"), "Harin can find the exclusive magazine")
+	if index < 0:
+		return
+	var magazine: Dictionary = options[index].duplicate()
+	magazine.stars = 1
+	magazine.rarity = "일반"
+	for stack in range(1, 6):
+		var preview: String = game.call("_augment_effect_text", magazine)
+		_check(preview.contains("중첩 %d/5" % stack), "magazine displays its upcoming stack")
+		game.call("_choose_augment", magazine)
+		_check(game.call("_magazine_capacity") == 30 + stack * 5, "each magazine stack grants exactly five rounds")
+	game.call("_choose_augment", magazine)
+	options = game.call("_eligible_augments")
+	_check(game.call("_magazine_capacity") == 55 and not options.any(func(card): return card.id == Data.HARIN_MAGAZINE_AUGMENT),
+		"magazine caps at five stacks and disappears from future offers")
+	game.set("manual_attack", true)
+	game.set("manual_trigger", false)
+	game.set("player_magazine", 0)
+	game.set("player_reload_timer", 0.1)
+	game.call("_update_player_attack", 0.2)
+	_check(game.get("player_magazine") == 55, "reloading fills the upgraded magazine")
+	game.call("_save_all")
+	game.call("_load_saved_run")
+	_check(game.call("_magazine_capacity") == 55 and game.get("player_magazine") == 55, "save and continue preserve the upgraded magazine")
 
 
 func _test_spawn_multiplier(game: Control) -> void:

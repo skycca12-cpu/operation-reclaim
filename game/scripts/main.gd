@@ -922,7 +922,7 @@ func _reset_run() -> void:
 	player_facing = Vector2.RIGHT
 	player_attack_timer = 0.0
 	player_reload_timer = 0.0
-	player_magazine = int(hero.magazine)
+	player_magazine = _magazine_capacity()
 	manual_attack = false
 	manual_trigger = false
 	dash_timer = 0.0
@@ -974,14 +974,6 @@ func _load_saved_run() -> void:
 	player_hp = clampf(float(state.get("player_hp", player_max_hp)), 1.0, player_max_hp)
 	player_projectiles.shots.clear()
 	enemy_shots.clear()
-	var capacity := int(hero.magazine)
-	player_magazine = clampi(int(state.get("magazine", capacity)), 0, capacity)
-	player_attack_timer = 0.0
-	player_reload_timer = 0.0
-	if capacity > 0 and player_magazine == 0:
-		player_reload_timer = clampf(float(state.get("reload_remaining", hero.reload)), 0.0, float(hero.reload))
-		if player_reload_timer == 0.0:
-			player_magazine = capacity
 	manual_attack = bool(state.get("manual_attack", false))
 	manual_trigger = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
@@ -1015,6 +1007,14 @@ func _load_saved_run() -> void:
 	boss_100_spawned = stage >= 100
 	pending_final_boss = stage >= 100
 	_restore_run_modifiers()
+	var capacity := _magazine_capacity()
+	player_magazine = clampi(int(state.get("magazine", capacity)), 0, capacity)
+	player_attack_timer = 0.0
+	player_reload_timer = 0.0
+	if capacity > 0 and player_magazine == 0:
+		player_reload_timer = clampf(float(state.get("reload_remaining", hero.reload)), 0.0, float(hero.reload))
+		if player_reload_timer == 0.0:
+			player_magazine = capacity
 	win_state = false
 	spawn_timer = 1.5
 	augment_reroll_used = false
@@ -1505,7 +1505,7 @@ func _update_player_attack(delta: float) -> void:
 			player_facing = aim.normalized()
 		wants_attack = screen == "play" and manual_trigger and not build_mode
 	else:
-		var target := _nearest_enemy(player_pos, float(hero.range) * player_mod_range)
+		var target := _nearest_enemy(player_pos, _weapon_range(hero))
 		if target >= 0:
 			var aim: Vector2 = enemies[target].pos - player_pos
 			if not aim.is_zero_approx():
@@ -1516,7 +1516,7 @@ func _update_player_attack(delta: float) -> void:
 	if player_reload_timer > 0.0:
 		player_reload_timer = maxf(0.0, player_reload_timer - delta)
 		if player_reload_timer == 0.0:
-			player_magazine = int(hero.magazine)
+			player_magazine = _magazine_capacity()
 	if wants_attack and player_attack_timer <= 0.0 and player_reload_timer <= 0.0:
 		_attack_player()
 
@@ -1529,10 +1529,11 @@ func _attack_player() -> void:
 		_yujin_visual.attack(interval)
 		player_attack_timer = interval
 		var direction := player_facing.normalized()
+		var reach := _weapon_range(hero)
 		for i in range(enemies.size() - 1, -1, -1):
 			var target_pos: Vector2 = enemies[i].pos
 			var toward := target_pos - player_pos
-			if toward.length() <= float(hero.range) * player_mod_range and (toward.is_zero_approx() or direction.dot(toward.normalized()) > 0.70):
+			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > 0.70):
 				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
 				if effects.size() < 40: effects.append({"a": player_pos + direction * 26, "b": target_pos, "time": 0.09, "color": Color("#f1a34f")})
 		return
@@ -1549,7 +1550,7 @@ func _attack_player() -> void:
 		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
 	player_attack_timer = interval
 	var direction := player_facing.normalized()
-	var max_range := float(hero.range) * player_mod_range
+	var max_range := _weapon_range(hero)
 	var pellets := int(hero.pellets) + player_extra_pellets if kind == "tae" else 1
 	var damage := _weapon_damage(hero, player_mod_damage) / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
@@ -2045,16 +2046,24 @@ func _check_level_up() -> void:
 		_offer_augments()
 
 
-func _offer_augments() -> void:
-	var available := Data.augment_catalog()
+func _eligible_augments() -> Array[Dictionary]:
+	var available: Array[Dictionary] = []
 	var hero_id := String(Data.CHARACTERS[player_index].id)
-	for i in range(available.size() - 1, -1, -1):
-		var id := String(available[i].id)
-		var belongs_to_hero := false
-		for hero in ["tae", "si", "harin", "yujin"]:
-			if id.begins_with(hero + "_"): belongs_to_hero = true
-		if picked_augment_ids.has(id) or (belongs_to_hero and not id.begins_with(hero_id + "_")):
-			available.remove_at(i)
+	for card in Data.augment_catalog():
+		if String(card.get("hero", hero_id)) != hero_id:
+			continue
+		if (card.effect == "projectile" and hero_id != "tae") or (card.effect == "pierce" and hero_id == "yujin"):
+			continue
+		if card.id == Data.HARIN_MAGAZINE_AUGMENT:
+			if _magazine_augment_stacks() < Data.MAGAZINE_AUGMENT_LIMIT:
+				available.append(card)
+		elif not picked_augment_ids.has(card.id):
+			available.append(card)
+	return available
+
+
+func _offer_augments() -> void:
+	var available := _eligible_augments()
 	while available.size() < 3:
 		available.append({"id": "field_%02d" % available.size(), "name": "현장 적응", "effect": "damage", "description": "공격 피해가 증가합니다."})
 	augment_options.clear()
@@ -2086,7 +2095,9 @@ func _rebuild_augment_cards() -> void:
 	for card in augment_options:
 		var display := card.duplicate()
 		display.description = _augment_effect_text(card)
-		row.add_child(OpsUI.augment_card(display, _choose_augment.bind(card), 189.0, 120.0, true))
+		if card.has("hero"):
+			display.name = "%s · %s" % [Data.CHARACTERS[player_index].name, card.name]
+		row.add_child(OpsUI.augment_card(display, _choose_augment.bind(card), 189.0, 158.0, true))
 	augment_reroll_button.disabled = augment_reroll_used
 	augment_reroll_button.text = "무료 리롤 사용됨" if augment_reroll_used else "무료 리롤 1회"
 
@@ -2096,12 +2107,7 @@ func _reroll_augments() -> void:
 	augment_reroll_used = true
 	augment_options.clear()
 	# One reroll keeps every offer distinct and keeps the specified rarity odds.
-	var available := Data.augment_catalog()
-	var hero_id := String(Data.CHARACTERS[player_index].id)
-	for i in range(available.size() - 1, -1, -1):
-		var id := String(available[i].id)
-		var belongs_to_hero := id.begins_with("tae_") or id.begins_with("si_") or id.begins_with("harin_") or id.begins_with("yujin_")
-		if picked_augment_ids.has(id) or (belongs_to_hero and not id.begins_with(hero_id + "_")): available.remove_at(i)
+	var available := _eligible_augments()
 	for i in range(3):
 		var card: Dictionary = available.pop_at(_random.randi_range(0, available.size() - 1))
 		card["rarity"] = _pick_rarity()
@@ -2112,6 +2118,8 @@ func _reroll_augments() -> void:
 
 func _choose_augment(card: Dictionary) -> void:
 	var id := String(card.id)
+	if id == Data.HARIN_MAGAZINE_AUGMENT and (Data.CHARACTERS[player_index].id != "harin" or _magazine_augment_stacks() >= Data.MAGAZINE_AUGMENT_LIMIT):
+		return
 	if not picked_augment_ids.has(id):
 		picked_augment_ids.append(id)
 	var entry: Dictionary = acquired_augments.get(id, {})
@@ -2145,9 +2153,27 @@ func _choose_augment(card: Dictionary) -> void:
 		"projectile": player_extra_pellets += 1
 		"pierce": player_pierce += 1
 		"drone": player_drone_level += 1
+		"magazine", "saw_reach": pass
 		_: player_mod_damage *= 1.06
 	_show_screen("play")
 	_show_toast("현장 증강 · %s" % String(card.name))
+
+
+func _magazine_augment_stacks() -> int:
+	var entry: Dictionary = acquired_augments.get(Data.HARIN_MAGAZINE_AUGMENT, {})
+	return clampi(int(entry.get("count", 0)), 0, Data.MAGAZINE_AUGMENT_LIMIT)
+
+
+func _magazine_capacity() -> int:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	return int(hero.magazine) + (_magazine_augment_stacks() * Data.MAGAZINE_AUGMENT_ROUNDS if hero.id == "harin" else 0)
+
+
+func _weapon_range(hero: Dictionary) -> float:
+	var reach := float(hero.range) * player_mod_range
+	if hero.id == "yujin" and picked_augment_ids.has(Data.YUJIN_REACH_AUGMENT):
+		reach += Data.SAW_REACH_BONUS
+	return reach
 
 
 func _weapon_interval(hero: Dictionary, rate: float) -> float:
@@ -2170,10 +2196,11 @@ func _combat_stats() -> Dictionary:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	return {
 		"hp": player_max_hp,
+		"magazine": float(_magazine_capacity()),
 		"damage": _weapon_damage(hero, player_mod_damage),
 		"rate": 1.0 / _weapon_interval(hero, player_mod_rate),
 		"speed": float(hero.speed) * player_mod_speed,
-		"range": float(hero.range) * player_mod_range,
+		"range": _weapon_range(hero),
 		"armor": (1.0 - _incoming_damage_factor(hero, player_mod_armor)) * 100.0,
 		"build": _build_cost_factor(hero, player_mod_build) * 100.0,
 	}
@@ -2182,6 +2209,7 @@ func _combat_stats() -> Dictionary:
 func _legacy_base_stats() -> Dictionary:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	return {
+		"magazine": float(hero.magazine),
 		"hp": float(hero.hp) + float(permanent_upgrades.get("health", 0)) * 15.0,
 		"damage": _weapon_damage(hero, 1.0 + float(permanent_upgrades.get("damage", 0)) * 0.06),
 		"rate": 1.0 / _weapon_interval(hero, 1.0 + float(permanent_upgrades.get("reload", 0)) * 0.04),
@@ -2200,11 +2228,17 @@ func _operator_stat_rows() -> Array:
 		["hp", "최대 체력", ""], ["damage", "공격 피해 (1회 합계)", ""],
 		["rate", "공격 빈도", "/초"], ["speed", "이동 속도", " px/초"], ["range", "공격 범위", " px"],
 		["armor", "받는 피해 감소", "%"], ["build", "건설 비용 배율", "%"],
+		["magazine", "최대 탄창 용량", "발"],
 	]:
+		if field[0] == "magazine" and int(current.magazine) == 0:
+			continue
 		var final_value := float(current[field[0]])
-		var base_value := float(base.get(field[0], final_value))
+		var base_value := float(base.get(field[0], Data.CHARACTERS[player_index].magazine if field[0] == "magazine" else final_value))
 		var difference := final_value - base_value
 		var unit := String(field[2])
+		if field[0] == "magazine":
+			rows.append([field[1], "%d발" % base_value, "+%d발" % difference if difference > 0 else "—", "%d발" % final_value])
+			continue
 		var delta_text := "—" if is_zero_approx(difference) else "%s%.2f%s" % ["+" if difference > 0.0 else "", difference, "%p" if unit == "%" else unit]
 		rows.append([field[1], "%.2f%s" % [base_value, unit], delta_text, "%.2f%s" % [final_value, unit]])
 	return rows
@@ -2216,8 +2250,12 @@ func _augment_effect_text(card: Dictionary) -> String:
 	var scale := 1.0 + 0.025 * float(card.stars)
 	match String(card.effect):
 		"damage": return "공격 피해 +%.2f%%" % (7.0 * scale)
-		"rate", "reload": return "공격 빈도 배율 +%.2f%%" % (6.0 * scale)
-		"range": return "사거리 배율 +%.2f%%" % (6.0 * scale)
+		"rate", "reload":
+			var hero: Dictionary = Data.CHARACTERS[player_index]
+			var before := 1.0 / _weapon_interval(hero, player_mod_rate)
+			var after := 1.0 / _weapon_interval(hero, player_mod_rate * (1.0 + 0.06 * scale))
+			return "공격 빈도 +%.2f%%\n%.2f → %.2f회/초" % [(after / before - 1.0) * 100.0, before, after]
+		"range": return "무기·포탑 사거리 +%.2f%%" % (6.0 * scale)
 		"health": return "최대 체력 +%.2f · 획득 시 체력 최대 35 회복" % (14.0 * scale)
 		"armor": return "받는 피해 배율 ×0.94 (고유 보정·하한 별도)"
 		"speed": return "이동 속도 배율 +%.2f%%" % (4.5 * scale)
@@ -2229,7 +2267,11 @@ func _augment_effect_text(card: Dictionary) -> String:
 		"build": return "건설 비용 배율 -5%p (최소 비용 배율 적용)"
 		"projectile": return "산탄총 발사 탄환 +1" if Data.CHARACTERS[player_index].id == "tae" else "산탄 수 +1 (산탄총에만 적용)"
 		"pierce": return "총기 관통 대상 +1"
-		"drone": return "지원 드론 레벨 +1"
+		"drone": return "지원 드론 레벨 +1 · 자동 지원 사격"
+		"saw_reach": return "전기톱 공격 거리 +%d px" % Data.SAW_REACH_BONUS
+		"magazine":
+			var capacity := _magazine_capacity()
+			return "최대 탄창 +%d발 (%d → %d발)\n중첩 %d/%d · 재장전 시 반영" % [Data.MAGAZINE_AUGMENT_ROUNDS, capacity, capacity + Data.MAGAZINE_AUGMENT_ROUNDS, _magazine_augment_stacks() + 1, Data.MAGAZINE_AUGMENT_LIMIT]
 	return "공격 피해 +6%"
 
 
@@ -2316,7 +2358,7 @@ func _refresh_hud() -> void:
 		boss_label.text = boss_text
 		var toast_node := run_hud.find_child("Toast", true, false) as Label
 		if toast_node: toast_node.text = toast if toast_timer > 0.0 else ""
-		var capacity := int(Data.CHARACTERS[player_index].magazine)
+		var capacity := _magazine_capacity()
 		var ammo := "전기톱 · 탄약 미사용" if capacity == 0 else "탄약 %d / %d" % [player_magazine, capacity]
 		if player_reload_timer > 0.0:
 			ammo += " · 재장전 중"

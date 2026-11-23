@@ -58,10 +58,16 @@ const PERMANENT_PERKS: Array[Dictionary] = [
 	{"id": "salvage", "name": "재화 획득량", "step": 0.05}
 ]
 
+const YUJIN_REACH_AUGMENT := "yujin_05"
+const SAW_REACH_BONUS := 12.0
+const HARIN_MAGAZINE_AUGMENT := "harin_05"
+const MAGAZINE_AUGMENT_ROUNDS := 5
+const MAGAZINE_AUGMENT_LIMIT := 5
+
 static func augment_catalog() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var common_names: Array[String] = [
-		"정밀 조준", "탄약 절약", "전술 탄두", "반동 제어", "확장 탄창", "관통 탄환", "급속 장전", "사거리 조정", "야전 의무", "방탄판 보강",
+		"정밀 조준", "연사 튜닝", "전술 탄두", "반동 제어", "연사 보강", "관통 탄환", "속사 기구", "사거리 조정", "야전 의무", "방탄판 보강",
 		"기동 훈련", "전투 식량", "현장 수리", "금속 회수", "보급 계약", "폭발물 숙련", "전력 증폭", "냉각 효율", "화염 노즐", "포탑 베어링",
 		"경계 태세", "방어 각도", "야전 제작", "지형 감각", "엄호 사격", "신속 배치", "고밀도 장갑", "전술 분석", "강화 조준기", "긴급 후송"
 	]
@@ -70,7 +76,7 @@ static func augment_catalog() -> Array[Dictionary]:
 		out.append({"id": "common_%02d" % i, "name": common_names[i], "effect": effects[i], "description": _effect_description(effects[i])})
 	var hero_names: Dictionary = {
 		"tae": ["방패 밀어내기", "산탄 확산", "강철 진형", "충격 완화", "최후 방어"],
-		"si": ["속사 교리", "전술 재장전", "점사 제어", "철갑탄", "선봉 돌파"],
+		"si": ["속사 교리", "속사 훈련", "점사 제어", "철갑탄", "선봉 돌파"],
 		"harin": ["드론 호출", "M4 정비", "정밀 호버", "탄약 링크", "엄호 비행"],
 		"yujin": ["전기톱 톱날", "현장 개조", "긴급 정비", "포탑 조율", "공병 지휘"]
 	}
@@ -83,7 +89,9 @@ static func augment_catalog() -> Array[Dictionary]:
 	for hero_id: String in hero_names.keys():
 		for i in range(5):
 			var effect_id: String = hero_effects[hero_id][i]
-			out.append({"id": "%s_%02d" % [hero_id, i], "name": hero_names[hero_id][i], "effect": effect_id, "description": _effect_description(effect_id)})
+			out.append({"id": "%s_%02d" % [hero_id, i], "name": hero_names[hero_id][i], "effect": effect_id, "hero": hero_id, "description": _effect_description(effect_id)})
+	out.append({"id": HARIN_MAGAZINE_AUGMENT, "name": "M4 확장 탄창", "effect": "magazine", "hero": "harin", "description": "탄창 최대 용량 +5발"})
+	out.append({"id": YUJIN_REACH_AUGMENT, "name": "전기톱 연장날", "effect": "saw_reach", "hero": "yujin", "description": "전기톱 공격 거리 +12 px"})
 	return out
 
 static func _effect_description(effect_id: String) -> String:
