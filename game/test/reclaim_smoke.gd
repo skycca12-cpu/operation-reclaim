@@ -53,17 +53,39 @@ func _run() -> void:
 	Input.parse_input_event(ev_up)
 	await process_frame
 	_check((game.get("player_pos") as Vector2).x > before_x + 1.0, "holding D moves the player (WASD regression)")
-	_check(String(game.call("_validate_placement", "wall", Vector2i(3, 0))) != "", "north entrance remains permanently open")
+	_check(String(game.call("_validate_placement", "wall", Vector2i(3, -1))) != "", "north entrance remains permanently open")
 	_check(String(game.call("_validate_placement", "wall", Vector2i(3, 2))) != "", "a wall cannot block the north escape route")
-	_check(String(game.call("_validate_placement", "clinic", Vector2i(6, 4))) != "", "two-cell building stays within the seven-by-seven area")
-	_check(String(game.call("_validate_placement", "basic", Vector2i(6, 6))) == "", "valid one-cell turret placement is accepted")
-	game.call("_select_build", "basic")
-	game.call("_try_place_at", game.call("_cell_world", Vector2i(6, 6)))
+	_check(String(game.call("_validate_placement", "clinic", Vector2i(7, 4))) != "", "two-cell building stays within the nine-by-nine area")
+	_check(String(game.call("_validate_placement", "basic", Vector2i(7, 7))) == "", "outer expansion ring accepts a one-cell turret")
+	var build_key := InputEventKey.new()
+	build_key.physical_keycode = KEY_1
+	build_key.keycode = KEY_1
+	build_key.pressed = true
+	root.push_input(build_key.duplicate(), true)
+	_check(game.get("selected_build") == "basic", "1 selects a turret with the construction panel closed")
+	game.call("_try_place_at", game.call("_cell_world", Vector2i(7, 7)))
 	structures = game.get("structures")
 	_check(structures.size() == 2 and structures[1].kind == "basic", "player-built turret is installed")
 	_check(String(game.call("_validate_placement", "clinic", Vector2i(1, 1))) == "", "first unique facility can be installed")
-	game.call("_select_build", "clinic")
+	build_key.physical_keycode = KEY_F1
+	build_key.keycode = KEY_F1
+	root.push_input(build_key.duplicate(), true)
+	_check(game.get("selected_build") == "clinic", "F1 selects a facility")
 	game.call("_try_place_at", game.call("_cell_world", Vector2i(1, 1)))
+	var supply_before: int = game.get("money")
+	game.set("money", 200)
+	game.call("_select_entity_at", game.call("_cell_world", Vector2i(7, 7)))
+	build_key.physical_keycode = KEY_U
+	build_key.keycode = KEY_U
+	root.push_input(build_key.duplicate(), true)
+	_check(structures[1].level == 2, "U upgrades the selected turret")
+	game.set("money", supply_before)
+	game.call("_close_inspector")
+	build_key.physical_keycode = KEY_8
+	build_key.keycode = KEY_8
+	root.push_input(build_key.duplicate(), true)
+	_check(game.get("selected_build") == "wall", "8 selects a wall")
+	game.call("_cancel_build")
 	_check(String(game.call("_validate_placement", "clinic", Vector2i(1, 4))) != "", "facility types are limited to one each")
 	game.set("player_pos", game.call("_cell_world", Vector2i(2, 3)))
 	game.call("_move_player", Vector2(80, 0))
@@ -114,18 +136,18 @@ func _run() -> void:
 	enemies.clear()
 	game.set("player_index", 3)
 	_spawn_test_zombie(game, player_pos + Vector2(70, 0), 1.0)
-	effects_before = effects.size()
+	effects_before = effects.filter(func(effect): return not effect.has("hit_angle")).size()
 	game.call("_attack_player")
-	_check(enemies.is_empty() and effects.size() == effects_before + 1 and effects.back().b == player_pos + Vector2(70, 0), "lethal chainsaw hit draws its effect to the removed zombie")
+	_check(enemies.is_empty() and effects.filter(func(effect): return not effect.has("hit_angle")).size() == effects_before + 1 and effects.back().b == player_pos + Vector2(70, 0), "lethal chainsaw hit draws its effect to the removed zombie")
 
 	game.set("player_index", 2)
 	game.set("player_attack_timer", 1.0)
 	game.set("player_drone_level", 1)
 	game.set("drone_timer", 0.0)
 	_spawn_test_zombie(game, player_pos + Vector2(120, 0), 1.0)
-	effects_before = effects.size()
+	effects_before = effects.filter(func(effect): return not effect.has("hit_angle")).size()
 	game.call("_update_player", 0.01)
-	_check(enemies.is_empty() and effects.size() == effects_before + 1 and effects.back().b == player_pos + Vector2(120, 0), "lethal drone hit draws its effect to the removed zombie")
+	_check(enemies.is_empty() and effects.filter(func(effect): return not effect.has("hit_angle")).size() == effects_before + 1 and effects.back().b == player_pos + Vector2(120, 0), "lethal drone hit draws its effect to the removed zombie")
 	game.set("player_drone_level", 0)
 	game.set("player_index", 1)
 
@@ -425,14 +447,14 @@ func _test_combat_zoom_and_augments(game: Control) -> void:
 	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
 	wheel.pressed = true
 	wheel.position = game.size * 0.5 + Vector2(30.0, 0.0)
-	for i in range(6):
+	for i in range(12):
 		root.push_input(wheel.duplicate(), true)
-	_check(is_equal_approx(game.get("camera_zoom"), 1.6), "mouse wheel zooms the battlefield to its maximum")
-	var camera_point := game.size * 0.5 + Vector2(76.8, 0)
+	_check(is_equal_approx(game.get("camera_zoom"), 2.4), "mouse wheel zooms the battlefield to its maximum")
+	var camera_point := game.size * 0.5 + Vector2(115.2, 0)
 	var world_point: Vector2 = game.call("_screen_to_world", camera_point)
 	_check(world_point.is_equal_approx(game.get("player_pos") + Vector2(48.0, 0.0)), "zoomed clicks retain one-tile world accuracy")
 	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
-	for i in range(6):
+	for i in range(12):
 		root.push_input(wheel.duplicate(), true)
 	_check(is_equal_approx(game.get("camera_zoom"), 1.0), "mouse wheel returns to the original view")
 	game.call("_offer_augments")
@@ -456,6 +478,8 @@ func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
 	var money_before: int = game.get("money")
 	game.call("_damage_enemy", slot, 1.0, "test")
 	_check(enemy.hit_until > now and enemies.has(enemy), "nonlethal damage starts the hit animation")
+	var hit_effects: Array = game.get("effects")
+	_check(hit_effects.any(func(effect): return effect.has("hit_angle")), "visible hits emit impact sparks")
 	game.call("_damage_enemy", slot, enemy.hp, "test")
 	_check(not enemies.has(enemy) and game.get("kills") == kills_before + 1 and game.get("money") == money_before + 2, "death immediately removes the gameplay enemy and awards once")
 	_check(bodies.size() == deaths_before + 1, "visible death creates one cosmetic corpse")

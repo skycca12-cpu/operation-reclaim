@@ -32,9 +32,9 @@ const POSES := [
 ]
 const SPRITE_CENTER := Vector2(80.0, 86.0)
 const CELL := 160.0
-# 128 opaque pixels become ~50 world pixels. Harin's standing art is 80–86 px.
-const SCALE := 0.39
-const RADIUS := 14.0
+# The 126 px standing silhouette becomes ~86 world pixels.
+const SCALE := 0.68
+const RADIUS := 21.0
 const ATTACK_TIME := 0.6
 const IMPACT_TIME := ATTACK_TIME * 4.0 / 8.0
 const HIT_TIME := 0.4
@@ -62,7 +62,9 @@ static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, n
 		_draw_attack(canvas, enemy, center, clampf(progress, 0.0, 1.0), camera)
 	elif now < float(enemy.hit_until):
 		var column := 18 + clampi(int((now + HIT_TIME - float(enemy.hit_until)) * 10.0), 0, 3)
-		_draw_frame(canvas, enemy.variant, enemy.row, column, center)
+		var impact := clampf((float(enemy.hit_until) - now - HIT_TIME + 0.09) / 0.09, 0.0, 1.0)
+		var tint := Color.WHITE.lerp(Color("#ffb4a3"), impact)
+		_draw_frame(canvas, enemy.variant, enemy.row, column, center, tint)
 	elif enemy.moving:
 		_draw_walk(canvas, enemy, center, camera)
 	else:
@@ -151,7 +153,7 @@ static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, n
 	_draw_frame(canvas, corpse.variant, corpse.row, 22 + frame, center)
 
 
-static func _draw_frame(canvas: CanvasItem, variant: int, row: int, column: int, center: Vector2) -> void:
+static func _draw_frame(canvas: CanvasItem, variant: int, row: int, column: int, center: Vector2, tint := Color.WHITE) -> void:
 	var source := Rect2(Vector2(column, row) * CELL, Vector2.ONE * CELL)
 	var destination := Rect2(center - SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
-	canvas.draw_texture_rect_region(SHEETS[variant], destination, source)
+	canvas.draw_texture_rect_region(SHEETS[variant], destination, source, tint)

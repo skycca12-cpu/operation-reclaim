@@ -23,7 +23,18 @@ const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
 const CELL := 48.0
 const PLAYER_RADIUS := 13.0
-const GRID_SIZE := 7
+const GRID_SIZE := 9
+const GRID_MIN := -1
+const GRID_MAX := GRID_MIN + GRID_SIZE - 1
+const BUILD_ENTRANCES := [Vector2i(3, GRID_MIN), Vector2i(3, GRID_MAX), Vector2i(GRID_MIN, 3), Vector2i(GRID_MAX, 3)]
+const MAX_CAMERA_ZOOM := 2.4
+const HIT_SPARK_TIME := 0.18
+const BUILD_SHORTCUTS := {
+	KEY_1: "basic", KEY_2: "heavy", KEY_3: "rocket", KEY_4: "electric",
+	KEY_5: "flame", KEY_6: "freeze", KEY_7: "repair", KEY_8: "wall",
+	KEY_F1: "clinic", KEY_F2: "supply", KEY_F3: "workshop", KEY_F4: "research", KEY_F5: "outpost",
+}
+const RESERVED_KEYS := [KEY_TAB, KEY_C, KEY_B, KEY_G, KEY_U, KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
 const MAX_ENEMIES := 320
 const WAVE_SPAWN_MULTIPLIER := 5
 const WAVE_SECONDS := 22.0
@@ -236,6 +247,17 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if screen == "play" and awaiting_binding.is_empty() and event is InputEventKey:
+		var code: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+		if BUILD_SHORTCUTS.has(code) or code == KEY_U:
+			get_viewport().set_input_as_handled()
+			if event.pressed and not event.echo:
+				if code == KEY_U:
+					if not build_mode:
+						_upgrade_selected()
+				else:
+					_select_build(BUILD_SHORTCUTS[code])
+			return
 	if screen in ["play", "info"] and event is InputEventKey and (event.physical_keycode == KEY_C or event.keycode == KEY_C):
 		get_viewport().set_input_as_handled()
 		if event.pressed and not event.echo:
@@ -259,7 +281,9 @@ func _notification(what: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if awaiting_binding != "" and event is InputEventKey and event.pressed and not event.echo:
 		var binding: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
-		if binding == KEY_TAB or binding == KEY_C:
+		var other_key := pause_key if awaiting_binding == "dash" else dash_key
+		if RESERVED_KEYS.has(binding) or BUILD_SHORTCUTS.has(binding) or binding == other_key:
+			_show_toast("이미 사용 중인 키입니다.")
 			get_viewport().set_input_as_handled()
 			return
 		if awaiting_binding == "dash":
@@ -303,7 +327,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and screen == "play":
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			var step := 0.15 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.15
-			camera_zoom = clampf(camera_zoom + step, 1.0, 1.6)
+			camera_zoom = clampf(camera_zoom + step, 1.0, MAX_CAMERA_ZOOM)
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_cancel_build()
@@ -612,7 +636,7 @@ func _build_game_hud() -> void:
 	build_status_label = _make_label("시설을 고르고 전장 칸을 클릭하세요. 전투는 계속됩니다.", 12, PALETTE.muted)
 	build_status_label.custom_minimum_size.y = 30
 	build_content.add_child(build_status_label)
-	var hint := _make_label("건설 [B]: 시설 선택/배치   우클릭: 취소", 12, PALETTE.muted, true)
+	var hint := _make_label("건설 [B]   포탑 [1–7]   방벽 [8]   시설 [F1–F5]   강화 [U]   우클릭 취소", 12, PALETTE.muted, true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	hint.offset_top = -31
 	hint.offset_bottom = -8
@@ -643,7 +667,7 @@ func _build_game_hud() -> void:
 	inspector.add_child(ivbox)
 	inspector_label = _make_label("", 16, PALETTE.text)
 	ivbox.add_child(inspector_label)
-	ivbox.add_child(_make_button("강화", _upgrade_selected, PALETTE.green, 270))
+	ivbox.add_child(_make_button("강화 [U]", _upgrade_selected, PALETTE.green, 270))
 	ivbox.add_child(_make_button("철거", _remove_selected, PALETTE.red, 270))
 	ivbox.add_child(_make_button("닫기", _close_inspector, PALETTE.blue, 270))
 	operator_info = OperatorInfo.new()
@@ -1188,12 +1212,12 @@ func _refresh_build_panel() -> void:
 	scroll.add_child(list)
 	if build_tab == "turret":
 		for item in Data.TURRETS:
-			list.add_child(_make_button("%s  ·  %d 보급품\n%s" % [item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), item.color, 285))
+			list.add_child(_make_button("[%s] %s  ·  %d 보급품\n%s" % [OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id)), item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), item.color, 285))
 	elif build_tab == "building":
 		for item in Data.BUILDINGS:
-			list.add_child(_make_button("%s  ·  %d 보급품\n%s" % [item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), PALETTE.green, 285))
+			list.add_child(_make_button("[%s] %s  ·  %d 보급품\n%s" % [OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id)), item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), PALETTE.green, 285))
 	else:
-		list.add_child(_make_button("모래주머니 방벽  ·  12 보급품\n1×1칸 · 사방 출입구를 막을 수 없습니다", _select_build.bind("wall"), PALETTE.gold, 285))
+		list.add_child(_make_button("[8] 모래주머니 방벽  ·  12 보급품\n1×1칸 · 사방 출입구를 막을 수 없습니다", _select_build.bind("wall"), PALETTE.gold, 285))
 	build_content.add_child(_make_button("선택 취소", _cancel_build, PALETTE.red, 285))
 	build_content.move_child(build_status_label, 0)
 
@@ -1209,7 +1233,7 @@ func _select_build(kind: String) -> void:
 	build_mode = true
 	selected_entity = -1
 	var item := _build_definition(kind)
-	build_status_label.text = "%s 선택됨 · 설치 칸을 클릭하세요 (B 취소)" % String(item.get("name", "방벽"))
+	build_status_label.text = "%s 선택됨 · 설치 칸을 클릭하세요 (우클릭 취소)" % String(item.get("name", "방벽"))
 	var inspector := run_hud.find_child("Inspector", true, false) as Control
 	if inspector: inspector.visible = false
 
@@ -1258,13 +1282,13 @@ func _occupied_cells(entry: Dictionary) -> Array[Vector2i]:
 
 
 func _cell_is_entrance(cell: Vector2i) -> bool:
-	return cell == Vector2i(3, 0) or cell == Vector2i(3, 6) or cell == Vector2i(0, 3) or cell == Vector2i(6, 3)
+	return BUILD_ENTRANCES.has(cell)
 
 
 func _validate_placement(kind: String, cell: Vector2i) -> String:
 	var definition := _build_definition(kind)
 	var width := 2 if _is_building(kind) else 1
-	if cell.x < 0 or cell.y < 0 or cell.x + width > GRID_SIZE or cell.y >= GRID_SIZE:
+	if cell.x < GRID_MIN or cell.y < GRID_MIN or cell.x + width - 1 > GRID_MAX or cell.y > GRID_MAX:
 		return "건설 구역 밖입니다."
 	if kind == "wall" and _cell_is_entrance(cell):
 		return "동서남북 영구 출입구는 막을 수 없습니다."
@@ -1301,9 +1325,8 @@ func _path_stays_open(new_cell: Vector2i) -> bool:
 		for cell in _occupied_cells(entry): blocked[cell] = true
 	blocked[new_cell] = true
 	var goals: Array[Vector2i] = [Vector2i(2, 3), Vector2i(5, 3), Vector2i(3, 2), Vector2i(3, 4)]
-	var starts: Array[Vector2i] = [Vector2i(3, 0), Vector2i(3, 6), Vector2i(0, 3), Vector2i(6, 3)]
 	for index in range(4):
-		if not _grid_path_exists(starts[index], goals[index], blocked): return false
+		if not _grid_path_exists(BUILD_ENTRANCES[index], goals[index], blocked): return false
 	return true
 
 
@@ -1315,7 +1338,7 @@ func _grid_path_exists(start: Vector2i, goal: Vector2i, blocked: Dictionary) -> 
 		if cur == goal: return true
 		for step in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
 			var next: Vector2i = cur + step
-			if next.x < 0 or next.y < 0 or next.x >= GRID_SIZE or next.y >= GRID_SIZE: continue
+			if next.x < GRID_MIN or next.y < GRID_MIN or next.x > GRID_MAX or next.y > GRID_MAX: continue
 			if blocked.has(next) or seen.has(next): continue
 			seen[next] = true
 			queue.append(next)
@@ -1868,6 +1891,11 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 		amount *= 0.4
 		enemy.guard = maxf(0.0, float(enemy.guard) - 0.28)
 	enemy.hp = float(enemy.hp) - amount
+	if amount > 0.0 and shake_on and effects.size() < 80 and _zombie_on_screen(_world_to_screen(enemy.pos)):
+		var point: Vector2 = enemy.pos
+		var angle := player_pos.angle_to_point(point)
+		effects.append({"a": point, "b": point, "time": HIT_SPARK_TIME, "hit_angle": angle,
+			"color": Color("#ffb34f") if source == "chainsaw" else Color("#f8d4aa")})
 	if amount > 0.0 and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 1.18)
@@ -2410,8 +2438,11 @@ func _load_data() -> void:
 		permanent_upgrades[perk.id] = clampi(int(permanent_upgrades.get(perk.id, 0)), 0, 5)
 	dash_key = int(data.get("dash_key", KEY_SHIFT))
 	pause_key = int(data.get("pause_key", KEY_ESCAPE))
-	if dash_key in [KEY_TAB, KEY_C]: dash_key = KEY_SHIFT
-	if pause_key in [KEY_TAB, KEY_C]: pause_key = KEY_ESCAPE
+	if RESERVED_KEYS.has(dash_key) or BUILD_SHORTCUTS.has(dash_key): dash_key = KEY_SHIFT
+	if RESERVED_KEYS.has(pause_key) or BUILD_SHORTCUTS.has(pause_key): pause_key = KEY_ESCAPE
+	if pause_key == dash_key:
+		dash_key = KEY_SHIFT
+		pause_key = KEY_ESCAPE
 	sound_on = bool(data.get("sound_on", true))
 	bgm_volume = clampi(int(data.get("bgm_volume", 100)), 0, 100)
 	effects_volume = clampi(int(data.get("effects_volume", 100)), 0, 100)
@@ -2496,7 +2527,7 @@ func _draw_world() -> void:
 	draw_set_transform_matrix(camera)
 	_draw_city_tiles()
 	_draw_base_zone()
-	if build_open:
+	if build_open or build_mode:
 		_draw_build_grid()
 	for entry in structures:
 		if float(entry.hp) > 0.0: _draw_structure(entry)
@@ -2537,12 +2568,12 @@ func _draw_base_zone() -> void:
 	draw_circle(center, 255, Color(0.08, 0.12, 0.10, 0.16))
 	draw_arc(center, 170.0, 0.0, TAU, 64, Color(PALETTE.gold, 0.15), 1.2)
 	# A subtle field-light square marks the construction zone even when its grid is hidden.
-	draw_rect(Rect2(center - Vector2(CELL * 3.5, CELL * 3.5), Vector2(CELL * 7.0, CELL * 7.0)), Color(0.5, 0.6, 0.45, 0.025), false, 1.0)
+	draw_rect(Rect2(center - Vector2.ONE * CELL * GRID_SIZE * 0.5, Vector2.ONE * CELL * GRID_SIZE), Color(0.5, 0.6, 0.45, 0.025), false, 1.0)
 
 
 func _draw_build_grid() -> void:
-	for y in range(7):
-		for x in range(7):
+	for y in range(GRID_MIN, GRID_MAX + 1):
+		for x in range(GRID_MIN, GRID_MAX + 1):
 			var cell := Vector2i(x, y)
 			var p := _world_to_screen(_cell_world(cell))
 			var rect := Rect2(p - Vector2(CELL * 0.5, CELL * 0.5), Vector2(CELL, CELL))
@@ -2607,10 +2638,12 @@ func _draw_structure(entry: Dictionary) -> void:
 		draw_rect(Rect2(bounds.position.x + 7, bounds.position.y + 8, bounds.size.x - 14, 5), Color(c.lightened(0.23)))
 		draw_rect(Rect2(center.x - 6, center.y - 3, 13, 19), Color("#303832"))
 		draw_string(ThemeDB.fallback_font, center + Vector2(-21, 23), String(def.get("short", "시설")), HORIZONTAL_ALIGNMENT_LEFT, 60, 10, PALETTE.text)
-	if kind != "wall":
-		var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
-		draw_rect(Rect2(center.x - 20.0 * float(width), bounds.position.y - 6, 40.0 * float(width), 3), Color(0, 0, 0, 0.7))
-		draw_rect(Rect2(center.x - 20.0 * float(width), bounds.position.y - 6, 40.0 * float(width) * ratio, 3), PALETTE.green if ratio > 0.35 else PALETTE.red)
+	var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
+	var bar_width := 28.0 if kind == "wall" else 40.0 * float(width)
+	var bar := Rect2(center.x - bar_width * 0.5, bounds.position.y - 6, bar_width, 3)
+	draw_rect(bar, Color(0, 0, 0, 0.7))
+	bar.size.x *= ratio
+	draw_rect(bar, PALETTE.green if ratio > 0.35 else PALETTE.red)
 	if selected_entity >= 0 and selected_entity < structures.size() and structures[selected_entity] == entry:
 		draw_rect(bounds.grow(3), PALETTE.blue, false, 2.0)
 
@@ -2624,8 +2657,8 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		ZombieVisual.draw_alive(self, enemy, p, run_seconds, camera)
 		if float(enemy.hp) < float(enemy.max_hp):
 			var ratio := clampf(float(enemy.hp) / float(enemy.max_hp), 0.0, 1.0)
-			draw_rect(Rect2(p.x - 12, p.y - 33, 24, 3), Color(0, 0, 0, 0.65))
-			draw_rect(Rect2(p.x - 12, p.y - 33, 24 * ratio, 3), PALETTE.green)
+			draw_rect(Rect2(p.x - 12, p.y - 48, 24, 3), Color(0, 0, 0, 0.65))
+			draw_rect(Rect2(p.x - 12, p.y - 48, 24 * ratio, 3), PALETTE.green)
 		return
 	if String(enemy.kind) == "bomber" and float(enemy.get("charge", 0)) > 0.0:
 		var pulse := 56.0 - 28.0 * maxf(0.0, float(enemy.charge)) / 0.72
@@ -2671,7 +2704,16 @@ func _draw_effect(effect: Dictionary) -> void:
 	var b := _world_to_screen(effect.b)
 	var alpha := clampf(float(effect.time) / 0.25, 0.0, 1.0)
 	var c: Color = effect.get("color", PALETTE.gold)
-	if bool(effect.get("blast", false)):
+	if effect.has("hit_angle"):
+		var strength := clampf(float(effect.time) / HIT_SPARK_TIME, 0.0, 1.0)
+		var age := 1.0 - strength
+		for spread in [-0.9, -0.3, 0.22, 0.78]:
+			var ray := Vector2.from_angle(float(effect.hit_angle) + float(spread))
+			var start := a + ray * (4.0 + 18.0 * age)
+			draw_line(start, start + ray * (4.0 + 7.0 * strength), Color(c, strength), 2.0)
+		if age < 0.32:
+			draw_circle(a, 3.5 * strength, Color("#fff0cb"))
+	elif bool(effect.get("blast", false)):
 		draw_arc(a, 24.0 + 110.0 * (1.0 - alpha), 0, TAU, 42, Color(c, alpha), 3.0)
 	else:
 		draw_line(a, b, Color(c, alpha), 2.0)
