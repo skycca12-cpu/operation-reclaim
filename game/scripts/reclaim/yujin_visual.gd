@@ -2,6 +2,7 @@ extends RefCounted
 
 const FRONT = preload("res://assets/characters/yujin/down.png")
 const BACK = preload("res://assets/characters/yujin/up.png")
+const FRONT_SAW = preload("res://assets/characters/yujin/front_saw.png")
 const SAW = preload("res://assets/characters/yujin/weapon.png")
 const IDLE := [
 	preload("res://assets/characters/yujin/idle0.png"),
@@ -73,7 +74,6 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	var size := sprite.get_size() * (height / sprite.get_height())
 	var center := position + Vector2(0.0, FOOT_OFFSET + bob)
 	var lean := facing * (sin(progress * PI) * 4.0) if attacking else Vector2.ZERO
-	var front_cut := attacking and not side and not back
 	if dashing:
 		canvas.draw_circle(position, 24.0, Color("#739de33b"))
 	canvas.draw_set_transform(position + Vector2(0.0, FOOT_OFFSET - 2.0), 0.0, Vector2(1.0, 0.35))
@@ -86,31 +86,40 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	var anchor_x := size.x * 0.33 if side else size.x * 0.5
 	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false)
 	canvas.draw_set_transform(Vector2.ZERO)
-	if front_cut:
+	if not side and not back:
 		_draw_front_cut(canvas, center + lean, progress)
-	elif not side and not back:
-		_draw_saw(canvas, center + lean, facing, progress)
 
 
 func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> void:
-	var sweep := sin(progress * TAU)
-	var grip := (center + Vector2(0.0, -25.0)).round()
-	var angle := PI * 0.5 + sweep * 0.27
-	# The blade in the source image is tilted up from its handle.
-	canvas.draw_set_transform(grip, angle + deg_to_rad(27.0))
-	canvas.draw_texture_rect(SAW, Rect2(-18.0, -23.0, 66.0, 43.0), false)
+	const TIP_DISTANCE := 51.0
+	var grip := (center + Vector2(0.0, -34.0)).round()
+	var tilt := _front_cut_tilt(progress)
+	if progress > 0.22 and progress < 0.79:
+		var points := PackedVector2Array()
+		for i in range(10):
+			var sample := maxf(0.0, progress - 0.24 * (1.0 - float(i) / 9.0))
+			points.append(grip + Vector2.DOWN.rotated(_front_cut_tilt(sample)) * TIP_DISTANCE)
+		var opacity := sin(inverse_lerp(0.22, 0.79, progress) * PI)
+		canvas.draw_polyline(points, Color(0.74, 0.16, 0.13, opacity * 0.8), 5.0, true)
+		canvas.draw_polyline(points, Color(1.0, 0.58, 0.43, opacity * 0.9), 2.0, true)
+	canvas.draw_set_transform(grip, tilt)
+	canvas.draw_texture_rect(FRONT_SAW, Rect2(-17.0, -4.0, 34.0, 56.0), false)
 	canvas.draw_set_transform(Vector2.ZERO)
-	if progress >= 0.17 and progress <= 0.70:
-		var arc_end := angle + 0.32
-		var alpha := sin(inverse_lerp(0.17, 0.70, progress) * PI)
-		canvas.draw_arc(grip, 42.0, arc_end - 1.16, arc_end, 14, Color(0.95, 0.28, 0.16, alpha), 4.0)
-		canvas.draw_arc(grip, 41.0, arc_end - 0.9, arc_end, 12, Color(1.0, 0.79, 0.53, alpha), 1.5)
+
+
+func _front_cut_tilt(progress: float) -> float:
+	# Hold the blade straight, cock it right, sweep left, then settle.
+	if progress < 0.22:
+		return -0.27 * smoothstep(0.06, 0.22, progress)
+	if progress < 0.60:
+		return lerpf(-0.27, 0.30, smoothstep(0.22, 0.60, progress))
+	return 0.30 * (1.0 - smoothstep(0.60, 0.94, progress))
 
 
 func _draw_saw(canvas: CanvasItem, center: Vector2, direction: Vector2, progress: float) -> void:
 	var angle := direction.angle() + deg_to_rad(27.0)
 	angle += sin(progress * TAU) * 0.14
-	var grip := Vector2(18.0, -23.0) if direction.y > 0.0 else Vector2(13.0, -32.0)
+	var grip := Vector2(13.0, -32.0)
 	canvas.draw_set_transform((center + grip).round(), angle)
 	canvas.draw_texture_rect(SAW, Rect2(-18.0, -23.0, 66.0, 43.0), false)
 	canvas.draw_set_transform(Vector2.ZERO)
