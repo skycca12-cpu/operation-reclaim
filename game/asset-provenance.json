@@ -197,9 +197,9 @@
         "scripts/reclaim/flow/boot_screen.gd"
       ],
       "regions": [],
-      "sha256": "sha256:6da3c1f1efb401670961e30cc504cf593cd3b12b1b037a4a372b56fdc88b836a",
+      "sha256": "sha256:7343a9abd87d54bca2cb765247c11cc10fa9501c8dd7fb5ee5b976a2cda8808c",
       "shipped": null,
-      "size": 1949122,
+      "size": 1940290,
       "source": {},
       "status": "present",
       "transformations": [],
