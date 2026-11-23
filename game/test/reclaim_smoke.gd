@@ -67,6 +67,18 @@ func _run() -> void:
 	game.set("player_pos", game.call("_cell_world", Vector2i(2, 3)))
 	game.call("_move_player", Vector2(80, 0))
 	_check((game.get("player_pos") as Vector2).x < 0.0, "player collides with HQ footprint")
+	var trap_cell := Vector2i(1, 4)
+	var trap_center: Vector2 = game.call("_cell_world", trap_cell)
+	game.set("player_pos", trap_center)
+	_check(String(game.call("_validate_placement", "wall", trap_cell)).contains("대원") and
+		String(game.call("_validate_placement", "supply", Vector2i(0, 4))).contains("대원"),
+		"walls and two-cell facilities cannot be placed across the player")
+	structures.append({"kind": "wall", "cell": trap_cell, "hp": 100.0})
+	for step in range(10):
+		game.call("_move_player", Vector2(4, 0))
+	_check(game.get("player_pos").x > trap_center.x + 37.0, "player can walk out of a legacy overlapping structure")
+	structures.pop_back()
+	_test_combat_zoom_and_augments(game)
 	for i in range(5):
 		structures.append({"kind": "heavy", "cell": Vector2i(i, 0), "hp": 100.0, "max_hp": 100.0, "level": 1, "cool": 0.0})
 	game.set("money", 500)
@@ -119,12 +131,12 @@ func _run() -> void:
 	var pursuer := _spawn_test_zombie(game, player_pos + Vector2(120, 0), 100.0)
 	var distance_before: float = pursuer.pos.distance_to(player_pos)
 	game.call("_update_enemies", 0.1)
-	_check(pursuer.target == "player" and pursuer.pos.distance_to(player_pos) < distance_before, "normal zombie targets and approaches the player")
+	_check(pursuer.target == "player" and pursuer.moving and pursuer.pos.distance_to(player_pos) < distance_before, "normal zombie targets and approaches the player")
 	pursuer.pos = player_pos + Vector2(25, 0)
 	pursuer.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
-	_check(game.get("player_hp") < health_before and pursuer.attack_until > game.get("run_seconds"), "normal zombie damages the player and starts its attack animation")
+	_check(game.get("player_hp") < health_before and pursuer.attack_until > game.get("run_seconds") and pursuer.attack_direction.is_equal_approx(Vector2.LEFT), "normal zombie damages the player and starts its attack animation")
 	_test_normal_zombies(game, pursuer)
 	enemies.clear()
 	game.set("stage_elapsed", 21.95)
@@ -167,6 +179,31 @@ func _run() -> void:
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_combat_zoom_and_augments(game: Control) -> void:
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	wheel.position = game.size * 0.5 + Vector2(30.0, 0.0)
+	for i in range(6):
+		root.push_input(wheel.duplicate(), true)
+	_check(is_equal_approx(game.get("camera_zoom"), 1.6), "mouse wheel zooms the battlefield to its maximum")
+	var camera_point := game.size * 0.5 + Vector2(76.8, 0)
+	var world_point: Vector2 = game.call("_screen_to_world", camera_point)
+	_check(world_point.is_equal_approx(game.get("player_pos") + Vector2(48.0, 0.0)), "zoomed clicks retain one-tile world accuracy")
+	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	for i in range(6):
+		root.push_input(wheel.duplicate(), true)
+	_check(is_equal_approx(game.get("camera_zoom"), 1.0), "mouse wheel returns to the original view")
+	game.call("_offer_augments")
+	var row := (game.get("augment_screen") as Control).find_child("AugmentCards", true, false) as HBoxContainer
+	_check(row.get_child_count() == 3 and row.get_combined_minimum_size().x <= 415.0, "the three augment cards use a compact row")
+	var reroll: Button = game.get("augment_reroll_button")
+	_check(reroll.flat and reroll.size_flags_horizontal == Control.SIZE_SHRINK_CENTER, "reroll is compact instead of stretching")
+	game.call("_reroll_augments")
+	_check(reroll.disabled and row.get_child_count() == 3, "reroll is available exactly once and leaves three cards")
+	game.call("_show_screen", "play")
 
 
 func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
@@ -339,7 +376,7 @@ func _check(condition: bool, context: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI and variants, timed stages, pause and save/continue")
+		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI and variants, combat zoom, compact augments, timed stages, pause and save/continue")
 		quit(0)
 	else:
 		for failure in failures: push_error("[reclaim-tests] " + failure)
