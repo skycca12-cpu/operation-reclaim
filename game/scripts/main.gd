@@ -103,6 +103,9 @@ var player_drone_level := 0
 var supply_income := 0
 var research_bonus := 0
 var sound_on := true
+var bgm_volume := 100
+var effects_volume := 100
+var audio_save_timer: Timer
 var zombie_sound_at := 0.0
 var impact_sound_at := 0.0
 var shake_on := true
@@ -164,6 +167,12 @@ func _ready() -> void:
 	set_process(true)
 	set_process_unhandled_input(true)
 	_load_data()
+	AudioDirector.set_game_audio_mix(bgm_volume / 100.0, effects_volume / 100.0, sound_on)
+	audio_save_timer = Timer.new()
+	audio_save_timer.one_shot = true
+	audio_save_timer.wait_time = 0.25
+	audio_save_timer.timeout.connect(_save_all)
+	add_child(audio_save_timer)
 	flow_sfx = FlowSfx.new()
 	add_child(flow_sfx)
 	flow_sfx.enabled = sound_on
@@ -426,9 +435,43 @@ func _build_settings_screen() -> void:
 	pause_binding_button = _make_button("", _begin_pause_binding, PALETTE.blue, 380)
 	box.add_child(pause_binding_button)
 	box.add_child(_make_button("화면 효과: 켬", _toggle_effects, PALETTE.blue, 380))
-	box.add_child(_make_button("배경음/효과음: 켬", _toggle_sound, PALETTE.blue, 380))
+	box.add_child(_make_button("배경음/효과음: %s" % ("켬" if sound_on else "끔"), _toggle_sound, PALETTE.blue, 380))
+	_add_volume_slider(box, "배경음악", bgm_volume, true)
+	_add_volume_slider(box, "효과음", effects_volume, false)
 	box.add_child(_make_button("메뉴로", _show_screen.bind("menu"), PALETTE.gold, 260))
 	_update_binding_labels()
+
+
+func _add_volume_slider(box: VBoxContainer, title: String, value: int, is_bgm: bool) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var title_label := _make_label(title, 15, PALETTE.text)
+	title_label.custom_minimum_size.x = 80.0
+	row.add_child(title_label)
+	var slider := HSlider.new()
+	slider.name = "BgmVolume" if is_bgm else "EffectsVolume"
+	slider.max_value = 100.0
+	slider.step = 1.0
+	slider.value = value
+	slider.custom_minimum_size = Vector2(190, 26)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(slider)
+	var percent := _make_label("%d%%" % value, 15, PALETTE.gold)
+	percent.custom_minimum_size.x = 45.0
+	percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(percent)
+	slider.value_changed.connect(_set_audio_volume.bind(is_bgm, percent))
+	box.add_child(row)
+
+
+func _set_audio_volume(value: float, is_bgm: bool, percent: Label) -> void:
+	if is_bgm:
+		bgm_volume = roundi(value)
+	else:
+		effects_volume = roundi(value)
+	percent.text = "%d%%" % roundi(value)
+	AudioDirector.set_game_audio_mix(bgm_volume / 100.0, effects_volume / 100.0, sound_on)
+	audio_save_timer.start()
 
 
 func _build_perk_screen() -> void:
@@ -595,6 +638,9 @@ func _build_augment_screen() -> void:
 
 
 func _show_screen(which: String) -> void:
+	if screen == "settings" and which != "settings" and not audio_save_timer.is_stopped():
+		audio_save_timer.stop()
+		_save_all()
 	var was_in_combat := screen in ["play", "augment", "pause"]
 	if which != "play":
 		manual_trigger = false
@@ -911,6 +957,7 @@ func _toggle_effects() -> void:
 
 func _toggle_sound() -> void:
 	sound_on = not sound_on
+	AudioDirector.set_game_audio_mix(bgm_volume / 100.0, effects_volume / 100.0, sound_on)
 	if flow_sfx != null: flow_sfx.enabled = sound_on
 	if not sound_on:
 		AudioDirector.stop_music(0.0)
@@ -1963,6 +2010,8 @@ func _save_all() -> void:
 		saved_run["reload_remaining"] = player_reload_timer
 		saved_run["manual_attack"] = manual_attack
 		output["saved_run"] = saved_run
+	output["bgm_volume"] = bgm_volume
+	output["effects_volume"] = effects_volume
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file != null:
 		file.store_string(JSON.stringify(output))
@@ -1984,6 +2033,8 @@ func _load_data() -> void:
 	if dash_key == KEY_TAB: dash_key = KEY_SHIFT
 	if pause_key == KEY_TAB: pause_key = KEY_ESCAPE
 	sound_on = bool(data.get("sound_on", true))
+	bgm_volume = clampi(int(data.get("bgm_volume", 100)), 0, 100)
+	effects_volume = clampi(int(data.get("effects_volume", 100)), 0, 100)
 	shake_on = bool(data.get("shake_on", true))
 	saved_run = data.get("saved_run", {})
 	if not (saved_run is Dictionary): saved_run = {}

@@ -29,6 +29,9 @@ var _music_cue := ""
 var _unlocked := false
 var _headless := false
 var _paused := false
+var _game_sound_enabled := true
+var _game_music_gain := 1.0
+var _game_effects_gain := 1.0
 var _music_tween: Tween
 
 
@@ -244,6 +247,13 @@ func _ensure_buses() -> void:
 		AudioServer.set_bus_name(AudioServer.bus_count - 1, bus_name)
 
 
+func set_game_audio_mix(music_gain: float, effects_gain: float, enabled: bool) -> void:
+	_game_music_gain = clampf(music_gain, 0.0, 1.0)
+	_game_effects_gain = clampf(effects_gain, 0.0, 1.0)
+	_game_sound_enabled = enabled
+	_apply_bus_settings()
+
+
 func _apply_bus_settings() -> void:
 	var mappings := {
 		"Master": "audio.master.volume_db",
@@ -255,7 +265,11 @@ func _apply_bus_settings() -> void:
 		var index := AudioServer.get_bus_index(bus_name)
 		if index >= 0:
 			var duck := 8.0 if bus_name == "Music" and _paused else 0.0
-			AudioServer.set_bus_volume_db(index, float(TuningStore.get_value(mappings[bus_name], 0.0)) - duck)
+			var gain := _game_music_gain if bus_name == "Music" else _game_effects_gain
+			var adjustment := 0.0 if bus_name == "Master" else linear_to_db(maxf(0.001, gain))
+			AudioServer.set_bus_volume_db(index, float(TuningStore.get_value(mappings[bus_name], 0.0)) + adjustment - duck)
+			if bus_name != "Master":
+				AudioServer.set_bus_mute(index, not _game_sound_enabled or gain == 0.0)
 	var master := AudioServer.get_bus_index("Master")
 	if master >= 0:
 		AudioServer.set_bus_mute(master, bool(TuningStore.get_value("audio.master.muted", false)))

@@ -23,9 +23,11 @@ func _ready() -> void:
 	for i in range(5):
 		var p := AudioStreamPlayer.new()
 		p.volume_db = -6.0
+		p.bus = "SFX"
 		add_child(p)
 		_voices.append(p)
 	_rotor = AudioStreamPlayer.new()
+	_rotor.bus = "SFX"
 	var loop: AudioStreamWAV = (STREAMS.rotor as AudioStreamWAV).duplicate()
 	loop.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	loop.loop_begin = 0
