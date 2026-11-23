@@ -25,6 +25,7 @@ const CELL := 48.0
 const PLAYER_RADIUS := 13.0
 const GRID_SIZE := 7
 const MAX_ENEMIES := 320
+const WAVE_SPAWN_MULTIPLIER := 5
 const WAVE_SECONDS := 22.0
 const MAP_LIMIT := Vector2(2200.0, 1600.0)
 const BASE_CELL := Vector2i(3, 3)
@@ -1579,9 +1580,9 @@ func _update_spawn(delta: float) -> void:
 	if spawn_timer <= 0.0 and enemies.size() < MAX_ENEMIES:
 		var base_interval := 1.25 / float(difficulty.get("spawn", 1.0))
 		spawn_timer = maxf(0.18, base_interval * (1.0 - minf(0.55, float(stage) * 0.004)))
-		var count := 1 + (1 if stage >= 16 and _random.randf() < 0.25 else 0)
+		var base_count := 1 + (1 if stage >= 16 and _random.randf() < 0.25 else 0)
+		var count := mini(base_count * WAVE_SPAWN_MULTIPLIER, MAX_ENEMIES - enemies.size())
 		for n in range(count):
-			if enemies.size() >= MAX_ENEMIES: break
 			var kind := _choose_enemy_kind()
 			var angle := _random.randf_range(0.0, TAU)
 			var distance := _random.randf_range(470.0, 740.0)

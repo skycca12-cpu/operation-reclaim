@@ -204,9 +204,29 @@ func _run() -> void:
 	resumed.set_process(false)
 	await create_timer(0.45).timeout
 	_test_yujin(resumed)
+	_test_spawn_multiplier(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_spawn_multiplier(game: Control) -> void:
+	var previous_interval := INF
+	for index in range(Data.DIFFICULTIES.size()):
+		game.set("difficulty_index", index)
+		game.call("_reset_run")
+		game.set("spawn_timer", 0.0)
+		game.call("_update_spawn", 0.0)
+		var enemies: Array = game.get("enemies")
+		var interval: float = game.get("spawn_timer")
+		_check(enemies.size() == 5, "difficulty %d spawns five enemies per early wave batch" % index)
+		_check(interval < previous_interval, "difficulty %d preserves spawn interval ordering" % index)
+		previous_interval = interval
+	var active: Array = game.get("enemies")
+	for i in range(70):
+		game.set("spawn_timer", 0.0)
+		game.call("_update_spawn", 0.0)
+	_check(active.size() == 320, "larger wave batches respect the active enemy cap")
 
 
 func _test_yujin(game: Control) -> void:
