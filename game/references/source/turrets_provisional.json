@@ -1,0 +1,87 @@
+{
+  "status": "prototype_values_not_final_balance",
+  "build_grid": {
+    "width": 7,
+    "height": 7
+  },
+  "turret_footprint": [
+    1,
+    1
+  ],
+  "max_turrets": {
+    "standard": 6,
+    "han_yujin": 8
+  },
+  "levels": 5,
+  "han_yujin_turret_bonus": {
+    "damage_multiplier": 1.15,
+    "repair_multiplier": 1.15,
+    "status": "provisional"
+  },
+  "turrets": [
+    {
+      "id": "basic",
+      "name": "기본 자동포탑",
+      "role": "balanced",
+      "damage": 12,
+      "cooldown": 0.5,
+      "range": 160,
+      "visual": "단일 포신→방열판·장갑·조준 센서"
+    },
+    {
+      "id": "heavy",
+      "name": "중기관총 포탑",
+      "role": "rapid fire",
+      "damage": 7,
+      "cooldown": 0.16,
+      "range": 145,
+      "visual": "굵은 포신→탄약통·회전총열"
+    },
+    {
+      "id": "rocket",
+      "name": "로켓 포탑",
+      "role": "area damage",
+      "damage": 40,
+      "cooldown": 2.4,
+      "range": 205,
+      "visual": "단일 발사관→다연장 발사관"
+    },
+    {
+      "id": "electric",
+      "name": "전기 포탑",
+      "role": "chain",
+      "damage": 14,
+      "cooldown": 1.1,
+      "range": 140,
+      "visual": "소형 코일→축전기·대형 코일"
+    },
+    {
+      "id": "flame",
+      "name": "화염 포탑",
+      "role": "close aoe",
+      "damage": 5,
+      "cooldown": 0.12,
+      "range": 88,
+      "visual": "짧은 노즐→연료통·이중 노즐"
+    },
+    {
+      "id": "freeze",
+      "name": "냉각 포탑",
+      "role": "slow",
+      "damage": 4,
+      "cooldown": 0.9,
+      "range": 130,
+      "visual": "냉각 노즐→냉매통·결빙 장치"
+    },
+    {
+      "id": "repair",
+      "name": "수리 포탑",
+      "role": "support",
+      "damage": 0,
+      "cooldown": 1.5,
+      "range": 165,
+      "visual": "수리 장치→로봇 팔·수리 드론"
+    }
+  ],
+  "notes": "모든 수치는 임시 테스트용. 최신 확정명세의 디자인/수량 규칙 우선."
+}

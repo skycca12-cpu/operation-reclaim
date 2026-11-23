@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 2,
+  "title": "수도 탈환작전",
+  "description": "제주 도심에서 살아남고, 포탑을 직접 세워 거점을 지키는 한국어 2D 생존 게임.",
+  "defaultCaptions": {},
+  "assets": {
+    "favicon": "assets/share/favicon.png",
+    "og": "assets/share/og.png"
+  }
+}

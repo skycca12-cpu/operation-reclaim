@@ -1,0 +1,39 @@
+{
+  "region": "제주도",
+  "camera": "follow_player",
+  "world_visible_width_multiplier": 2,
+  "world_visible_height_multiplier": 2,
+  "build_grid": [
+    7,
+    7
+  ],
+  "building_footprint": [
+    2,
+    1
+  ],
+  "turret_footprint": [
+    1,
+    1
+  ],
+  "turret_limit": {
+    "standard": 6,
+    "han_yujin": 8
+  },
+  "wall_footprint": [
+    1,
+    1
+  ],
+  "wall_gates": [
+    "north",
+    "south",
+    "east",
+    "west"
+  ],
+  "vertical_wall_stacking": false,
+  "starting_objects": [
+    "hq_tent",
+    "selected_player"
+  ],
+  "other_objects_at_start": [],
+  "world_dimensions_status": "provisional_relative_to_camera"
+}

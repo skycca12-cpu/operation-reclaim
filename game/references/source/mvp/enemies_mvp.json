@@ -1,0 +1,65 @@
+{
+  "baseline": {
+    "hp_stage1": 100,
+    "hp_stage100": 600,
+    "attack_stage1": 5,
+    "attack_stage100": 15
+  },
+  "enemies": [
+    {
+      "id": "normal",
+      "name": "일반",
+      "intro_stage": 1,
+      "hp_multiplier": 1,
+      "attack_multiplier": 1,
+      "behavior": "접근 근접공격"
+    },
+    {
+      "id": "runner",
+      "name": "질주",
+      "intro_stage": 10,
+      "hp_multiplier": 0.7,
+      "attack_multiplier": 0.8,
+      "behavior": "빠른 접근 근접공격"
+    },
+    {
+      "id": "bomber",
+      "name": "자폭",
+      "intro_stage": 20,
+      "hp_multiplier": 0.4,
+      "attack_multiplier": 4,
+      "behavior": "접근 후 예고하고 폭발; attack_multiplier는 폭발 피해 기준"
+    },
+    {
+      "id": "spitter",
+      "name": "독액",
+      "intro_stage": 25,
+      "hp_multiplier": 0.8,
+      "attack_multiplier": 0.7,
+      "behavior": "원거리 독액 투사체"
+    },
+    {
+      "id": "brute",
+      "name": "괴력",
+      "intro_stage": 35,
+      "hp_multiplier": 2.5,
+      "attack_multiplier": 1.8,
+      "behavior": "원거리 바위 투척"
+    }
+  ],
+  "bosses": [
+    {
+      "stage": 40,
+      "name": "철갑 포식자"
+    },
+    {
+      "stage": 80,
+      "name": "파쇄자"
+    },
+    {
+      "stage": 100,
+      "name": "군체 지배자"
+    }
+  ],
+  "notes": "비행·지중·중장갑·거대 변이는 MVP 일반 적 풀에서 제외. 보스 수치 미확정; 구현 후 튜닝."
+}
