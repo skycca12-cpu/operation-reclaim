@@ -1,5 +1,6 @@
 extends RefCounted
 
+const WeaponGrip = preload("res://scripts/reclaim/weapon_grip.gd")
 const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.png")
 const FRONT_M16 = preload("res://assets/reclaim/characters/harin_front_m16.png")
 const FRONT_M16_RECT := Rect2(-9, 7, 18, 28)
@@ -83,8 +84,15 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 
 
 func _draw_front_rifle(canvas: CanvasItem, center: Vector2) -> void:
-	var destination := Rect2(center.round() + FRONT_M16_RECT.position, FRONT_M16_RECT.size)
-	canvas.draw_texture_rect(FRONT_M16, destination, false)
+	var body := center.round()
+	var trigger_hand := body + Vector2(-4, 15)
+	var support_hand := body + Vector2(3, 23)
+	var sleeve := Color("#534451")
+	WeaponGrip.draw_sleeve(canvas, body + Vector2(-14, 1), body + Vector2(-13, 11), trigger_hand, sleeve)
+	WeaponGrip.draw_sleeve(canvas, body + Vector2(14, 1), body + Vector2(12, 15), support_hand, sleeve)
+	canvas.draw_texture_rect(FRONT_M16, Rect2(body + FRONT_M16_RECT.position, FRONT_M16_RECT.size), false)
+	WeaponGrip.draw_glove(canvas, trigger_hand, Color("#705661"))
+	WeaponGrip.draw_glove(canvas, support_hand, Color("#705661"))
 
 func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2) -> void:
 	var normal := direction.orthogonal()

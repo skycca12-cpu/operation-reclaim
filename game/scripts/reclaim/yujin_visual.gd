@@ -1,5 +1,6 @@
 extends RefCounted
 
+const WeaponGrip = preload("res://scripts/reclaim/weapon_grip.gd")
 const FRONT = preload("res://assets/characters/yujin/down.png")
 const BACK = preload("res://assets/characters/yujin/up.png")
 const FRONT_SAW = preload("res://assets/characters/yujin/front_saw.png")
@@ -95,7 +96,7 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> void:
 	const SAW_RECT := Rect2(-11.0, -4.0, 22.0, 42.0)
 	const TIP_DISTANCE := SAW_RECT.end.y - 1.0
-	var grip := (center + Vector2(0.0, -34.0)).round()
+	var grip := (center + Vector2(0.0, -30.0)).round()
 	var tilt := _front_cut_tilt(progress)
 	if progress > 0.13 and progress < 0.88:
 		var warmup := smoothstep(0.13, 0.35, progress)
@@ -114,9 +115,16 @@ func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> vo
 		canvas.draw_colored_polygon(ribbon, Color(0.88, 0.19, 0.12, warmup * fade * 0.88))
 		var edge := ribbon.slice(0, 13)
 		canvas.draw_polyline(edge, Color(1.0, 0.75, 0.52, warmup * fade), 2.0, true)
+	var rear_hand := grip + Vector2(-5, 5).rotated(tilt)
+	var front_hand := grip + Vector2(6, 9).rotated(tilt)
+	var sleeve := Color("#a34b40")
+	WeaponGrip.draw_sleeve(canvas, center + Vector2(-12, -35), center + Vector2(-17, -20), rear_hand, sleeve)
+	WeaponGrip.draw_sleeve(canvas, center + Vector2(13, -35), center + Vector2(17, -20), front_hand, sleeve)
 	canvas.draw_set_transform(grip, tilt)
 	canvas.draw_texture_rect(FRONT_SAW, SAW_RECT, false)
 	canvas.draw_set_transform(Vector2.ZERO)
+	WeaponGrip.draw_glove(canvas, rear_hand, Color("#977258"))
+	WeaponGrip.draw_glove(canvas, front_hand, Color("#977258"))
 
 
 func _front_cut_tilt(progress: float) -> float:
