@@ -635,11 +635,14 @@ func _on_menu_continue() -> void:
 	_ui_sound(true)
 	_resume_run()
 func _quit_game() -> void:
-	_ui_sound()
 	if OS.has_feature("web"):
+		_ui_sound()
 		flow_menu.show_notice("웹 버전은 브라우저 탭을 닫으면 종료됩니다.")
 		return
 	_save_all()
+	flow_sfx.stop_all()
+	# Let the audio mixer release stopped playbacks before exiting.
+	await get_tree().create_timer(0.12).timeout
 	get_tree().quit()
 func _ui_sound(confirm := false) -> void:
 	if flow_sfx != null:
@@ -780,10 +783,16 @@ func _load_saved_run() -> void:
 	player_hp = clampf(float(state.get("player_hp", player_max_hp)), 1.0, player_max_hp)
 	player_projectiles.shots.clear()
 	enemy_shots.clear()
-	player_magazine = int(hero.magazine)
+	var capacity := int(hero.magazine)
+	player_magazine = clampi(int(state.get("magazine", capacity)), 0, capacity)
 	player_attack_timer = 0.0
 	player_reload_timer = 0.0
-	manual_attack = false
+	if capacity > 0 and player_magazine == 0:
+		player_reload_timer = clampf(float(state.get("reload_remaining", hero.reload)), 0.0, float(hero.reload))
+		if player_reload_timer == 0.0:
+			player_magazine = capacity
+	manual_attack = bool(state.get("manual_attack", false))
+	manual_trigger = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
 	player_pos = Vector2(float(pp[0]), float(pp[1]))
 	structures.clear()
@@ -1848,6 +1857,9 @@ func _save_all() -> void:
 		if boss_80_spawned: boss_flags.append(80)
 		if boss_100_spawned: boss_flags.append(100)
 		saved_run["boss_flags"] = boss_flags
+		saved_run["magazine"] = player_magazine
+		saved_run["reload_remaining"] = player_reload_timer
+		saved_run["manual_attack"] = manual_attack
 		output["saved_run"] = saved_run
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file != null:

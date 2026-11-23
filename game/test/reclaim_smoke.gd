@@ -133,7 +133,31 @@ func _run() -> void:
 	game.call("_close_pause")
 	_check(game.get("screen") == "play", "pause overlay resumes the run")
 	_check(Data.BOSSES.has(40) and Data.BOSSES.has(80) and Data.BOSSES.has(100), "boss data includes stages 40, 80 and 100")
+	# Save mid-reload, then instantiate a fresh game to verify the disk round trip.
+	game.set("manual_attack", true)
+	game.set("player_magazine", 0)
+	game.set("player_reload_timer", 0.8)
+	var saved_position: Vector2 = game.get("player_pos")
+	var saved_structure_count := structures.size()
+	game.call("_save_all")
 	game.queue_free()
+	await process_frame
+	var resumed := packed.instantiate()
+	root.add_child(resumed)
+	resumed.call("_on_menu_continue")
+	_check(resumed.get("screen") == "play" and resumed.get("stage") == 2, "continue restores the saved wave from disk")
+	_check(resumed.get("player_pos").is_equal_approx(saved_position) and resumed.get("structures").size() == saved_structure_count, "continue restores player position and built structures")
+	_check(resumed.get("manual_attack") and resumed.get("player_magazine") == 0 and is_equal_approx(resumed.get("player_reload_timer"), 0.8), "continue preserves manual mode and reload progress")
+	_check(not resumed.get("manual_trigger"), "continue requires a fresh manual trigger press")
+	resumed.call("_update_player_attack", 0.9)
+	_check(resumed.get("player_magazine") == 30 and resumed.get("player_projectiles").shots.is_empty(), "continued reload finishes without an unintended shot")
+	resumed.set("saved_run", {"hero": 0})
+	resumed.call("_load_saved_run")
+	_check(not resumed.get("manual_attack") and resumed.get("player_magazine") == 6 and resumed.get("player_reload_timer") == 0.0, "legacy saves default to automatic mode and a full magazine")
+	# Allow the 350 ms Continue cue to finish before freeing the scene.
+	resumed.set_process(false)
+	await create_timer(0.45).timeout
+	resumed.queue_free()
 	await process_frame
 	_finish()
 
@@ -279,7 +303,7 @@ func _check(condition: bool, context: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI, timed stages and pause")
+		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI, timed stages, pause and save/continue")
 		quit(0)
 	else:
 		for failure in failures: push_error("[reclaim-tests] " + failure)
