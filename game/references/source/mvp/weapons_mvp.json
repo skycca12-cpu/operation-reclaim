@@ -1,0 +1,58 @@
+[
+  {
+    "character": "강태준",
+    "weapon": "산탄총",
+    "magazine": 6,
+    "interval": 1.2,
+    "reload": 2,
+    "range_m": 4,
+    "damage_per_projectile": 40,
+    "projectiles": 5,
+    "typical_hit_ratio": 0.6,
+    "effective_dps_unaugmented": 80.22
+  },
+  {
+    "character": "윤시혁",
+    "weapon": "돌격소총",
+    "magazine": 30,
+    "interval": 0.15,
+    "reload": 2,
+    "range_m": 8,
+    "damage_per_projectile": 22,
+    "projectiles": 1,
+    "typical_hit_ratio": 1,
+    "effective_dps_unaugmented": 119.99
+  },
+  {
+    "character": "서하린",
+    "weapon": "M4 계열 돌격소총",
+    "magazine": 30,
+    "interval": 0.16,
+    "reload": 2,
+    "range_m": 8,
+    "damage_per_projectile": null,
+    "projectiles": 1,
+    "typical_hit_ratio": 1,
+    "effective_dps_unaugmented": null,
+    "note": "권총 폐기. 데미지는 윤시혁과 드론 총합 화력 고려하여 플레이 테스트에서 결정."
+  },
+  {
+    "character": "한유진",
+    "weapon": "전기톱",
+    "attack_type": "전방 지속 절단",
+    "ammo_system": "없음",
+    "aim": "자동 방향 / 마우스 수동 조준",
+    "damage_tick_seconds": 0.2,
+    "damage_per_tick": null,
+    "attack_arc_degrees": 90,
+    "range_tiles": 1.5,
+    "overheat_enabled": true,
+    "overheat_values": "M1/M3 테스트로 결정",
+    "specialty": [
+      "현장 개조 전문가",
+      "절단 가속",
+      "긴급 정비"
+    ],
+    "note": "전기톱 지속 절단형 확정. 수치(피해/과열/수리)는 잠정이며 검수 필요. 프레임 독립 고정 간격 피해 처리."
+  }
+]

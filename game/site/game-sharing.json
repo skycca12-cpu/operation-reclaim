@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 2,
+  "publicationOrigin": "https://reclaim-d5xwbu4c.manus.game",
+  "title": "수도 탈환작전",
+  "description": "제주 도심에서 살아남고, 포탑을 직접 세워 거점을 지키는 한국어 2D 생존 게임.",
+  "defaultCaptions": {},
+  "assets": {
+    "og": {
+      "digest": "sha256:58f32fe546d9e8984957d64551121187e45f4e86b36d718cab962f09cebe3b35",
+      "path": "share/58f32fe546d9e8984957d64551121187e45f4e86b36d718cab962f09cebe3b35.png",
+      "mime": "image/png",
+      "width": 2560,
+      "height": 1440,
+      "sizeBytes": 4230518,
+      "sourcePath": "assets/share/og.png"
+    },
+    "favicon": {
+      "digest": "sha256:afa83e9080adfba53292f8cd2e15813cb3a2fde34f743ce52e2c26c6d1e03359",
+      "path": "share/afa83e9080adfba53292f8cd2e15813cb3a2fde34f743ce52e2c26c6d1e03359.png",
+      "mime": "image/png",
+      "width": 128,
+      "height": 128,
+      "sizeBytes": 1277,
+      "sourcePath": "assets/share/favicon.png"
+    }
+  }
+}

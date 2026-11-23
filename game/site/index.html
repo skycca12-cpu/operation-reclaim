@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="manus-game-loading-screen" content="1">
+  
+  
+
+
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, "Noto Sans KR", sans-serif; background: #121719; color: #edf0e8; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #121719; }
+    #canvas { display: block; width: 100%; height: 100%; outline: none; }
+    #loading { position: fixed; inset: 0; z-index: 4; display: grid; align-content: center; justify-items: center; gap: 18px; padding: max(28px, env(safe-area-inset-top)) 24px max(28px, env(safe-area-inset-bottom)); background: #121719; text-align: center; }
+    #loading[hidden], [hidden] { display: none !important; }
+    .mark { display: block; width: 64px; height: 64px; object-fit: contain; border-radius: 14px; }
+    h1 { margin: 0; color: #f1eadb; font-size: clamp(25px, 5vw, 42px); font-weight: 800; letter-spacing: .03em; line-height: 1.15; }
+    #loading-status { margin: 0; color: #b8c1b9; font-size: 14px; }
+    progress { width: min(330px, 78vw); height: 7px; border: 0; border-radius: 8px; overflow: hidden; appearance: none; background: #313b38; accent-color: #d0a873; }
+    progress::-webkit-progress-bar { background: #313b38; border-radius: 8px; }
+    progress::-webkit-progress-value { background: #d0a873; border-radius: 8px; }
+    progress::-moz-progress-bar { background: #d0a873; border-radius: 8px; }
+    #loading-notice { max-width: 420px; margin: 0; color: #d0d6ce; line-height: 1.55; }
+    #loading-retry { min-height: 44px; padding: 0 22px; border: 1px solid #d0a873; border-radius: 7px; background: #26312e; color: #f1eadb; font: inherit; cursor: pointer; }
+    #loading-retry:focus-visible { outline: 3px solid #f1eadb; outline-offset: 3px; }
+    @media (prefers-reduced-motion: no-preference) { progress:indeterminate { animation: breathe 1.5s ease-in-out infinite alternate; } @keyframes breathe { from { opacity: .58; } to { opacity: 1; } } }
+  </style>
+<!-- manus:game-sharing:start -->
+<title>수도 탈환작전</title>
+<link rel="icon" type="image/png" href="./share/afa83e9080adfba53292f8cd2e15813cb3a2fde34f743ce52e2c26c6d1e03359.png">
+<link rel="apple-touch-icon" href="./share/afa83e9080adfba53292f8cd2e15813cb3a2fde34f743ce52e2c26c6d1e03359.png">
+<meta name="description" content="제주 도심에서 살아남고, 포탑을 직접 세워 거점을 지키는 한국어 2D 생존 게임.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="수도 탈환작전">
+<meta property="og:description" content="제주 도심에서 살아남고, 포탑을 직접 세워 거점을 지키는 한국어 2D 생존 게임.">
+<meta property="og:url" content="https://reclaim-d5xwbu4c.manus.game/">
+<meta property="og:image" content="https://reclaim-d5xwbu4c.manus.game/share/58f32fe546d9e8984957d64551121187e45f4e86b36d718cab962f09cebe3b35.png">
+<meta property="og:image:width" content="2560">
+<meta property="og:image:height" content="1440">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:alt" content="수도 탈환작전">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="수도 탈환작전">
+<meta name="twitter:description" content="제주 도심에서 살아남고, 포탑을 직접 세워 거점을 지키는 한국어 2D 생존 게임.">
+<meta name="twitter:image" content="https://reclaim-d5xwbu4c.manus.game/share/58f32fe546d9e8984957d64551121187e45f4e86b36d718cab962f09cebe3b35.png">
+<meta name="twitter:image:alt" content="수도 탈환작전">
+<!-- manus:game-sharing:end -->
+</head>
+<body>
+  <canvas id="canvas" tabindex="0">이 게임은 JavaScript 지원 브라우저가 필요합니다.</canvas>
+  <section id="loading" role="status" aria-live="polite">
+    <img class="mark" alt="" width="64" height="64" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAExElEQVR4nO2dq24VURSGdwmSENLkpOkTVKL6AsVVEBAYUteEpAqJqcQgK/ENBkGDQPYFqkhVn6EWX0QzZTrMzL6utdfl/5KKJufMmdn/t9ae25mztb2zexeAW570XgHQFwjgHAjgHAjgnKccH3J59p7jY0xy8PEb6fK3KI4CEDgdrYVoKgCC56OVCE0EQPD9qBWhWoCU8N98/lXzEa65OD2MvqZGgmIBYsEj9PbEZCgRoUiAtfARPD1rIuRKkC3AUvgInp8lEXIkyDoRhPBlsTTuOTvlyR1gbqGag/99+fPR/y8PXndakzbMdYOUTlB8Klhz+GOuT457r0ITSvNIEsD6cf71yXE439uE871N71VpSkpuUQGstf4YgwgaZZjLJSZB9hRgOfwpGmXIzWdVAOutPwdtIoxZyzGrA3iq/iU0dIWcnBYFQPXH0SDDwFKeyR0A1b+ONBlS82K5I8gbYwmObm47rkkcCECA9NDHzE4B0/kC7T/O0c3tw58UprnN7QegA1QgKexS3AowXPzJ3WmzEPoYtwKEcH8F7c/3q6TXWgt+wLUAMayGPsatAEt303gIfYxLAabhP3u3/+8fZ0c87r8b+Ch8h7gTIHZrdcp9+JZwJUBquJ4kcCUA+B83AuRWtZcu4EKA0jA9SOBCALCMeQFqq9h6FzAtQKvwLEtgWgAQx6wAravWahcwKQBVWBYlMCkASMecANRVaq0LmBKAKxxLEpgSAORjRgDuqrTSBUwI0CsMCxKYEACUo16A3lXY+/NrUS2AlMGXsh4lqBYA1KNWgFZV1+qx61q7gEoBpA621PVaQ6UArRiqn/pnWSSjTgDpVSZ9/aaoEqDl4E6rvmUX0CSBGgE0DWoIetZXjQCABhUCtK6mpXbfemdQQxcQL4CGQVxD+vqLF6A1sSr3dkgoWgDp1ZOK5O0QKwDFoKVWN0UXkCqBWAEADyIFkFottUjcLnECUA1Sblun2hmUJoE4AQAvogSQUv2174shqQuIEUDSoHAgZXvFCAD6IOJJoZTVMG7jVz8+Jb9v/+2Xh/dT/X7Sxelh999i6N4BpLTCXvTe/u4CUNJqJ87y9YGuAvS2Xwo9x6GbAAj/Mb3Gw+wU0LptW50GugiA6p+nx7iwC8CxkVTVytEFuCUwOwWANFgF0Fz9XMsPgbcLsAmAeT8PrvHCFOAcFgG4bOY6VOP6HI5xIxcArb8O6vEzMwVwn6ixcmKIVABUfxsox5H0fgDOa93PNy+ir3n14WvT5fW+lt8CM1MAKAMCOAcCOAcCOAcCOAcCOAcCOAcCOAcCOAcCOAcCOAcCOAcCOAcCOGdWgOnNDriur5NpbnM3saADOAcCOCdZAEwDukjNa1EAKzc9gnuW8syaAtAFdJCT06oA6AI2WMsxeycQXUA2uflEBZizBxLIZC6XWBdP6gCYCnSSklvxeQB0AVmU5rG1vbN7l/ripSdmWviGjFaWgk/t2lkdYGmh6AZ9qA0/hMwOMLD27Fx0A3rWCi53f61IgBDWJQgBIlAQ67QlO+vFAgykPEkbMpSTMr3WHKVVCxBCmgSAhtpD9CYCDEAEPlqdm2kqwABEoKP1STkSAaZAiHKoz8KyCADkglvCnAMBnAMBnPMXFU6MR416zJEAAAAASUVORK5CYII=">
+    <h1 id="game-title">수도 탈환작전</h1>
+    <p id="loading-status">작전 지역을 준비하고 있습니다…</p>
+    <progress id="loading-progress" aria-label="게임 다운로드 진행률"></progress>
+    <p id="loading-notice" hidden></p>
+    <button id="loading-retry" type="button" hidden>다시 시도</button>
+    <noscript>게임을 실행하려면 JavaScript가 필요합니다.</noscript>
+  </section>
+  <script>(function(){var R={"index.wasm":"/manus-storage/game/sha256/fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0.wasm","index.pck":"/manus-storage/game/sha256/717789d42967131d8f741af903d4237d1ee36a3b7b90882bc609455b5b4a61d4.pck"};var f=window.fetch.bind(window);window.fetch=function(i,o){var u=typeof i==="string"?i:(i&&i.url)||"";var b=u.split("?")[0].split("/").pop();return R[b]?f(R[b],o):f(i,o)};})();</script>
+<script>
+    (() => {
+      const config = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":24946716,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+      const threads = false;
+      const canvas = document.getElementById('canvas');
+      const loading = document.getElementById('loading');
+      const status = document.getElementById('loading-status');
+      const progress = document.getElementById('loading-progress');
+      const notice = document.getElementById('loading-notice');
+      const retry = document.getElementById('loading-retry');
+      retry.addEventListener('click', () => window.location.reload());
+      let failed = false;
+      let ready = false;
+      const startedAt = performance.now();
+      let lastProgressAt = startedAt;
+      let downloadedBytes = 0;
+      const updateNotice = () => {
+        if (failed || ready || performance.now() - startedAt < 30000) return;
+        notice.hidden = false;
+        retry.hidden = false;
+        notice.textContent = performance.now() - lastProgressAt >= 30000
+          ? '새로운 로딩 진행이 보이지 않습니다. 계속 기다리거나 다시 시도할 수 있습니다.'
+          : '게임을 불러오는 중입니다. 계속 기다리거나 다시 시도할 수 있습니다.';
+      };
+      const onWindowError = (event) => fail(event.error || new Error('Engine startup error'));
+      const onUnhandledRejection = (event) => fail(event.reason || new Error('Engine startup rejected'));
+      const startupWatch = setInterval(updateNotice, 1000);
+      const stopObserving = () => {
+        clearInterval(startupWatch);
+        window.removeEventListener('error', onWindowError);
+        window.removeEventListener('unhandledrejection', onUnhandledRejection);
+      };
+      const fail = (error) => {
+        if (failed || ready) return;
+        failed = true;
+        stopObserving();
+        console.error('[game-loading] Startup failed', error);
+        loading.hidden = false;
+        status.textContent = '게임을 불러오지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.';
+        progress.hidden = true;
+        notice.hidden = true;
+        retry.hidden = false;
+      };
+      window.addEventListener('error', onWindowError);
+      window.addEventListener('unhandledrejection', onUnhandledRejection);
+      const onProgress = (current, total) => {
+        if (failed || ready) return;
+        if (Number.isFinite(current) && current > downloadedBytes) {
+          downloadedBytes = current;
+          lastProgressAt = performance.now();
+        }
+        updateNotice();
+        if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(current) || current < 0) {
+          progress.removeAttribute('value');
+          status.textContent = '작전 지역을 준비하고 있습니다…';
+          return;
+        }
+        progress.max = total;
+        progress.value = Math.min(current, total);
+        status.textContent = current >= total ? '게임을 시작합니다…' : `불러오는 중 ${Math.floor(current / total * 100)}%`;
+      };
+      const start = async () => {
+        if (failed) return;
+        try {
+          lastProgressAt = performance.now();
+          const missing = Engine.getMissingFeatures({ threads });
+          if (missing.length) throw new Error(`Missing browser features: ${missing.join(', ')}`);
+          const engine = new Engine({ ...config, canvas });
+          await engine.startGame({ onProgress });
+          if (failed) return;
+          ready = true;
+          stopObserving();
+          notice.hidden = true;
+          retry.hidden = true;
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (failed) return;
+            loading.hidden = true;
+            if (config['focusCanvas']) canvas.focus();
+          }));
+        } catch (error) {
+          fail(error);
+        }
+      };
+      const script = document.createElement('script');
+      script.src = 'index.js';
+      script.addEventListener('load', start, { once: true });
+      script.addEventListener('error', () => fail(new Error('Engine script could not be loaded')), { once: true });
+      document.head.appendChild(script);
+    })();
+  </script>
+</body>
+</html>
+
