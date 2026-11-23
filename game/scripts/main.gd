@@ -16,7 +16,11 @@ const LANDING_ZONE := Vector2(300.0, -10.0)
 const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
 const CELL := 48.0
-const GRID_SIZE := 7
+# Extend the original coordinate space so existing saves keep their world positions.
+const GRID_MIN := -1
+const GRID_MAX := 7
+const GRID_SIZE := GRID_MAX - GRID_MIN + 1
+const GRID_ENTRANCES := [Vector2i(3, GRID_MIN), Vector2i(3, GRID_MAX), Vector2i(GRID_MIN, 3), Vector2i(GRID_MAX, 3)]
 const MAX_ENEMIES := 320
 const WAVE_SECONDS := 22.0
 const MAP_LIMIT := Vector2(2200.0, 1600.0)
@@ -256,10 +260,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			manual_trigger = false
 			if build_mode:
 				_try_place_at(_screen_to_world(aim_screen))
-			elif manual_attack and not build_open:
-				manual_trigger = true
 			else:
-				_select_entity_at(_screen_to_world(aim_screen))
+				_select_entity_at(_screen_to_world(aim_screen), manual_attack and not build_open)
 				manual_trigger = selected_entity < 0
 			get_viewport().set_input_as_handled()
 
@@ -1034,13 +1036,13 @@ func _occupied_cells(entry: Dictionary) -> Array[Vector2i]:
 
 
 func _cell_is_entrance(cell: Vector2i) -> bool:
-	return cell == Vector2i(3, 0) or cell == Vector2i(3, 6) or cell == Vector2i(0, 3) or cell == Vector2i(6, 3)
+	return cell in GRID_ENTRANCES
 
 
 func _validate_placement(kind: String, cell: Vector2i) -> String:
 	var definition := _build_definition(kind)
 	var width := 2 if _is_building(kind) else 1
-	if cell.x < 0 or cell.y < 0 or cell.x + width > GRID_SIZE or cell.y >= GRID_SIZE:
+	if not _cell_in_grid(cell) or cell.x + width - 1 > GRID_MAX:
 		return "건설 구역 밖입니다."
 	if kind == "wall" and _cell_is_entrance(cell):
 		return "동서남북 영구 출입구는 막을 수 없습니다."
@@ -1074,10 +1076,13 @@ func _path_stays_open(new_cell: Vector2i) -> bool:
 		for cell in _occupied_cells(entry): blocked[cell] = true
 	blocked[new_cell] = true
 	var goals: Array[Vector2i] = [Vector2i(2, 3), Vector2i(5, 3), Vector2i(3, 2), Vector2i(3, 4)]
-	var starts: Array[Vector2i] = [Vector2i(3, 0), Vector2i(3, 6), Vector2i(0, 3), Vector2i(6, 3)]
-	for index in range(4):
-		if not _grid_path_exists(starts[index], goals[index], blocked): return false
+	for index in range(GRID_ENTRANCES.size()):
+		if not _grid_path_exists(GRID_ENTRANCES[index], goals[index], blocked): return false
 	return true
+
+
+func _cell_in_grid(cell: Vector2i) -> bool:
+	return cell.x >= GRID_MIN and cell.x <= GRID_MAX and cell.y >= GRID_MIN and cell.y <= GRID_MAX
 
 
 func _grid_path_exists(start: Vector2i, goal: Vector2i, blocked: Dictionary) -> bool:
@@ -1088,7 +1093,7 @@ func _grid_path_exists(start: Vector2i, goal: Vector2i, blocked: Dictionary) -> 
 		if cur == goal: return true
 		for step in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
 			var next: Vector2i = cur + step
-			if next.x < 0 or next.y < 0 or next.x >= GRID_SIZE or next.y >= GRID_SIZE: continue
+			if not _cell_in_grid(next): continue
 			if blocked.has(next) or seen.has(next): continue
 			seen[next] = true
 			queue.append(next)
@@ -1116,12 +1121,13 @@ func _try_place_at(world_point: Vector2) -> void:
 	queue_redraw()
 
 
-func _select_entity_at(world_point: Vector2) -> void:
+func _select_entity_at(world_point: Vector2, defenses_only := false) -> void:
 	var best := -1
 	var best_distance := 44.0
 	for i in range(structures.size()):
 		var s := structures[i]
 		if float(s.hp) <= 0.0: continue
+		if defenses_only and not (_is_turret(String(s.kind)) or s.kind == "outpost"): continue
 		var center := _entry_world_center(s)
 		var d := center.distance_to(world_point)
 		if d < best_distance:
@@ -1263,7 +1269,9 @@ func _update_player(delta: float) -> void:
 func _update_player_attack(delta: float) -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var wants_attack := false
+	var aim_point := player_pos
 	if manual_attack:
+		aim_point = _screen_to_world(aim_screen)
 		var aim := aim_screen - size * 0.5
 		if not aim.is_zero_approx():
 			player_facing = aim.normalized()
@@ -1271,7 +1279,8 @@ func _update_player_attack(delta: float) -> void:
 	else:
 		var target := _nearest_enemy(player_pos, float(hero.range) * player_mod_range)
 		if target >= 0:
-			var aim: Vector2 = enemies[target].pos - player_pos
+			aim_point = enemies[target].pos
+			var aim := aim_point - player_pos
 			if not aim.is_zero_approx():
 				player_facing = aim.normalized()
 			wants_attack = true
@@ -1282,10 +1291,10 @@ func _update_player_attack(delta: float) -> void:
 		if player_reload_timer == 0.0:
 			player_magazine = int(hero.magazine)
 	if wants_attack and player_attack_timer <= 0.0 and player_reload_timer <= 0.0:
-		_attack_player()
+		_attack_player(aim_point)
 
 
-func _attack_player() -> void:
+func _attack_player(aim_point := Vector2.INF) -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var kind := String(hero.id)
 	var reload := float(hero.rate) / player_mod_rate
@@ -1308,13 +1317,28 @@ func _attack_player() -> void:
 		_harin_visual.trigger_attack()
 	player_attack_timer = maxf(0.05, reload)
 	var direction := player_facing.normalized()
+	var muzzle := player_pos + direction * 28.0
+	if kind == "harin":
+		muzzle = player_pos + _harin_visual.muzzle_offset(direction)
+	if aim_point.is_finite():
+		var muzzle_to_aim := aim_point - muzzle
+		if not muzzle_to_aim.is_zero_approx() and (not manual_attack or muzzle_to_aim.dot(direction) > 0.0):
+			direction = muzzle_to_aim.normalized()
+	if effects.size() < 80:
+		effects.append({"a": muzzle, "b": muzzle + direction * 9.0, "time": 0.045, "color": Color("#ffd99a"), "muzzle": true})
 	var max_range := float(hero.range) * player_mod_range
 	var pellets := int(hero.pellets) + player_extra_pellets if kind == "tae" else 1
 	var damage := float(hero.damage) * player_mod_damage / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 if kind == "tae" else 0.0)
-		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1), color)
+		var shot_direction := direction.rotated(spread)
+		var offset := muzzle - player_pos
+		# Measure the weapon's range from the player even though the shot starts at the muzzle.
+		var lateral := offset.cross(shot_direction)
+		var forward := offset.dot(shot_direction)
+		var travel := maxf(0.0, sqrt(maxf(0.0, max_range * max_range - lateral * lateral)) - forward)
+		player_projectiles.fire(muzzle, shot_direction, travel, damage, maxi(1, player_pierce + 1), color)
 
 
 func _update_spawn(delta: float) -> void:
@@ -1339,11 +1363,12 @@ func _update_spawn(delta: float) -> void:
 	if spawn_timer <= 0.0 and enemies.size() < MAX_ENEMIES:
 		var base_interval := 1.25 / float(difficulty.get("spawn", 1.0))
 		spawn_timer = maxf(0.18, base_interval * (1.0 - minf(0.55, float(stage) * 0.004)))
-		var count := 1 + (1 if stage >= 16 and _random.randf() < 0.25 else 0)
+		var count := 3 + mini(3, floori(float(stage - 1) / 20.0))
+		var pack_angle := _random.randf_range(0.0, TAU)
 		for n in range(count):
 			if enemies.size() >= MAX_ENEMIES: break
 			var kind := _choose_enemy_kind()
-			var angle := _random.randf_range(0.0, TAU)
+			var angle := pack_angle + _random.randf_range(-0.65, 0.65)
 			var distance := _random.randf_range(470.0, 740.0)
 			var pos := player_pos + Vector2(cos(angle), sin(angle)) * distance
 			pos.x = clampf(pos.x, -MAP_LIMIT.x + 90, MAP_LIMIT.x - 90)
@@ -1550,7 +1575,7 @@ func _update_turrets(delta: float) -> void:
 		var pos := _entry_world_center(s)
 		if kind == "repair":
 			if float(s.cool) <= 0.0:
-				var repair_target := _nearest_structure(pos, 310.0, true)
+				var repair_target := _nearest_structure(pos, _turret_range(kind), true)
 				if repair_target >= 0:
 					structures[repair_target].hp = minf(float(structures[repair_target].max_hp), float(structures[repair_target].hp) + 24.0 * float(s.level))
 					s.cool = 1.0
@@ -1558,8 +1583,7 @@ func _update_turrets(delta: float) -> void:
 			continue
 		if kind == "hq": continue
 		var def := _build_definition(kind)
-		var turret_range := float(def.get("range", 330.0)) * player_mod_range
-		if kind == "outpost": turret_range = 390.0
+		var turret_range := _turret_range(kind)
 		if float(s.cool) > 0.0: continue
 		var target_index := _nearest_enemy(pos, turret_range)
 		if target_index < 0: continue
@@ -1582,6 +1606,13 @@ func _update_turrets(delta: float) -> void:
 			if kind == "freeze" and target_index < enemies.size() and enemies[target_index].pos.distance_to(target_pos) < 0.5:
 				enemies[target_index].slow = 2.2
 			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.11, "color": def.get("color", PALETTE.gold)})
+
+
+func _turret_range(kind: String) -> float:
+	match kind:
+		"repair": return 310.0
+		"outpost": return 390.0
+	return float(_build_definition(kind).get("range", 330.0)) * player_mod_range
 
 
 func _nearest_enemy(pos: Vector2, range: float, skip := -1) -> int:
@@ -1951,13 +1982,22 @@ func _draw_world() -> void:
 	_draw_base_zone()
 	if build_open:
 		_draw_build_grid()
+	if selected_entity >= 0 and selected_entity < structures.size():
+		var selected := structures[selected_entity]
+		var kind := String(selected.kind)
+		if selected.hp > 0.0 and (_is_turret(kind) or kind == "outpost"):
+			var center := _world_to_screen(_entry_world_center(selected))
+			var radius := _turret_range(kind)
+			draw_circle(center, radius, Color(PALETTE.blue, 0.055))
+			draw_arc(center, radius, 0.0, TAU, 96, Color(PALETTE.blue, 0.28), 1.5, true)
 	for entry in structures:
 		if float(entry.hp) > 0.0: _draw_structure(entry)
 	for enemy in enemies: _draw_enemy(enemy)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
 		var tip := _world_to_screen(shot.pos)
-		draw_line(tip - shot.direction * 12.0, tip, shot.color, 2.0)
+		var travel: float = shot.origin.distance_to(shot.pos)
+		draw_line(tip - shot.direction * minf(travel, 12.0), tip, shot.color, 2.0)
 	for effect in effects: _draw_effect(effect)
 	if screen != "landing" or landing.player_visible():
 		_draw_player()
@@ -1978,12 +2018,12 @@ func _draw_base_zone() -> void:
 	draw_circle(center, 255, Color(0.08, 0.12, 0.10, 0.16))
 	draw_arc(center, 170.0, 0.0, TAU, 64, Color(PALETTE.gold, 0.15), 1.2)
 	# A subtle field-light square marks the construction zone even when its grid is hidden.
-	draw_rect(Rect2(center - Vector2(CELL * 3.5, CELL * 3.5), Vector2(CELL * 7.0, CELL * 7.0)), Color(0.5, 0.6, 0.45, 0.025), false, 1.0)
+	draw_rect(Rect2(center - Vector2.ONE * CELL * GRID_SIZE * 0.5, Vector2.ONE * CELL * GRID_SIZE), Color(0.5, 0.6, 0.45, 0.025), false, 1.0)
 
 
 func _draw_build_grid() -> void:
-	for y in range(7):
-		for x in range(7):
+	for y in range(GRID_MIN, GRID_MAX + 1):
+		for x in range(GRID_MIN, GRID_MAX + 1):
 			var cell := Vector2i(x, y)
 			var p := _world_to_screen(_cell_world(cell))
 			var rect := Rect2(p - Vector2(CELL * 0.5, CELL * 0.5), Vector2(CELL, CELL))
@@ -2035,7 +2075,7 @@ func _draw_structure(entry: Dictionary) -> void:
 		draw_line(center + Vector2(-12, 13), center + Vector2(12, 13), Color("#4b554b"), 3.0)
 		draw_circle(center, 11, Color("#444e46"))
 		draw_circle(center, 7, c)
-		var target := _nearest_enemy(_entry_world_center(entry), 370.0)
+		var target := _nearest_enemy(_entry_world_center(entry), _turret_range(kind))
 		var direction := player_facing
 		if target >= 0: direction = (enemies[target].pos - _entry_world_center(entry)).normalized()
 		draw_line(center, center + direction * 25.0, Color("#343a35"), 5.0)
@@ -2104,7 +2144,10 @@ func _draw_effect(effect: Dictionary) -> void:
 	var b := _world_to_screen(effect.b)
 	var alpha := clampf(float(effect.time) / 0.25, 0.0, 1.0)
 	var c: Color = effect.get("color", PALETTE.gold)
-	if bool(effect.get("blast", false)):
+	if bool(effect.get("muzzle", false)):
+		draw_circle(a, 2.0, Color(c, minf(1.0, alpha * 7.0)))
+		draw_line(a, b, Color(c, minf(1.0, alpha * 6.0)), 2.0)
+	elif bool(effect.get("blast", false)):
 		draw_arc(a, 24.0 + 110.0 * (1.0 - alpha), 0, TAU, 42, Color(c, alpha), 3.0)
 	else:
 		draw_line(a, b, Color(c, alpha), 2.0)
@@ -2136,7 +2179,10 @@ func _draw_player() -> void:
 		var color := Color(PALETTE.gold, 0.55)
 		var aim_length := p.distance_to(aim_screen)
 		if aim_length > 24.0:
-			draw_line(p + dir * 20.0, p + dir * minf(aim_length - 5.0, 92.0), color, 1.0)
+			var muzzle := p + dir * 28.0
+			if Data.CHARACTERS[player_index].id == "harin":
+				muzzle = p + _harin_visual.muzzle_offset(dir)
+			draw_line(muzzle, muzzle.lerp(aim_screen, minf(1.0, 75.0 / aim_length)), color, 1.0)
 		_draw_cross(aim_screen, 7, color)
 
 

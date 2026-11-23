@@ -7,7 +7,7 @@ var shots: Array[Dictionary] = []
 
 func fire(origin: Vector2, direction: Vector2, distance: float, damage: float, hits: int, color: Color) -> void:
 	shots.append({
-		"pos": origin, "direction": direction, "remaining": distance,
+		"origin": origin, "pos": origin, "direction": direction, "remaining": distance,
 		"damage": damage, "hits": hits, "color": color, "hit_ids": {},
 	})
 
