@@ -114,32 +114,32 @@
     },
     "assets/reclaim/portraits/harin_full.png": {
       "path": "assets/reclaim/portraits/harin_full.png",
-      "sha256": "sha256:e12fa9dce4d484185ed6df8b268dab1062946a56344a5027ed0daa9d4e56b7fb",
-      "size": 329400,
+      "sha256": "sha256:d8567bb7b0b7c406471fa8a5c5739af55276fbde7d1f3b736a9cd6edc6e88fb3",
+      "size": 328940,
       "assetType": "image",
       "groupId": "portraits",
       "used": true
     },
     "assets/reclaim/portraits/si_full.png": {
       "path": "assets/reclaim/portraits/si_full.png",
-      "sha256": "sha256:8aa0b08bef045e42ab85f8a26fab2000be43ba4997c7ac838aada058548d5112",
-      "size": 246856,
+      "sha256": "sha256:710774a0e0fb41742437106ed734aca21c0a8fb2b0abc17315a66ea078f8dded",
+      "size": 246242,
       "assetType": "image",
       "groupId": "portraits",
       "used": true
     },
     "assets/reclaim/portraits/tae_full.png": {
       "path": "assets/reclaim/portraits/tae_full.png",
-      "sha256": "sha256:d2dbfaf58502b368095700b23fa38a17e0959b2b5dc91d9c0de4191e123318f7",
-      "size": 289564,
+      "sha256": "sha256:a626928e8933dc6199b3e780d08f12be9e19ae778613a545b5999610560998b6",
+      "size": 288785,
       "assetType": "image",
       "groupId": "portraits",
       "used": true
     },
     "assets/reclaim/portraits/yujin_full.png": {
       "path": "assets/reclaim/portraits/yujin_full.png",
-      "sha256": "sha256:f23d74c4afdb4418ed92598c25dc287b566cf7cac233e884ac70b5aaccf0c72d",
-      "size": 361558,
+      "sha256": "sha256:f2b94755ac150064c22a2f586226c6f5f663904c4e18b91bb4581bb0b325dad7",
+      "size": 360924,
       "assetType": "image",
       "groupId": "portraits",
       "used": true
