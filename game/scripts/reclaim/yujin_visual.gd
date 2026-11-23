@@ -33,6 +33,8 @@ const SIDE_HEIGHT := 80.0
 const BACK_HEIGHT := 83.0
 const FOOT_OFFSET := 40.0
 
+const CUT_CYCLE := 7.0 / 13.0
+
 var _attack_left := 0.0
 var _cut_clock := 0.0
 var _clock := 0.0
@@ -50,7 +52,7 @@ func update(delta: float, moving := false) -> void:
 func attack(interval: float) -> void:
 	if _attack_left <= 0.0:
 		_cut_clock = 0.0
-	_attack_left = interval + 0.05
+	_attack_left = maxf(interval + 0.05, CUT_CYCLE - fposmod(_cut_clock, CUT_CYCLE))
 
 
 func reset() -> void:
@@ -61,7 +63,7 @@ func reset() -> void:
 
 func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, dashing: bool) -> void:
 	var attacking := _attack_left > 0.0
-	var progress := fposmod(_cut_clock * 13.0 / CUT.size(), 1.0) if attacking else 0.0
+	var progress := fposmod(_cut_clock / CUT_CYCLE, 1.0) if attacking else 0.0
 	var side := absf(facing.x) > absf(facing.y)
 	var back := not side and facing.y < 0.0
 	var running := moving or dashing
@@ -94,14 +96,23 @@ func _draw_front_cut(canvas: CanvasItem, center: Vector2, progress: float) -> vo
 	const TIP_DISTANCE := 51.0
 	var grip := (center + Vector2(0.0, -34.0)).round()
 	var tilt := _front_cut_tilt(progress)
-	if progress > 0.22 and progress < 0.79:
-		var points := PackedVector2Array()
-		for i in range(10):
-			var sample := maxf(0.0, progress - 0.24 * (1.0 - float(i) / 9.0))
-			points.append(grip + Vector2.DOWN.rotated(_front_cut_tilt(sample)) * TIP_DISTANCE)
-		var opacity := sin(inverse_lerp(0.22, 0.79, progress) * PI)
-		canvas.draw_polyline(points, Color(0.74, 0.16, 0.13, opacity * 0.8), 5.0, true)
-		canvas.draw_polyline(points, Color(1.0, 0.58, 0.43, opacity * 0.9), 2.0, true)
+	if progress > 0.13 and progress < 0.88:
+		var warmup := smoothstep(0.13, 0.35, progress)
+		var fade := 1.0 - smoothstep(0.63, 0.88, progress)
+		var leading_angle := _front_cut_tilt(clampf(progress, 0.22, 0.60))
+		var trailing_angle := -0.28 - warmup * 0.21
+		var ribbon := PackedVector2Array()
+		for i in range(13):
+			var fraction := float(i) / 12.0
+			var angle := lerpf(trailing_angle, leading_angle, fraction)
+			ribbon.append(grip + Vector2.DOWN.rotated(angle) * (TIP_DISTANCE + 3.0 + sin(fraction * PI) * 5.0))
+		for i in range(12, -1, -1):
+			var fraction := float(i) / 12.0
+			var angle := lerpf(trailing_angle, leading_angle, fraction)
+			ribbon.append(grip + Vector2.DOWN.rotated(angle) * (TIP_DISTANCE + 1.0 - sin(fraction * PI) * 3.0))
+		canvas.draw_colored_polygon(ribbon, Color(0.88, 0.19, 0.12, warmup * fade * 0.88))
+		var edge := ribbon.slice(0, 13)
+		canvas.draw_polyline(edge, Color(1.0, 0.75, 0.52, warmup * fade), 2.0, true)
 	canvas.draw_set_transform(grip, tilt)
 	canvas.draw_texture_rect(FRONT_SAW, Rect2(-17.0, -4.0, 34.0, 56.0), false)
 	canvas.draw_set_transform(Vector2.ZERO)

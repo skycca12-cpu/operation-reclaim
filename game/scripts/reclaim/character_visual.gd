@@ -4,8 +4,8 @@ const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.pn
 const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
 const RUN_FPS := 11.0
-const FLASH_HOLD := 0.060
-const MUZZLES := [Vector2(34, 4), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
+const FLASH_HOLD := 0.078
+const MUZZLES := [Vector2(0, 47), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
 const ATTACK_HOLD := 0.16
 const HURT_HOLD := 0.22
 
@@ -54,9 +54,12 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 	elif reload_progress >= 0.0:
 		column = 9 + clampi(int(reload_progress * 4.0), 0, 3)
 	var origin := center - Vector2.ONE * DRAW_SIZE * 0.5 + Vector2(0, _run_lift(running))
+	var front_shot := shooting and row == 0
+	if front_shot:
+		column = run_frame if running else 0
 	var source := Rect2(Vector2(column, row) * CELL_SIZE, Vector2.ONE * CELL_SIZE)
 	var tint := Color(1.0, 0.72, 0.72) if hurt_timer > 0.0 else Color.WHITE
-	if running and shooting:
+	if running and shooting and not front_shot:
 		# Keep the firing pose above the waist while the stride continues below it.
 		const SPLIT := 71.0
 		var upper := Vector2(CELL_SIZE, SPLIT)
@@ -66,19 +69,40 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin + lower_offset, lower), Rect2(Vector2(run_frame, row) * CELL_SIZE + lower_offset, lower), tint)
 	else:
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin, Vector2.ONE * DRAW_SIZE), source, tint)
+	if row == 0 and (shooting or reload_progress < 0.0):
+		_draw_front_rifle(canvas, center + Vector2(0, _run_lift(running)))
 	if attack_timer > ATTACK_HOLD - FLASH_HOLD:
 		var barrel: Vector2 = MUZZLES[row]
-		_draw_flash(canvas, center + Vector2(0, _run_lift(running)) + barrel, Vector2(signf(barrel.x), 0))
+		_draw_flash(canvas, center + Vector2(0, _run_lift(running)) + barrel, Vector2.DOWN if front_shot else Vector2(signf(barrel.x), 0))
 	if dashing:
 		canvas.draw_line(center - facing.normalized() * 27.0, center - facing.normalized() * 11.0, Color("#9dd9e6", 0.7), 2.0)
 	if drone_level > 0:
 		_draw_support_drone(canvas, center, drone_level)
 
 
+func _draw_front_rifle(canvas: CanvasItem, center: Vector2) -> void:
+	# Foreshortened rifle and gloves for the six-o'clock pose.
+	var p := center.round()
+	canvas.draw_colored_polygon(PackedVector2Array([
+		p + Vector2(-6, 0), p + Vector2(6, 0), p + Vector2(11, 14),
+		p + Vector2(8, 26), p + Vector2(4, 29), p + Vector2(4, 46),
+		p + Vector2(-4, 46), p + Vector2(-4, 29), p + Vector2(-8, 26),
+		p + Vector2(-11, 14),
+	]), Color("#201b25"))
+	canvas.draw_rect(Rect2(p + Vector2(-5, 4), Vector2(10, 21)), Color("#48424c"))
+	canvas.draw_rect(Rect2(p + Vector2(-2, 5), Vector2(3, 35)), Color("#8c818b"))
+	canvas.draw_rect(Rect2(p + Vector2(-2, 26), Vector2(5, 16)), Color("#57515b"))
+	canvas.draw_rect(Rect2(p + Vector2(-3, 42), Vector2(6, 3)), Color("#aba2a8"))
+	for side in [-1.0, 1.0]:
+		var glove := p + Vector2(side * 8.0, 15.0)
+		canvas.draw_rect(Rect2(glove - Vector2(4, 3), Vector2(8, 8)), Color("#332933"))
+		canvas.draw_rect(Rect2(glove - Vector2(2, 3), Vector2(5, 3)), Color("#b68169"))
+
+
 func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2) -> void:
 	var normal := direction.orthogonal()
 	var age := (ATTACK_HOLD - attack_timer) / FLASH_HOLD
-	var length := lerpf(22.0, 10.0, age)
+	var length := lerpf(30.0, 9.0, age)
 	canvas.draw_colored_polygon(PackedVector2Array([
 		muzzle - direction * 3.0, muzzle + direction * 5.0 + normal * 7.0,
 		muzzle + direction * 8.0 + normal * 2.0, muzzle + direction * length,
@@ -88,6 +112,11 @@ func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2) -> voi
 		muzzle, muzzle + direction * 5.0 + normal * 3.0,
 		muzzle + direction * length * 0.7, muzzle + direction * 5.0 - normal * 3.0,
 	]), Color("#fff5b4"))
+
+	if age < 0.7:
+		for side in [-1.0, 1.0]:
+			var spark: Vector2 = muzzle + direction * (13.0 + age * 21.0) + normal * side * (8.0 + age * 8.0)
+			canvas.draw_line(spark, spark + direction * 4.0, Color(1.0, 0.68, 0.22, 1.0 - age), 2.0)
 
 
 func _facing_row(facing: Vector2) -> int:
