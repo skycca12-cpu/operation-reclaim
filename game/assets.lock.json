@@ -106,8 +106,8 @@
     },
     "assets/reclaim/characters/harin_sheet.png": {
       "path": "assets/reclaim/characters/harin_sheet.png",
-      "sha256": "sha256:5738ebf50722ce4198ca0358233c6edad34273834f72471141851520163ee52f",
-      "size": 556462,
+      "sha256": "sha256:37349ff750eb002c5fe8ff644bfdc5aa09846487399a99e7d61ce1c0efa78c9c",
+      "size": 555031,
       "assetType": "image",
       "groupId": "characters",
       "used": true
