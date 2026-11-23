@@ -228,9 +228,49 @@ func _run() -> void:
 	_test_yujin(resumed)
 	_test_spawn_multiplier(resumed)
 	_test_character_augments(resumed)
+	_test_enemy_wall_cover(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_enemy_wall_cover(game: Control) -> void:
+	game.call("_reset_run")
+	game.set("player_pos", Vector2(-50, 144))
+	var hp: float = game.get("player_hp")
+	var structures: Array = game.get("structures")
+	var near_wall := {"kind": "wall", "cell": Vector2i(5, 6), "hp": 10.0, "max_hp": 180.0}
+	var far_wall := {"kind": "wall", "cell": Vector2i(4, 6), "hp": 80.0, "max_hp": 180.0}
+	structures.append(far_wall)
+	structures.append(near_wall)
+	var shots: Array = game.get("enemy_shots")
+	var projectile := {"pos": Vector2(250, 144), "velocity": Vector2(-300, 0), "life": 2.2, "damage": 20.0}
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(shots.is_empty() and near_wall.hp == 0.0 and far_wall.hp == 80.0 and game.get("player_hp") == hp,
+		"a fast shot hits the first wall and cannot spill damage behind a destroyed wall")
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(far_wall.hp == 60.0 and game.get("player_hp") == hp, "a second shot hits the next living wall")
+	game.set("player_pos", Vector2(10, 144))
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(far_wall.hp == 40.0 and game.get("player_hp") == hp, "a wall protects a player standing directly behind it")
+	far_wall.hp = 0.0
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(game.get("player_hp") < hp, "a new shot reaches the player after the walls are gone")
+	hp = game.get("player_hp")
+	near_wall.hp = 80.0
+	game.set("player_pos", Vector2(112, 171))
+	var enemy := {"pos": Vector2(123, 158), "attack": 12.0,
+		"strike_remaining": 0.05, "strike_target": null, "attack_direction": Vector2(-11, 13).normalized()}
+	game.call("_resolve_normal_strike", enemy, 0.1)
+	_check(near_wall.hp == 68.0 and game.get("player_hp") == hp, "a melee strike cannot clip through a wall corner")
+	near_wall.hp = 4.0
+	game.set("player_pos", Vector2(60, 144))
+	game.call("_explode_bomber", {"pos": Vector2(130, 144), "attack": 20.0, "target": "player"})
+	_check(near_wall.hp == 0.0 and game.get("player_hp") == hp, "a bomber blast does not penetrate the wall it destroys")
 
 
 func _test_character_augments(game: Control) -> void:

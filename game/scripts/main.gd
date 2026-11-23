@@ -23,6 +23,7 @@ const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
 const CELL := 48.0
 const PLAYER_RADIUS := 13.0
+const ENEMY_SHOT_RADIUS := 7.0
 const GRID_SIZE := 9
 const GRID_MIN := -1
 const GRID_MAX := GRID_MIN + GRID_SIZE - 1
@@ -1719,8 +1720,10 @@ func _update_enemies(delta: float) -> void:
 		e.target = "player" if target_player else "hq"
 		var target_pos: Vector2 = player_pos if target_player else hq_pos
 		var target_structure := -1 if target_player else hq_index
-		if not bool(e.ranged):
-			var wall := _priority_wall(e.pos, walls)
+		if not bool(e.ranged) and not walls.is_empty():
+			var wall := int(_first_wall_hit(e.pos, target_pos).index)
+			if wall < 0:
+				wall = _priority_wall(e.pos, walls)
 			if wall >= 0:
 				target_structure = wall
 				e.target = "wall"
@@ -1747,6 +1750,45 @@ func _update_enemies(delta: float) -> void:
 			e.moving = traveled > 0.001
 			e.walk_distance += traveled
 	_play_zombie_ambient()
+
+
+func _first_wall_hit(start: Vector2, end: Vector2, padding := 0.0) -> Dictionary:
+	var first := {"index": -1, "fraction": INF}
+	for i in range(structures.size()):
+		var wall := structures[i]
+		if wall.kind != "wall" or float(wall.hp) <= 0.0:
+			continue
+		var half_extent := Vector2.ONE * (CELL * 0.5 + padding)
+		var bounds := Rect2(_entry_world_center(wall) - half_extent, half_extent * 2.0)
+		var fraction := _segment_rect_entry(start, end, bounds)
+		if fraction < float(first.fraction):
+			first = {"index": i, "fraction": fraction}
+	return first
+
+
+func _segment_rect_entry(start: Vector2, end: Vector2, bounds: Rect2) -> float:
+	var motion := end - start
+	var entry := 0.0
+	var exit := 1.0
+	for axis in range(2):
+		if is_zero_approx(motion[axis]):
+			if start[axis] < bounds.position[axis] or start[axis] > bounds.end[axis]:
+				return INF
+			continue
+		var near := (bounds.position[axis] - start[axis]) / motion[axis]
+		var far := (bounds.end[axis] - start[axis]) / motion[axis]
+		entry = maxf(entry, minf(near, far))
+		exit = minf(exit, maxf(near, far))
+		if entry > exit:
+			return INF
+	return entry
+
+
+func _segment_circle_entry(start: Vector2, end: Vector2, center: Vector2, radius: float) -> float:
+	if start.distance_squared_to(center) <= radius * radius:
+		return 0.0
+	var fraction := Geometry2D.segment_intersects_circle(start, end, center, radius)
+	return fraction if fraction >= 0.0 else INF
 
 
 func _priority_wall(point: Vector2, walls: Array[int]) -> int:
@@ -1776,7 +1818,7 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 			if enemy.has("variant"):
 				_queue_normal_strike(enemy, toward)
 			else:
-				_player_take_damage(float(enemy.attack), "적의 근접 공격")
+				_apply_enemy_melee_to_player(enemy)
 			enemy.cool = 0.65 if enemy.boss else 1.0
 		return
 	var speed := float(enemy.speed) * (0.48 if float(enemy.slow) > 0.0 else 1.0)
@@ -1786,6 +1828,14 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 		enemy.pos = proposed
 	else:
 		_strike_structure(enemy, blocker)
+
+
+func _apply_enemy_melee_to_player(enemy: Dictionary) -> void:
+	var wall := int(_first_wall_hit(enemy.pos, player_pos).index)
+	if wall >= 0:
+		_damage_structure(wall, float(enemy.attack))
+	else:
+		_player_take_damage(float(enemy.attack), "적의 근접 공격")
 
 
 func _strike_structure(enemy: Dictionary, index: int) -> void:
@@ -1815,7 +1865,7 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 	if target == null:
 		var offset: Vector2 = player_pos - enemy.pos
 		if offset.length_squared() <= 30.0 * 30.0 and offset.dot(enemy.attack_direction) >= 0.0:
-			_player_take_damage(float(enemy.attack), "적의 근접 공격")
+			_apply_enemy_melee_to_player(enemy)
 		return
 	for index in range(structures.size()):
 		if not is_same(structures[index], target) or float(target.hp) <= 0.0:
@@ -1823,7 +1873,8 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 		var kind := String(target.kind)
 		var width := 2 if kind == "hq" or _is_building(kind) else 1
 		if _structure_overlap_depth(enemy.pos, _entry_world_center(target), width, ZombieVisual.RADIUS + 5.0) >= 0.0:
-			_damage_structure(index, float(enemy.attack))
+			var wall := int(_first_wall_hit(enemy.pos, _entry_world_center(target)).index)
+			_damage_structure(wall if wall >= 0 else index, float(enemy.attack))
 		return
 
 
@@ -1855,7 +1906,8 @@ func _update_boss_pattern(e: Dictionary, delta: float) -> void:
 	elif current_stage == 80:
 		var target := _nearest_structure(e.pos, 560.0, false)
 		if target >= 0:
-			_damage_structure(target, float(e.attack) * 2.0)
+			var wall := int(_first_wall_hit(e.pos, _entry_world_center(structures[target])).index)
+			_damage_structure(wall if wall >= 0 else target, float(e.attack) * 2.0)
 			_show_toast("파쇄자 · 구조물에 강한 충격")
 	elif current_stage == 100:
 		for n in range(3):
@@ -1874,12 +1926,21 @@ func _explode_bomber(enemy: Dictionary) -> void:
 	var target_player := String(enemy.get("target", "player")) == "player"
 	var center: Vector2 = player_pos if target_player else _hq_position()
 	var dist: float = enemy.pos.distance_to(center)
-	if dist < 120.0:
+	var protected := int(_first_wall_hit(enemy.pos, center).index) >= 0
+	# Evaluate cover against the pre-blast walls, so a wall destroyed by this
+	# explosion still shields everything behind it from this same explosion.
+	var blast_targets: Array[int] = []
+	for i in range(structures.size() - 1, -1, -1):
+		var structure_center := _entry_world_center(structures[i])
+		if structure_center.distance_to(enemy.pos) <= 105.0:
+			var wall := int(_first_wall_hit(enemy.pos, structure_center).index)
+			if wall < 0 or wall == i:
+				blast_targets.append(i)
+	if dist < 120.0 and not protected:
 		if target_player: _player_take_damage(float(enemy.attack) * 1.8, "자폭 폭발")
 		else: _damage_hq(float(enemy.attack) * 2.4)
-	for i in range(structures.size() - 1, -1, -1):
-		if _entry_world_center(structures[i]).distance_to(enemy.pos) <= 105.0:
-			_damage_structure(i, float(enemy.attack) * 0.8)
+	for i in blast_targets:
+		_damage_structure(i, float(enemy.attack) * 0.8)
 	effects.append({"a": enemy.pos, "b": enemy.pos + Vector2(95, 0), "time": 0.28, "color": PALETTE.red, "blast": true})
 	_show_toast("자폭체 폭발 · 경고 원에서 벗어나세요.")
 
@@ -2017,14 +2078,27 @@ func _nearest_structure(pos: Vector2, range: float, damaged_only: bool) -> int:
 func _update_projectiles(delta: float) -> void:
 	for i in range(enemy_shots.size() - 1, -1, -1):
 		var shot: Dictionary = enemy_shots[i]
-		shot.pos += shot.velocity * delta
+		var start: Vector2 = shot.pos
+		var end: Vector2 = start + shot.velocity * clampf(float(shot.life), 0.0, delta)
 		shot.life -= delta
-		var target_player: bool = shot.pos.distance_to(player_pos) < 24.0
-		var target_hq: bool = shot.pos.distance_to(_hq_position()) < 28.0
-		if target_player or target_hq or float(shot.life) <= 0.0:
-			if target_player and dash_timer <= 0.0: _player_take_damage(float(shot.damage), "원거리 투사체")
-			elif target_hq: _damage_hq(float(shot.damage))
-			effects.append({"a": shot.pos, "b": shot.pos + Vector2(26, 0), "time": 0.14, "color": PALETTE.red})
+		var wall := _first_wall_hit(start, end, ENEMY_SHOT_RADIUS)
+		var player_hit := _segment_circle_entry(start, end, player_pos, PLAYER_RADIUS + ENEMY_SHOT_RADIUS)
+		var hq_hit := _segment_circle_entry(start, end, _hq_position(), 28.0) if _hq_index() >= 0 else INF
+		var impact := minf(float(wall.fraction), minf(player_hit, hq_hit))
+		if impact != INF:
+			shot.pos = start.lerp(end, impact)
+			if float(wall.fraction) == impact:
+				_damage_structure(int(wall.index), float(shot.damage))
+			elif player_hit == impact:
+				_player_take_damage(float(shot.damage), "원거리 투사체")
+			else:
+				_damage_hq(float(shot.damage))
+		else:
+			shot.pos = end
+		if impact != INF or float(shot.life) <= 0.0:
+			if effects.size() < 80:
+				var direction: Vector2 = shot.velocity.normalized()
+				effects.append({"a": shot.pos, "b": shot.pos - direction * 18.0, "time": 0.14, "color": PALETTE.red})
 			enemy_shots.remove_at(i)
 
 
@@ -2695,7 +2769,7 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 func _draw_enemy_projectile(shot: Dictionary) -> void:
 	var p := _world_to_screen(shot.pos)
 	var c: Color = shot.get("color", PALETTE.red)
-	draw_circle(p, 7.0, c)
+	draw_circle(p, ENEMY_SHOT_RADIUS, c)
 	draw_line(p, p - Vector2(10, 8), Color(c, 0.42), 3.0)
 
 
