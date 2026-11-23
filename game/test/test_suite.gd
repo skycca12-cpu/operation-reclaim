@@ -211,7 +211,7 @@ func _test_audio_architecture() -> void:
 	_check(int(capacity.ui) == 2, "UI polyphony must be bounded at two voices")
 	for bus_name: String in ["Master", "Music", "SFX", "UI"]:
 		_check(AudioServer.get_bus_index(bus_name) >= 0, "missing audio bus: " + bus_name)
-	var combat_cues := ["music.gameplay", "player.action", "enemy.attack", "enemy.impact"]
+	var combat_cues := ["music.gameplay", "player.action", "enemy.attack", "enemy.impact", "enemy.ambient"]
 	for cue: String in cue_ids:
 		var played := bool(_audio.call("play_music" if cue.begins_with("music.") else "play_cue", cue))
 		_check(played == combat_cues.has(cue), "only the configured combat cues should play: " + cue)

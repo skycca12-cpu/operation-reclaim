@@ -7,6 +7,7 @@ const MAX_UI_VOICES := 2
 # Optional resource paths. Empty means intentionally silent; add project audio
 # here or call register_cue() after importing an AudioStream resource.
 const CUES := {
+	"enemy.ambient": {"path": "res://assets/reclaim/audio/zombie_ambient.wav", "bus": "SFX"},
 	"enemy.attack": {"path": "res://assets/reclaim/audio/combat_zombie.wav", "bus": "SFX"},
 	"music.title": {"path": "", "kind": "music"},
 	"music.gameplay": {"path": "res://assets/reclaim/audio/combat_music.ogg", "kind": "music"},

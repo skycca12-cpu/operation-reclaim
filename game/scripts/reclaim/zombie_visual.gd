@@ -42,20 +42,22 @@ static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, n
 		var column := 18 + clampi(int((now + HIT_TIME - float(enemy.hit_until)) * 10.0), 0, 3)
 		_draw_frame(canvas, enemy.variant, enemy.row, column, center)
 	elif enemy.moving:
-		_draw_walk(canvas, enemy, center, phase, camera)
+		_draw_walk(canvas, enemy, center, camera)
 	else:
 		_draw_frame(canvas, enemy.variant, enemy.row, int(phase * 5.0) % 4, center)
 
 
-static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, phase: float, camera: Transform2D) -> void:
+static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, camera: Transform2D) -> void:
 	const LEG_START := 113.0
-	var stride := sin(phase * TAU * 2.1)
-	var source := Vector2(4 + int(phase * 9.0) % 8, enemy.row) * CELL
+	var gait := fposmod(float(enemy.walk_distance) / 30.0 + float(int(enemy.spawn_id) % 13) / 13.0, 1.0)
+	var stride := sin(gait * TAU)
+	var source := Vector2(4 + int(gait * 8.0), enemy.row) * CELL
 	var top_left := -Vector2(80.0, 86.0) * SCALE
-	var bob := -absf(stride) * 2.0
+	var bob := -absf(stride) * 1.25
 	var sheet := SHEETS[enemy.variant]
 	var upper_size := Vector2(CELL, LEG_START)
-	canvas.draw_set_transform_matrix(camera * Transform2D(stride * 0.042, center + Vector2(stride * 1.2, bob)))
+	var body := camera * Transform2D(stride * 0.056, center + Vector2(stride * 1.35, bob))
+	canvas.draw_set_transform_matrix(body)
 	canvas.draw_texture_rect_region(sheet, Rect2(top_left, upper_size * SCALE), Rect2(source, upper_size))
 	var side_view: bool = enemy.row == 1 or enemy.row == 2
 	for leg in range(2):
@@ -63,9 +65,9 @@ static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, p
 		var left := float(leg) * CELL * 0.5
 		var knee := top_left + Vector2(left + CELL * 0.25, LEG_START) * SCALE
 		var leg_size := Vector2(CELL * 0.5, CELL - LEG_START)
-		var lift := maxf(step, 0.0) * 3.0
-		var swing := step * (0.22 if side_view else 0.10)
-		canvas.draw_set_transform_matrix(camera * Transform2D(swing, center + knee + Vector2(stride * 1.2, bob - lift)))
+		var lift := maxf(step, 0.0) * 2.1
+		var swing := step * (0.29 if side_view else 0.14)
+		canvas.draw_set_transform_matrix(body * Transform2D(swing, knee - Vector2(0.0, lift)))
 		canvas.draw_texture_rect_region(sheet, Rect2(Vector2(-CELL * 0.25 * SCALE, 0.0), leg_size * SCALE),
 			Rect2(source + Vector2(left, LEG_START), leg_size))
 	canvas.draw_set_transform_matrix(camera)
@@ -73,19 +75,34 @@ static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, p
 
 static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2, progress: float, camera: Transform2D) -> void:
 	var direction: Vector2 = enemy.attack_direction
-	var strike := 1.0 - smoothstep(0.17, 0.9, progress)
-	var advance := 10.0 * strike
-	var attack_center := center + direction * advance
+	var row := facing_row(direction)
+	var strike := 1.0 - smoothstep(0.10, 0.74, progress)
 	var column := 12 + mini(int(progress * 6.0), 5)
-	canvas.draw_set_transform_matrix(camera * Transform2D(direction.x * strike * 0.20,
-		Vector2(1.0 + strike * 0.13, 1.0 - strike * 0.06), 0.0, attack_center))
-	_draw_frame(canvas, enemy.variant, facing_row(direction), column, Vector2.ZERO)
+	canvas.draw_set_transform_matrix(camera * Transform2D(direction.x * strike * 0.055, center))
+	_draw_frame(canvas, enemy.variant, row, column, Vector2.ZERO)
 	canvas.draw_set_transform_matrix(camera)
-	if progress < 0.28:
-		var swing_center := center + direction * 16.0 + Vector2(0.0, -6.0)
-		var angle := direction.angle()
-		var opacity := (1.0 - progress / 0.28) * 0.66
-		canvas.draw_arc(swing_center, 9.0, angle - 0.78, angle + 0.78, 8, Color(0.88, 0.84, 0.69, opacity), 1.5, true)
+	if strike <= 0.02:
+		return
+	# The temporary sheets keep the arms close to the body. Extend a visible
+	# shoulder, elbow, forearm and open hand while the feet stay planted.
+	var side := direction.orthogonal()
+	if direction.y > 0.0 or direction.x < 0.0:
+		side = -side
+	var shoulder := center + side * 8.0 - Vector2(0, 5)
+	var elbow := shoulder + direction * (3.0 + 6.0 * strike) + side * (4.0 - 2.0 * strike)
+	var hand := shoulder + direction * (5.0 + 15.0 * strike) - side * (5.0 * strike)
+	var sleeve := Color("#57534e")
+	var skin := Color("#a9a68b")
+	var outline := Color("#252522")
+	canvas.draw_line(shoulder, elbow, outline, 7.0, true)
+	canvas.draw_line(elbow, hand, outline, 6.0, true)
+	canvas.draw_line(shoulder, elbow, sleeve, 4.0, true)
+	canvas.draw_line(elbow, hand, skin.darkened(0.2), 3.5, true)
+	canvas.draw_circle(hand, 2.8, skin, true)
+	for finger in range(3):
+		var spread := float(finger - 1)
+		canvas.draw_line(hand + side * spread * 1.3, hand + direction * (3.5 + strike) + side * spread * 2.0,
+			skin, 1.2, true)
 
 
 static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:
