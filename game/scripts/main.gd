@@ -1,5 +1,6 @@
 extends Control
 
+const PlayerProjectiles = preload("res://scripts/reclaim/player_projectiles.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
@@ -35,11 +36,16 @@ var player_hp := 100.0
 var player_max_hp := 100.0
 var player_facing := Vector2.RIGHT
 var aim_screen := Vector2.ZERO
+var manual_attack := false
+var manual_trigger := false
+var dash_direction := Vector2.RIGHT
+var player_projectiles := PlayerProjectiles.new()
+var enemy_spawn_id := 0
 var dash_timer := 0.0
 var dash_cooldown := 0.0
 var player_attack_timer := 0.0
 var player_reload_timer := 0.0
-var player_magazine := 30
+var player_magazine := 0
 var player_xp := 0.0
 var player_level := 1
 var kills := 0
@@ -126,6 +132,7 @@ var build_content: VBoxContainer
 var build_status_label: Label
 var hp_bar: ProgressBar
 var base_bar: ProgressBar
+var combat_label: Label
 var status_label: Label
 var stage_label: Label
 var currency_label: Label
@@ -146,6 +153,8 @@ var run_hud: Control
 func _ready() -> void:
 	_random.randomize()
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	mouse_filter = Control.MOUSE_FILTER_PASS
+	aim_screen = get_local_mouse_position()
 	set_process(true)
 	set_process_unhandled_input(true)
 	_load_data()
@@ -169,6 +178,7 @@ func _process(delta: float) -> void:
 		_refresh_hud()
 		return
 	_update_player(delta)
+	player_projectiles.update(delta, enemies, _damage_enemy)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	_update_spawn(delta)
 	_update_enemies(delta)
@@ -185,12 +195,32 @@ func _process(delta: float) -> void:
 	_refresh_hud()
 
 
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion or event is InputEventMouseButton:
+		aim_screen = get_global_transform_with_canvas().affine_inverse() * event.position
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		manual_trigger = false
+	if screen == "play" and event is InputEventKey and (event.physical_keycode == KEY_TAB or event.keycode == KEY_TAB):
+		get_viewport().set_input_as_handled()
+		if event.pressed and not event.echo:
+			manual_attack = not manual_attack
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		manual_trigger = false
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if awaiting_binding != "" and event is InputEventKey and event.pressed and not event.echo:
+		var binding: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+		if binding == KEY_TAB:
+			get_viewport().set_input_as_handled()
+			return
 		if awaiting_binding == "dash":
-			dash_key = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+			dash_key = binding
 		else:
-			pause_key = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+			pause_key = binding
 		awaiting_binding = ""
 		_update_binding_labels()
 		_save_all()
@@ -218,17 +248,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			elif code == dash_key:
 				_try_dash()
 				get_viewport().set_input_as_handled()
-	if event is InputEventMouseMotion:
-		aim_screen = event.position
-	elif event is InputEventMouseButton and event.pressed and screen == "play":
+	if event is InputEventMouseButton and event.pressed and screen == "play":
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			_cancel_build()
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_LEFT:
+			manual_trigger = false
 			if build_mode:
-				_try_place_at(_screen_to_world(event.position))
+				_try_place_at(_screen_to_world(aim_screen))
+			elif manual_attack and not build_open:
+				manual_trigger = true
 			else:
-				_select_entity_at(_screen_to_world(event.position))
+				_select_entity_at(_screen_to_world(aim_screen))
+				manual_trigger = selected_entity < 0
 			get_viewport().set_input_as_handled()
 
 
@@ -429,6 +461,8 @@ func _build_game_hud() -> void:
 	column.add_child(base_bar)
 	currency_label = _make_label("보급품 150  ·  처치 0  ·  훈장 0", 13, PALETTE.text)
 	column.add_child(currency_label)
+	combat_label = _make_label("", 14, PALETTE.gold)
+	column.add_child(combat_label)
 	status_label = _make_label("", 13, PALETTE.gold)
 	status_label.position = Vector2(350, 28)
 	status_label.custom_minimum_size = Vector2(500, 26)
@@ -468,7 +502,7 @@ func _build_game_hud() -> void:
 	build_status_label = _make_label("시설을 고르고 전장 칸을 클릭하세요. 전투는 계속됩니다.", 12, PALETTE.muted)
 	build_status_label.custom_minimum_size.y = 30
 	build_content.add_child(build_status_label)
-	var hint := _make_label("좌클릭: 선택/배치   우클릭: 취소   회피: Shift", 12, PALETTE.muted, true)
+	var hint := _make_label("건설 [B]: 시설 선택/배치   우클릭: 취소", 12, PALETTE.muted, true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	hint.offset_top = -31
 	hint.offset_bottom = -8
@@ -544,6 +578,8 @@ func _build_augment_screen() -> void:
 
 
 func _show_screen(which: String) -> void:
+	if which != "play":
+		manual_trigger = false
 	screen = which
 	boot_screen.visible = which == "boot"
 	for c in [menu_screen, character_screen, difficulty_screen, intro_screen, settings_screen, perk_screen, game_ui, pause_screen, result_screen, augment_screen]:
@@ -663,6 +699,7 @@ func _reset_run() -> void:
 	enemies.clear()
 	enemy_pool.clear()
 	enemy_shots.clear()
+	player_projectiles.shots.clear()
 	effects.clear()
 	boss_40_spawned = false
 	boss_80_spawned = false
@@ -692,7 +729,9 @@ func _reset_run() -> void:
 	player_facing = Vector2.RIGHT
 	player_attack_timer = 0.0
 	player_reload_timer = 0.0
-	player_magazine = 30
+	player_magazine = int(hero.magazine)
+	manual_attack = false
+	manual_trigger = false
 	dash_timer = 0.0
 	dash_cooldown = 0.0
 	player_mod_damage += float(permanent_upgrades.get("damage", 0)) * 0.06
@@ -739,6 +778,12 @@ func _load_saved_run() -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	player_max_hp = float(state.get("player_max_hp", hero.hp))
 	player_hp = clampf(float(state.get("player_hp", player_max_hp)), 1.0, player_max_hp)
+	player_projectiles.shots.clear()
+	enemy_shots.clear()
+	player_magazine = int(hero.magazine)
+	player_attack_timer = 0.0
+	player_reload_timer = 0.0
+	manual_attack = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
 	player_pos = Vector2(float(pp[0]), float(pp[1]))
 	structures.clear()
@@ -1150,7 +1195,7 @@ func _try_dash() -> void:
 	if Input.is_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): direction.x -= 1.0
 	if Input.is_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): direction.x += 1.0
 	if direction.length() < 0.1: direction = player_facing
-	player_facing = direction.normalized()
+	dash_direction = direction.normalized()
 	dash_timer = 0.2
 	dash_cooldown = 1.25
 
@@ -1184,25 +1229,17 @@ func _update_player(delta: float) -> void:
 	if direction.length() > 0.0:
 		direction = direction.normalized()
 		player_facing = direction
-	var mouse_dir := (aim_screen - size * 0.5)
-	if mouse_dir.length() > 14.0:
-		player_facing = mouse_dir.normalized()
 	var speed := float(Data.CHARACTERS[player_index].speed) * player_mod_speed
 	if dash_timer > 0.0:
 		dash_timer = maxf(0.0, dash_timer - delta)
-		_move_player(player_facing * speed * 2.8 * delta)
+		_move_player(dash_direction * speed * 2.8 * delta)
 	else:
 		_move_player(direction * speed * delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	player_pos.x = clampf(player_pos.x, -MAP_LIMIT.x, MAP_LIMIT.x)
 	player_pos.y = clampf(player_pos.y, -MAP_LIMIT.y, MAP_LIMIT.y)
 	player_motion = (player_pos - previous_position) / maxf(delta, 0.001)
-	player_attack_timer = maxf(0.0, player_attack_timer - delta)
-	player_reload_timer = maxf(0.0, player_reload_timer - delta)
-	if player_reload_timer <= 0.0 and player_magazine <= 0:
-		player_magazine = 30
-	if player_attack_timer <= 0.0 and player_reload_timer <= 0.0:
-		_attack_player()
+	_update_player_attack(delta)
 	if player_drone_level > 0:
 		drone_timer -= delta
 		if drone_timer <= 0.0:
@@ -1214,6 +1251,31 @@ func _update_player(delta: float) -> void:
 				effects.append({"a": player_pos + Vector2(20, -30), "b": target_pos, "time": 0.15, "color": PALETTE.blue})
 	
 
+func _update_player_attack(delta: float) -> void:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	var wants_attack := false
+	if manual_attack:
+		var aim := aim_screen - size * 0.5
+		if not aim.is_zero_approx():
+			player_facing = aim.normalized()
+		wants_attack = screen == "play" and manual_trigger and not build_mode
+	else:
+		var target := _nearest_enemy(player_pos, float(hero.range) * player_mod_range)
+		if target >= 0:
+			var aim: Vector2 = enemies[target].pos - player_pos
+			if not aim.is_zero_approx():
+				player_facing = aim.normalized()
+			wants_attack = true
+
+	player_attack_timer = maxf(0.0, player_attack_timer - delta)
+	if player_reload_timer > 0.0:
+		player_reload_timer = maxf(0.0, player_reload_timer - delta)
+		if player_reload_timer == 0.0:
+			player_magazine = int(hero.magazine)
+	if wants_attack and player_attack_timer <= 0.0 and player_reload_timer <= 0.0:
+		_attack_player()
+
+
 func _attack_player() -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var kind := String(hero.id)
@@ -1224,52 +1286,26 @@ func _attack_player() -> void:
 		for i in range(enemies.size() - 1, -1, -1):
 			var target_pos: Vector2 = enemies[i].pos
 			var toward := target_pos - player_pos
-			if toward.length() <= float(hero.range) * player_mod_range and direction.dot(toward.normalized()) > 0.70:
+			if toward.length() <= float(hero.range) * player_mod_range and (toward.is_zero_approx() or direction.dot(toward.normalized()) > 0.70):
 				_damage_enemy(i, float(hero.damage) * player_mod_damage * 0.45, "chainsaw")
 				if effects.size() < 40: effects.append({"a": player_pos + direction * 26, "b": target_pos, "time": 0.09, "color": Color("#f1a34f")})
 		return
+	if player_magazine <= 0:
+		return
+	player_magazine -= 1
+	if player_magazine == 0:
+		player_reload_timer = float(hero.reload)
 	if kind == "harin":
-		if player_magazine <= 0:
-			player_reload_timer = float(hero.reload)
-			player_attack_timer = player_reload_timer
-			return
-		player_magazine -= 1
 		_harin_visual.trigger_attack()
 	player_attack_timer = maxf(0.05, reload)
 	var direction := player_facing.normalized()
 	var max_range := float(hero.range) * player_mod_range
 	var pellets := int(hero.pellets) + player_extra_pellets if kind == "tae" else 1
-	var total_hits := maxi(1, player_pierce + 1)
+	var damage := float(hero.damage) * player_mod_damage / float(pellets)
+	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 if kind == "tae" else 0.0)
-		var shot_dir := direction.rotated(spread)
-		var hit_list: Array[int] = []
-		var target_pos := player_pos + shot_dir * minf(max_range, 340.0)
-		for hit in range(total_hits):
-			var best := -1
-			var best_dist := max_range
-			for i in range(enemies.size()):
-				if hit_list.has(i): continue
-				var to_enemy: Vector2 = enemies[i].pos - player_pos
-				var dist := to_enemy.length()
-				if dist < best_dist and shot_dir.dot(to_enemy.normalized()) > 0.93:
-					best = i
-					best_dist = dist
-			if best < 0: break
-			if hit == 0:
-				target_pos = enemies[best].pos
-			var enemy_count := enemies.size()
-			var damage := float(hero.damage) * player_mod_damage / float(maxi(1, pellets))
-			_damage_enemy(best, damage, "player")
-			if enemies.size() == enemy_count:
-				hit_list.append(best)
-			else:
-				# Removing the defeated enemy shifts the surviving targets' indices.
-				for i in range(hit_list.size()):
-					if hit_list[i] > best:
-						hit_list[i] -= 1
-		if effects.size() < 60:
-			effects.append({"a": player_pos + shot_dir * 20.0, "b": target_pos, "time": 0.08, "color": PALETTE.gold if kind == "tae" else PALETTE.blue})
+		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1), color)
 
 
 func _update_spawn(delta: float) -> void:
@@ -1331,6 +1367,8 @@ func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
 	var enemy: Dictionary = enemy_pool.pop_back() if not enemy_pool.is_empty() else {}
 	enemy.clear()
 	enemy.merge({"kind": kind, "name": String(data.name), "pos": pos, "hp": hp, "max_hp": hp, "speed": float(data.speed) * (1.0 + float(stage) * 0.0012), "attack": float(data.attack) * float(difficulty.get("attack", 1.0)), "color": data.color, "ranged": bool(data.get("ranged", is_boss)), "boss": is_boss, "cool": 1.0, "charge": 0.0, "target": "player", "slow": 0.0, "pattern_timer": 3.0, "reward": 8 if is_boss else 2 if kind == "normal" or kind == "runner" else 4}, true)
+	enemy_spawn_id += 1
+	enemy.spawn_id = enemy_spawn_id
 	return enemy
 
 
@@ -1541,9 +1579,9 @@ func _nearest_enemy(pos: Vector2, range: float, skip := -1) -> int:
 	var nearest := -1
 	var nearest_dist := range
 	for i in range(enemies.size()):
-		if i == skip: continue
+		if i == skip or enemies[i].hp <= 0.0: continue
 		var dist: float = pos.distance_to(enemies[i].pos)
-		if dist < nearest_dist:
+		if dist <= range and (nearest < 0 or dist < nearest_dist):
 			nearest_dist = dist
 			nearest = i
 	return nearest
@@ -1786,8 +1824,12 @@ func _refresh_hud() -> void:
 		boss_label.text = boss_text
 		var toast_node := run_hud.find_child("Toast", true, false) as Label
 		if toast_node: toast_node.text = toast if toast_timer > 0.0 else ""
-		if status_label != null:
-			status_label.text = "건설 중에도 적과 시간은 계속 움직입니다." if build_open else "자동 공격 · 마우스 방향 조준 · 지휘본부를 지키세요."
+		var capacity := int(Data.CHARACTERS[player_index].magazine)
+		var ammo := "전기톱 · 탄약 미사용" if capacity == 0 else "탄약 %d / %d" % [player_magazine, capacity]
+		if player_reload_timer > 0.0:
+			ammo += " · 재장전 중"
+		combat_label.text = "%s [Tab]  ·  %s" % ["수동" if manual_attack else "자동", ammo]
+		status_label.text = "건설 중에도 적과 시간은 계속 움직입니다." if build_open else ("좌클릭 유지: 사격" if manual_attack else "")
 
 
 func _save_all() -> void:
@@ -1825,6 +1867,8 @@ func _load_data() -> void:
 		permanent_upgrades[perk.id] = clampi(int(permanent_upgrades.get(perk.id, 0)), 0, 5)
 	dash_key = int(data.get("dash_key", KEY_SHIFT))
 	pause_key = int(data.get("pause_key", KEY_ESCAPE))
+	if dash_key == KEY_TAB: dash_key = KEY_SHIFT
+	if pause_key == KEY_TAB: pause_key = KEY_ESCAPE
 	sound_on = bool(data.get("sound_on", true))
 	shake_on = bool(data.get("shake_on", true))
 	saved_run = data.get("saved_run", {})
@@ -1899,6 +1943,9 @@ func _draw_world() -> void:
 		if float(entry.hp) > 0.0: _draw_structure(entry)
 	for enemy in enemies: _draw_enemy(enemy)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
+	for shot in player_projectiles.shots:
+		var tip := _world_to_screen(shot.pos)
+		draw_line(tip - shot.direction * 12.0, tip, shot.color, 2.0)
 	for effect in effects: _draw_effect(effect)
 	if screen != "landing" or landing.player_visible():
 		_draw_player()
@@ -2000,7 +2047,7 @@ func _draw_structure(entry: Dictionary) -> void:
 func _draw_enemy(enemy: Dictionary) -> void:
 	var p := _world_to_screen(enemy.pos)
 	var boss := bool(enemy.get("boss", false))
-	var radius := 34.0 if boss else 15.0 if enemy.kind == "brute" else 12.0
+	var radius := PlayerProjectiles.enemy_radius(enemy)
 	if String(enemy.kind) == "bomber" and float(enemy.get("charge", 0)) > 0.0:
 		var pulse := 56.0 - 28.0 * maxf(0.0, float(enemy.charge)) / 0.72
 		draw_arc(p, pulse, 0, TAU, 44, Color(PALETTE.red, 0.92), 3.0)
@@ -2070,9 +2117,12 @@ func _draw_player() -> void:
 			draw_arc(p - dir * 8.0, 18, -1.2, 1.2, 18, Color("#ccd4be"), 4.0)
 		elif Data.CHARACTERS[player_index].id == "yujin":
 			draw_arc(p, 51, dir.angle() - 0.8, dir.angle() + 0.8, 24, Color("#eea354", 0.26), 2.0)
-	# A restrained reticle visualizes manual mouse aim.
-	var reticle := aim_screen if aim_screen != Vector2.ZERO else size * 0.5 + dir * 120.0
-	_draw_cross(reticle, 7, Color(PALETTE.gold, 0.55))
+	if screen == "play" and manual_attack and not build_mode:
+		var color := Color(PALETTE.gold, 0.55)
+		var aim_length := p.distance_to(aim_screen)
+		if aim_length > 24.0:
+			draw_line(p + dir * 20.0, p + dir * minf(aim_length - 5.0, 92.0), color, 1.0)
+		_draw_cross(aim_screen, 7, color)
 
 
 func _draw_cross(center: Vector2, radius: float, color: Color) -> void:

@@ -1,10 +1,10 @@
 extends RefCounted
 
 const CHARACTERS: Array[Dictionary] = [
-	{"id": "tae", "name": "강태준", "weapon": "산탄총 · 방패", "hp": 140.0, "speed": 225.0, "damage": 16.0, "rate": 1.05, "range": 390.0, "pellets": 5, "reload": 1.55, "color": Color("#85a78e"), "special": "산탄 5발 · 받는 피해 감소"},
-	{"id": "si", "name": "윤시혁", "weapon": "돌격소총", "hp": 105.0, "speed": 250.0, "damage": 20.0, "rate": 0.17, "range": 510.0, "pellets": 1, "reload": 1.8, "color": Color("#64a4a0"), "special": "빠른 연사 · 긴 사거리"},
-	{"id": "harin", "name": "서하린", "weapon": "M4 계열 소총 · 드론", "hp": 100.0, "speed": 260.0, "damage": 18.0, "rate": 0.19, "range": 520.0, "pellets": 1, "reload": 1.7, "color": Color("#be7995"), "special": "30발 탄창 · 지원 드론"},
-	{"id": "yujin", "name": "한유진", "weapon": "전기톱 · 공병", "hp": 115.0, "speed": 245.0, "damage": 22.0, "rate": 0.20, "range": 115.0, "pellets": 1, "reload": 0.0, "color": Color("#d39a55"), "special": "전방 90° 지속 절단 · 포탑 강화"}
+	{"id": "tae", "name": "강태준", "weapon": "산탄총 · 방패", "hp": 140.0, "speed": 225.0, "damage": 16.0, "rate": 1.05, "range": 390.0, "pellets": 5, "magazine": 6, "reload": 1.55, "color": Color("#85a78e"), "special": "산탄 5발 · 받는 피해 감소"},
+	{"id": "si", "name": "윤시혁", "weapon": "돌격소총", "hp": 105.0, "speed": 250.0, "damage": 20.0, "rate": 0.17, "range": 510.0, "pellets": 1, "magazine": 30, "reload": 1.8, "color": Color("#64a4a0"), "special": "빠른 연사 · 긴 사거리"},
+	{"id": "harin", "name": "서하린", "weapon": "M4 계열 소총 · 드론", "hp": 100.0, "speed": 260.0, "damage": 18.0, "rate": 0.19, "range": 520.0, "pellets": 1, "magazine": 30, "reload": 1.7, "color": Color("#be7995"), "special": "30발 탄창 · 지원 드론"},
+	{"id": "yujin", "name": "한유진", "weapon": "전기톱 · 공병", "hp": 115.0, "speed": 245.0, "damage": 22.0, "rate": 0.20, "range": 115.0, "pellets": 1, "magazine": 0, "reload": 0.0, "color": Color("#d39a55"), "special": "전방 90° 지속 절단 · 포탑 강화"}
 ]
 
 const DIFFICULTIES: Array[Dictionary] = [
