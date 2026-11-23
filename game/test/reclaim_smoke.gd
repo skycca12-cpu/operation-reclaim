@@ -146,6 +146,7 @@ func _run() -> void:
 	game.call("_update_spawn", 0.1)
 	_check(game.get("stage") == 2, "wave stage advances on elapsed time")
 	_test_first_enemy_warning(game)
+	_test_operator_hud(game)
 	game.call("_toggle_pause")
 	_check(game.get("screen") == "pause", "pause overlay opens")
 	var time_at_pause: float = game.get("run_seconds")
@@ -167,6 +168,7 @@ func _run() -> void:
 	enemies.clear()
 	var saved_zombie := _spawn_test_zombie(game, saved_position + Vector2(300, 0), 100.0)
 	var saved_variant: int = saved_zombie.variant
+	var saved_base: Dictionary = game.get("run_base_stats")
 	game.call("_save_all")
 	game.queue_free()
 	await process_frame
@@ -179,6 +181,9 @@ func _run() -> void:
 	var resumed_enemies: Array = resumed.get("enemies")
 	_check(resumed_enemies.size() == 1 and resumed_enemies[0].variant == saved_variant, "continue restores the saved zombie appearance")
 	_check(resumed.get("warned_enemies").has("boss40"), "continue remembers enemy types already announced")
+	var restored_augments: Dictionary = resumed.get("acquired_augments")
+	_check(restored_augments.size() == 1 and restored_augments.values()[0].stars == 5, "continue retains acquired rarity and stars")
+	_check(resumed.get("run_base_stats") == saved_base, "continue retains the stat baseline")
 	_check(not resumed.get("manual_trigger"), "continue requires a fresh manual trigger press")
 	resumed.call("_update_player_attack", 0.9)
 	_check(resumed.get("player_magazine") == 30 and resumed.get("player_projectiles").shots.is_empty(), "continued reload finishes without an unintended shot")
@@ -191,6 +196,32 @@ func _run() -> void:
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_operator_hud(game: Control) -> void:
+	var card: Dictionary = Data.augment_catalog()[0].duplicate()
+	card.rarity = "고급"
+	card.stars = 2
+	var original: Dictionary = game.call("_combat_stats")
+	game.call("_choose_augment", card)
+	card.stars = 5
+	game.call("_choose_augment", card)
+	var acquired: Dictionary = game.get("acquired_augments")
+	_check(acquired.size() == 1 and acquired[card.id].stars == 5 and acquired[card.id].count == 2,
+		"repeat acquisition updates the existing card, not a second card")
+	var stats: Dictionary = game.call("_combat_stats")
+	var paid_damage := float(original.damage) * (1.0 + 0.07 * 1.05) * (1.0 + 0.07 * 1.125)
+	_check(is_equal_approx(float(stats.damage), paid_damage), "display damage equals the actual stacked weapon damage")
+	var key := InputEventKey.new()
+	key.physical_keycode = KEY_C
+	key.pressed = true
+	root.push_input(key.duplicate(), true)
+	_check(game.get("screen") == "info" and game.get("operator_info").visible, "C opens operator information")
+	var before: float = game.get("run_seconds")
+	game.call("_process", 0.2)
+	_check(game.get("run_seconds") == before and not game.get("manual_trigger"), "operator information suspends combat and clears manual fire")
+	root.push_input(key.duplicate(), true)
+	_check(game.get("screen") == "play", "C closes operator information")
 
 
 func _test_first_enemy_warning(game: Node) -> void:

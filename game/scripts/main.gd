@@ -1,6 +1,9 @@
 extends Control
 
 const PlayerProjectiles = preload("res://scripts/reclaim/player_projectiles.gd")
+const FlowUI = preload("res://scripts/reclaim/flow/flow_ui.gd")
+const OpsUI = preload("res://scripts/reclaim/operation_ui.gd")
+const OperatorInfo = preload("res://scripts/reclaim/operator_info.gd")
 const FieldWarning = preload("res://scripts/reclaim/field_warning.gd")
 const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
@@ -83,6 +86,15 @@ var augments_taken := 0
 var augment_reroll_used := false
 var augment_options: Array[Dictionary] = []
 var picked_augment_ids: Array[String] = []
+var acquired_augments: Dictionary = {}
+var run_base_stats: Dictionary = {}
+var operator_info: OperatorInfo
+var hud_portrait: TextureRect
+var hud_hero := -1
+var hud_name: Label
+var hud_health: Label
+var hud_level: Label
+var hud_hq: Label
 var boss_40_spawned := false
 var boss_80_spawned := false
 var boss_100_spawned := false
@@ -220,6 +232,11 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if screen in ["play", "info"] and event is InputEventKey and (event.physical_keycode == KEY_C or event.keycode == KEY_C):
+		get_viewport().set_input_as_handled()
+		if event.pressed and not event.echo:
+			_toggle_operator_info()
+		return
 	if event is InputEventMouseMotion or event is InputEventMouseButton:
 		aim_screen = get_global_transform_with_canvas().affine_inverse() * event.position
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
@@ -238,7 +255,7 @@ func _notification(what: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if awaiting_binding != "" and event is InputEventKey and event.pressed and not event.echo:
 		var binding: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
-		if binding == KEY_TAB:
+		if binding == KEY_TAB or binding == KEY_C:
 			get_viewport().set_input_as_handled()
 			return
 		if awaiting_binding == "dash":
@@ -261,6 +278,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_toggle_pause()
 			elif screen == "pause":
 				_close_pause()
+			elif screen == "info":
+				_toggle_operator_info()
 			elif screen == "settings":
 				_close_settings()
 			elif screen == "augment":
@@ -273,6 +292,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 			elif code == dash_key:
 				_try_dash()
+				get_viewport().set_input_as_handled()
+			elif code == KEY_G:
+				_open_base_management()
 				get_viewport().set_input_as_handled()
 	if event is InputEventMouseButton and event.pressed and screen == "play":
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
@@ -295,7 +317,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _draw() -> void:
-	if screen in ["play", "pause", "augment", "result", "landing"] or (screen == "settings" and settings_from_pause):
+	if screen in ["play", "pause", "augment", "result", "landing", "info"] or (screen == "settings" and settings_from_pause):
 		_draw_world()
 	else:
 		_draw_menu_backdrop()
@@ -508,55 +530,67 @@ func _build_game_hud() -> void:
 	field_warning.offset_left = 20.0
 	field_warning.offset_bottom = -43.0
 	field_warning.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	var panel := PanelContainer.new()
-	panel.position = Vector2(18, 16)
-	panel.custom_minimum_size = Vector2(316, 174)
-	panel.add_theme_stylebox_override("panel", _panel_style(PALETTE.green))
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	run_hud.add_child(panel)
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 7)
-	panel.add_child(column)
-	stage_label = _make_label("1일차  /  준비", 16, PALETTE.gold)
-	column.add_child(stage_label)
-	var p_lab := _make_label("대원 체력", 12, PALETTE.muted)
-	column.add_child(p_lab)
-	hp_bar = ProgressBar.new()
-	hp_bar.custom_minimum_size = Vector2(276, 16)
-	hp_bar.show_percentage = false
-	column.add_child(hp_bar)
-	var b_lab := _make_label("지휘본부", 12, PALETTE.muted)
-	column.add_child(b_lab)
-	base_bar = ProgressBar.new()
-	base_bar.custom_minimum_size = Vector2(276, 16)
-	base_bar.show_percentage = false
-	column.add_child(base_bar)
-	currency_label = _make_label("보급품 150  ·  처치 0  ·  훈장 0", 13, PALETTE.text)
-	column.add_child(currency_label)
-	combat_label = _make_label("", 14, PALETTE.gold)
-	column.add_child(combat_label)
-	status_label = _make_label("", 13, PALETTE.gold)
-	status_label.position = Vector2(350, 28)
-	status_label.custom_minimum_size = Vector2(500, 26)
-	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pilot := _hud_plate(Vector2(14, 12))
+	var pilot_row := HBoxContainer.new()
+	pilot_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pilot.add_child(pilot_row)
+	hud_portrait = TextureRect.new()
+	hud_portrait.custom_minimum_size = Vector2(44, 52)
+	hud_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hud_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	hud_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pilot_row.add_child(hud_portrait)
+	var pilot_details := VBoxContainer.new()
+	pilot_details.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pilot_row.add_child(pilot_details)
+	hud_name = OpsUI.label("", 15)
+	hud_level = OpsUI.label("", 12, OpsUI.GOLD)
+	hud_health = OpsUI.label("", 12)
+	pilot_details.add_child(hud_name)
+	pilot_details.add_child(hud_level)
+	hp_bar = _hud_bar(108.0, Color("#b74743"))
+	pilot_details.add_child(hp_bar)
+	hud_health.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hud_health.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hp_bar.add_child(hud_health)
+
+	var base := _hud_plate(Vector2(195, 12))
+	var base_column := VBoxContainer.new()
+	base_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	base.add_child(base_column)
+	stage_label = OpsUI.label("", 13, OpsUI.GOLD)
+	base_column.add_child(stage_label)
+	hud_hq = OpsUI.label("", 12)
+	base_column.add_child(hud_hq)
+	base_bar = _hud_bar(150.0, Color("#699a60"))
+	base_column.add_child(base_bar)
+	var resources := _hud_plate(Vector2(451, 12))
+	currency_label = OpsUI.label("", 13)
+	resources.add_child(currency_label)
+	var ammo_panel := _hud_plate(Vector2(195, 75))
+	combat_label = OpsUI.label("", 13, OpsUI.GOLD)
+	ammo_panel.add_child(combat_label)
+	status_label = OpsUI.label("", 12, OpsUI.GOLD)
+	status_label.position = Vector2(14, 101)
 	run_hud.add_child(status_label)
-	boss_label = _make_label("", 16, PALETTE.red, true)
+	boss_label = OpsUI.label("", 14, PALETTE.red)
 	boss_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	boss_label.offset_top = 18
-	boss_label.offset_bottom = 52
-	boss_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	boss_label.offset_top = 112
+	boss_label.offset_bottom = 135
+	boss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	run_hud.add_child(boss_label)
 	var buttons := HBoxContainer.new()
 	buttons.anchor_left = 1.0
 	buttons.anchor_right = 1.0
-	buttons.offset_left = -316
-	buttons.offset_right = -16
-	buttons.offset_top = 16
-	buttons.offset_bottom = 62
-	buttons.add_theme_constant_override("separation", 8)
+	buttons.offset_left = -188.0
+	buttons.offset_right = -14.0
+	buttons.offset_top = 12
+	buttons.add_theme_constant_override("separation", 6)
 	run_hud.add_child(buttons)
-	buttons.add_child(_make_button("건설 [B]", _toggle_build_panel, PALETTE.gold, 154))
-	buttons.add_child(_make_button("일시정지", _toggle_pause, PALETTE.blue, 132))
+	buttons.add_child(OpsUI.tool_button("info", "캐릭터 정보 [C]", _toggle_operator_info))
+	buttons.add_child(OpsUI.tool_button("build", "건설 [B]", _toggle_build_panel))
+	buttons.add_child(OpsUI.tool_button("base", "지휘본부 관리 [G]", _open_base_management))
+	buttons.add_child(OpsUI.tool_button("pause", "일시정지", _toggle_pause))
 	build_panel = PanelContainer.new()
 	build_panel.anchor_left = 1.0
 	build_panel.anchor_right = 1.0
@@ -608,7 +642,58 @@ func _build_game_hud() -> void:
 	ivbox.add_child(_make_button("강화", _upgrade_selected, PALETTE.green, 270))
 	ivbox.add_child(_make_button("철거", _remove_selected, PALETTE.red, 270))
 	ivbox.add_child(_make_button("닫기", _close_inspector, PALETTE.blue, 270))
+	operator_info = OperatorInfo.new()
+	operator_info.closed.connect(_toggle_operator_info)
+	game_ui.add_child(operator_info)
+	operator_info.hide()
 	game_ui.visible = false
+
+
+func _hud_plate(position: Vector2) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.position = position
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", OpsUI.plate(Color("#7b6945")))
+	run_hud.add_child(panel)
+	return panel
+
+
+func _hud_bar(width: float, fill: Color) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(width, 16)
+	bar.show_percentage = false
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_theme_stylebox_override("background", OpsUI.plate(Color("#635646"), Color("#242626"), 0.0))
+	bar.add_theme_stylebox_override("fill", OpsUI.plate(fill, fill, 0.0))
+	return bar
+
+
+func _open_base_management() -> void:
+	if screen != "play":
+		return
+	var hq := _hq_index()
+	if hq >= 0:
+		_cancel_build()
+		selected_entity = hq
+		_open_inspector()
+
+
+func _toggle_operator_info() -> void:
+	if screen == "info":
+		_show_screen("play")
+	elif screen == "play":
+		operator_info.fill("캐릭터 정보  /  %s  ·  Lv.%d" % [Data.CHARACTERS[player_index].name, player_level],
+			_operator_portrait(), _operator_stat_rows(), acquired_augments.values(),
+			"전투 시작 기준에 훈장 강화·고유 보정이 포함됩니다. 사격 빈도는 재장전 제외, 건설 보정은 비용에 적용됩니다.")
+		_show_screen("info")
+
+
+func _operator_portrait() -> AtlasTexture:
+	var texture: Texture2D = FlowUI.PORTRAITS[player_index]
+	var portrait := AtlasTexture.new()
+	portrait.atlas = texture
+	portrait.region = Rect2(texture.get_width() * 0.17, 0.0, texture.get_width() * 0.66, texture.get_height() * 0.40)
+	return portrait
 
 
 func _build_pause_screen() -> void:
@@ -660,10 +745,11 @@ func _show_screen(which: String) -> void:
 	if screen == "settings" and which != "settings" and not audio_save_timer.is_stopped():
 		audio_save_timer.stop()
 		_save_all()
-	var was_in_combat := screen in ["play", "augment", "pause"] or (screen == "settings" and settings_from_pause)
+	var was_in_combat := screen in ["play", "augment", "pause", "info"] or (screen == "settings" and settings_from_pause)
 	if which != "play":
 		manual_trigger = false
 	screen = which
+	operator_info.visible = which == "info"
 	boot_screen.visible = which == "boot"
 	for c in [menu_screen, character_screen, difficulty_screen, intro_screen, settings_screen, perk_screen, game_ui, pause_screen, result_screen, augment_screen]:
 		c.visible = false
@@ -675,7 +761,7 @@ func _show_screen(which: String) -> void:
 		"landing": pass
 		"settings": settings_screen.visible = true
 		"perks": perk_screen.visible = true
-		"play": game_ui.visible = true
+		"play", "info": game_ui.visible = true
 		"pause":
 			game_ui.visible = true
 			pause_screen.visible = true
@@ -690,7 +776,7 @@ func _show_screen(which: String) -> void:
 	if which == "character": flow_character.on_shown()
 	if which == "settings": _update_binding_labels()
 	if which == "perks": _update_perk_screen()
-	var combat_paused := which == "pause" or (which == "settings" and settings_from_pause)
+	var combat_paused := which in ["pause", "info"] or (which == "settings" and settings_from_pause)
 	AudioDirector.set_game_paused(combat_paused)
 	if sound_on and which in ["play", "augment"]:
 		AudioDirector.play_music("music.gameplay")
@@ -792,6 +878,7 @@ func _reset_run() -> void:
 	augments_taken = 0
 	augment_reroll_used = false
 	picked_augment_ids.clear()
+	acquired_augments.clear()
 	structures.clear()
 	enemies.clear()
 	zombie_corpses.clear()
@@ -841,6 +928,7 @@ func _reset_run() -> void:
 	player_mod_building_hp += float(permanent_upgrades.get("building_hp", 0)) * 0.08
 	player_mod_rate += float(permanent_upgrades.get("reload", 0)) * 0.04
 	player_mod_salvage += float(permanent_upgrades.get("salvage", 0)) * 0.05
+	run_base_stats = _combat_stats()
 	var hp := 1600.0 * player_mod_building_hp
 	structures.append({"kind": "hq", "cell": BASE_CELL, "hp": hp, "max_hp": hp, "level": 1, "cool": 0.0, "built": true})
 	spawn_timer = 2.0
@@ -1122,8 +1210,7 @@ func _select_build(kind: String) -> void:
 
 func _effective_cost(base: int) -> int:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
-	var reduction := player_mod_build - (0.10 if hero.id == "yujin" else 0.0)
-	return maxi(1, int(round(float(base) * maxf(0.5, reduction))))
+	return maxi(1, int(round(float(base) * _build_cost_factor(hero, player_mod_build))))
 
 
 func _build_definition(kind: String) -> Dictionary:
@@ -1431,15 +1518,15 @@ func _update_player_attack(delta: float) -> void:
 func _attack_player() -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var kind := String(hero.id)
-	var reload := float(hero.rate) / player_mod_rate
+	var interval := _weapon_interval(hero, player_mod_rate)
 	if kind == "yujin":
-		player_attack_timer = maxf(0.08, reload)
+		player_attack_timer = interval
 		var direction := player_facing.normalized()
 		for i in range(enemies.size() - 1, -1, -1):
 			var target_pos: Vector2 = enemies[i].pos
 			var toward := target_pos - player_pos
 			if toward.length() <= float(hero.range) * player_mod_range and (toward.is_zero_approx() or direction.dot(toward.normalized()) > 0.70):
-				_damage_enemy(i, float(hero.damage) * player_mod_damage * 0.45, "chainsaw")
+				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
 				if effects.size() < 40: effects.append({"a": player_pos + direction * 26, "b": target_pos, "time": 0.09, "color": Color("#f1a34f")})
 		return
 	if player_magazine <= 0:
@@ -1451,11 +1538,11 @@ func _attack_player() -> void:
 		_harin_visual.trigger_attack()
 	if sound_on:
 		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
-	player_attack_timer = maxf(0.05, reload)
+	player_attack_timer = interval
 	var direction := player_facing.normalized()
 	var max_range := float(hero.range) * player_mod_range
 	var pellets := int(hero.pellets) + player_extra_pellets if kind == "tae" else 1
-	var damage := float(hero.damage) * player_mod_damage / float(pellets)
+	var damage := _weapon_damage(hero, player_mod_damage) / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 if kind == "tae" else 0.0)
@@ -1953,20 +2040,9 @@ func _rebuild_augment_cards() -> void:
 		row.remove_child(child)
 		child.queue_free()
 	for card in augment_options:
-		var rarity_color := PALETTE.muted if card.rarity == "일반" else PALETTE.green if card.rarity == "고급" else PALETTE.blue if card.rarity == "희귀" else Color("#bd8de0") if card.rarity == "영웅" else PALETTE.gold
-		var b := _make_button("%s  ·  %s\n%s\n%s" % [String(card.rarity), "★".repeat(int(card.stars)), String(card.name), String(card.description)], _choose_augment.bind(card), rarity_color, 189)
-		b.add_theme_font_size_override("font_size", 16)
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.custom_minimum_size.y = 120
-		for state in ["normal", "hover", "pressed", "focus"]:
-			var style := b.get_theme_stylebox(state) as StyleBoxFlat
-			style.content_margin_left = 6.0
-			style.content_margin_right = 6.0
-			style.content_margin_top = 5.0
-			style.content_margin_bottom = 5.0
-			if state != "focus":
-				style.bg_color = Color(PALETTE.panel.lerp(rarity_color, 0.11 if state == "normal" else 0.22), 0.96)
-		row.add_child(b)
+		var display := card.duplicate()
+		display.description = _augment_effect_text(card)
+		row.add_child(OpsUI.augment_card(display, _choose_augment.bind(card), 189.0, 120.0, true))
 	augment_reroll_button.disabled = augment_reroll_used
 	augment_reroll_button.text = "무료 리롤 사용됨" if augment_reroll_used else "무료 리롤 1회"
 
@@ -1991,7 +2067,21 @@ func _reroll_augments() -> void:
 
 
 func _choose_augment(card: Dictionary) -> void:
-	picked_augment_ids.append(String(card.id))
+	var id := String(card.id)
+	if not picked_augment_ids.has(id):
+		picked_augment_ids.append(id)
+	var entry: Dictionary = acquired_augments.get(id, {})
+	var count := int(entry.get("count", 0)) + 1
+	var effects_applied: Array = entry.get("effects_applied", [])
+	if effects_applied.is_empty() and entry.has("stars"):
+		effects_applied.append(entry.description)
+	effects_applied.append(_augment_effect_text(card))
+	if int(card.stars) >= int(entry.get("stars", 0)):
+		entry = card.duplicate()
+		entry["description"] = _augment_effect_text(card)
+	entry["count"] = count
+	entry["effects_applied"] = effects_applied
+	acquired_augments[id] = entry
 	var mult := 1.0 + 0.025 * float(card.stars)
 	match String(card.effect):
 		"damage": player_mod_damage *= 1.0 + 0.07 * mult
@@ -2016,10 +2106,92 @@ func _choose_augment(card: Dictionary) -> void:
 	_show_toast("현장 증강 · %s" % String(card.name))
 
 
+func _weapon_interval(hero: Dictionary, rate: float) -> float:
+	return maxf(0.08 if hero.id == "yujin" else 0.05, float(hero.rate) / rate)
+
+
+func _weapon_damage(hero: Dictionary, multiplier: float) -> float:
+	return float(hero.damage) * multiplier * (0.45 if hero.id == "yujin" else 1.0)
+
+
+func _incoming_damage_factor(hero: Dictionary, armor: float) -> float:
+	return maxf(0.25, armor - (0.12 if hero.id == "tae" else 0.0))
+
+
+func _build_cost_factor(hero: Dictionary, multiplier: float) -> float:
+	return maxf(0.5, multiplier - (0.10 if hero.id == "yujin" else 0.0))
+
+
+func _combat_stats() -> Dictionary:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	return {
+		"hp": player_max_hp,
+		"damage": _weapon_damage(hero, player_mod_damage),
+		"rate": 1.0 / _weapon_interval(hero, player_mod_rate),
+		"speed": float(hero.speed) * player_mod_speed,
+		"range": float(hero.range) * player_mod_range,
+		"armor": (1.0 - _incoming_damage_factor(hero, player_mod_armor)) * 100.0,
+		"build": _build_cost_factor(hero, player_mod_build) * 100.0,
+	}
+
+
+func _legacy_base_stats() -> Dictionary:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	return {
+		"hp": float(hero.hp) + float(permanent_upgrades.get("health", 0)) * 15.0,
+		"damage": _weapon_damage(hero, 1.0 + float(permanent_upgrades.get("damage", 0)) * 0.06),
+		"rate": 1.0 / _weapon_interval(hero, 1.0 + float(permanent_upgrades.get("reload", 0)) * 0.04),
+		"speed": float(hero.speed) * (1.0 + float(permanent_upgrades.get("speed", 0)) * 0.04),
+		"range": float(hero.range) * (1.0 + float(permanent_upgrades.get("range", 0)) * 0.05),
+		"armor": (1.0 - _incoming_damage_factor(hero, 1.0)) * 100.0,
+		"build": _build_cost_factor(hero, maxf(0.55, 1.0 - float(permanent_upgrades.get("build", 0)) * 0.04)) * 100.0,
+	}
+
+
+func _operator_stat_rows() -> Array:
+	var current := _combat_stats()
+	var base := run_base_stats if not run_base_stats.is_empty() else _legacy_base_stats()
+	var rows := []
+	for field in [
+		["hp", "최대 체력", ""], ["damage", "공격 피해 (1회 합계)", ""],
+		["rate", "공격 빈도", "/초"], ["speed", "이동 속도", " px/초"], ["range", "공격 범위", " px"],
+		["armor", "받는 피해 감소", "%"], ["build", "건설 비용 배율", "%"],
+	]:
+		var final_value := float(current[field[0]])
+		var base_value := float(base.get(field[0], final_value))
+		var difference := final_value - base_value
+		var unit := String(field[2])
+		var delta_text := "—" if is_zero_approx(difference) else "%s%.2f%s" % ["+" if difference > 0.0 else "", difference, "%p" if unit == "%" else unit]
+		rows.append([field[1], "%.2f%s" % [base_value, unit], delta_text, "%.2f%s" % [final_value, unit]])
+	return rows
+
+
+func _augment_effect_text(card: Dictionary) -> String:
+	if not card.has("stars"):
+		return String(card.get("description", "")) + " · 세부 획득 기록 없음"
+	var scale := 1.0 + 0.025 * float(card.stars)
+	match String(card.effect):
+		"damage": return "공격 피해 +%.2f%%" % (7.0 * scale)
+		"rate", "reload": return "공격 빈도 배율 +%.2f%%" % (6.0 * scale)
+		"range": return "사거리 배율 +%.2f%%" % (6.0 * scale)
+		"health": return "최대 체력 +%.2f · 획득 시 체력 최대 35 회복" % (14.0 * scale)
+		"armor": return "받는 피해 배율 ×0.94 (고유 보정·하한 별도)"
+		"speed": return "이동 속도 배율 +%.2f%%" % (4.5 * scale)
+		"xp": return "경험치 배율 +%.2f%%" % (8.0 * scale)
+		"building_hp": return "건설 시 시설 내구도 배율 +%.2f%%" % (8.0 * scale)
+		"salvage": return "보급품 배율 +%.2f%%" % (10.0 * scale)
+		"turret_damage": return "포탑 피해 배율 +%.2f%%" % (8.0 * scale)
+		"turret_rate": return "포탑 공격 빈도 배율 +%.2f%%" % (8.0 * scale)
+		"build": return "건설 비용 배율 -5%p (최소 비용 배율 적용)"
+		"projectile": return "산탄총 발사 탄환 +1" if Data.CHARACTERS[player_index].id == "tae" else "산탄 수 +1 (산탄총에만 적용)"
+		"pierce": return "총기 관통 대상 +1"
+		"drone": return "지원 드론 레벨 +1"
+	return "공격 피해 +6%"
+
+
 func _player_take_damage(amount: float, cause: String) -> void:
 	if dash_timer > 0.0: return
-	var reduction := 0.12 if Data.CHARACTERS[player_index].id == "tae" else 0.0
-	player_hp -= amount * maxf(0.25, player_mod_armor - reduction)
+	player_hp -= amount * _incoming_damage_factor(Data.CHARACTERS[player_index], player_mod_armor)
 	if sound_on and run_seconds >= impact_sound_at:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 0.80)
@@ -2075,16 +2247,23 @@ func _show_toast(message: String) -> void:
 
 func _refresh_hud() -> void:
 	if hp_bar == null or game_ui == null: return
-	if screen == "play" or screen == "pause" or screen == "augment":
+	if screen in ["play", "pause", "augment", "info"]:
+		if hud_hero != player_index:
+			hud_hero = player_index
+			hud_portrait.texture = _operator_portrait()
+		hud_name.text = String(Data.CHARACTERS[player_index].name)
+		hud_level.text = "Lv.%d  [C]" % player_level
+		hud_health.text = "%d / %d" % [ceili(player_hp), ceili(player_max_hp)]
 		hp_bar.max_value = player_max_hp
 		hp_bar.value = player_hp
 		var hq := _hq_index()
 		if hq >= 0:
 			base_bar.max_value = float(structures[hq].max_hp)
 			base_bar.value = float(structures[hq].hp)
+			hud_hq.text = "HQ  %d / %d" % [ceili(base_bar.value), ceili(base_bar.max_value)]
 		var remaining := maxi(0, int(WAVE_SECONDS - stage_elapsed))
 		stage_label.text = "단계 %d / 100  ·  %s  ·  다음 단계 %02d초" % [stage, String(difficulty.get("label", "")), remaining]
-		currency_label.text = "보급품 %d  ·  처치 %d  ·  훈장 %d  ·  Lv.%d" % [money, kills, medals, player_level]
+		currency_label.text = "보급품 %d  ·  처치 %d  ·  훈장 %d" % [money, kills, medals]
 		var boss_text := ""
 		for e in enemies:
 			if bool(e.get("boss", false)):
@@ -2103,7 +2282,7 @@ func _refresh_hud() -> void:
 
 func _save_all() -> void:
 	var output: Dictionary = {"schema": 1, "medals": medals, "upgrades": permanent_upgrades, "dash_key": dash_key, "pause_key": pause_key, "sound_on": sound_on, "shake_on": shake_on, "saved_run": saved_run}
-	if screen == "play" or screen == "pause" or screen == "augment":
+	if screen in ["play", "pause", "augment", "info"]:
 		var structure_rows: Array[Dictionary] = []
 		for s in structures:
 			var cell: Vector2i = s.get("cell", Vector2i.ZERO)
@@ -2117,6 +2296,8 @@ func _save_all() -> void:
 		if boss_80_spawned: boss_flags.append(80)
 		if boss_100_spawned: boss_flags.append(100)
 		saved_run["boss_flags"] = boss_flags
+		saved_run["base_stats"] = run_base_stats
+		saved_run["acquired_augments"] = acquired_augments
 		saved_run["warned_enemies"] = warned_enemies.keys()
 		saved_run["pending_enemy_warnings"] = field_warning.pending_warnings()
 		saved_run["magazine"] = player_magazine
@@ -2143,8 +2324,8 @@ func _load_data() -> void:
 		permanent_upgrades[perk.id] = clampi(int(permanent_upgrades.get(perk.id, 0)), 0, 5)
 	dash_key = int(data.get("dash_key", KEY_SHIFT))
 	pause_key = int(data.get("pause_key", KEY_ESCAPE))
-	if dash_key == KEY_TAB: dash_key = KEY_SHIFT
-	if pause_key == KEY_TAB: pause_key = KEY_ESCAPE
+	if dash_key in [KEY_TAB, KEY_C]: dash_key = KEY_SHIFT
+	if pause_key in [KEY_TAB, KEY_C]: pause_key = KEY_ESCAPE
 	sound_on = bool(data.get("sound_on", true))
 	bgm_volume = clampi(int(data.get("bgm_volume", 100)), 0, 100)
 	effects_volume = clampi(int(data.get("effects_volume", 100)), 0, 100)
@@ -2172,6 +2353,13 @@ func _restore_run_modifiers() -> void:
 	augments_taken = int(mods.get("augments", 0))
 	picked_augment_ids.clear()
 	for value in mods.get("picked", []): picked_augment_ids.append(String(value))
+	run_base_stats = saved_run.get("base_stats", _legacy_base_stats())
+	acquired_augments = saved_run.get("acquired_augments", {}).duplicate(true)
+	for card in Data.augment_catalog():
+		if picked_augment_ids.has(card.id) and not acquired_augments.has(card.id):
+			var legacy := card.duplicate()
+			legacy.description = _augment_effect_text(card)
+			acquired_augments[card.id] = legacy
 	var flags: Array = saved_run.get("boss_flags", [])
 	boss_40_spawned = flags.has(40)
 	boss_80_spawned = flags.has(80)
@@ -2245,7 +2433,7 @@ func _draw_world() -> void:
 	draw_set_transform(Vector2.ZERO)
 	if screen == "play" and manual_attack and not build_mode:
 		_draw_cross(aim_screen, 7, Color(PALETTE.gold, 0.55))
-	if screen in ["pause", "augment", "result"] or (screen == "settings" and settings_from_pause):
+	if screen in ["pause", "augment", "result", "info"] or (screen == "settings" and settings_from_pause):
 		draw_rect(view, Color(0.025, 0.035, 0.035, 0.16 if screen == "augment" else 0.42))
 
 
