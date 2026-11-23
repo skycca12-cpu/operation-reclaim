@@ -203,9 +203,29 @@ func _run() -> void:
 	# Allow the 350 ms Continue cue to finish before freeing the scene.
 	resumed.set_process(false)
 	await create_timer(0.45).timeout
+	_test_yujin(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_yujin(game: Control) -> void:
+	game.set("player_index", 3)
+	game.call("_reset_run")
+	game.set("player_facing", Vector2.RIGHT)
+	var origin: Vector2 = game.get("player_pos")
+	game.call("_spawn_enemy", "normal", origin + Vector2(52, 0), false)
+	game.call("_spawn_enemy", "normal", origin - Vector2(52, 0), false)
+	var enemies: Array = game.get("enemies")
+	var front_hp := float(enemies[0].hp)
+	var back_hp := float(enemies[1].hp)
+	game.call("_attack_player")
+	var visual: RefCounted = game.get("_yujin_visual")
+	_check(float(enemies[0].hp) < front_hp and is_equal_approx(float(enemies[1].hp), back_hp),
+		"Yujin's chainsaw preserves forward-only melee damage")
+	_check(float(visual.get("_attack_left")) > 0.0, "the real melee attack starts Yujin's cutting animation")
+	visual.call("update", 1.0)
+	_check(is_zero_approx(float(visual.get("_attack_left"))), "Yujin returns to idle after cutting ends")
 
 
 func _test_operator_hud(game: Control) -> void:

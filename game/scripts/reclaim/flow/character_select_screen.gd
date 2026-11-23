@@ -9,7 +9,7 @@ const FlowUI = preload("res://scripts/reclaim/flow/flow_ui.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 ## Which operators already have a finished in-game sprite (others still use
 ## temporary shapes during combat – shown on the card, not hidden).
-const INGAME_SPRITE_READY := {"harin": true}
+const INGAME_SPRITE_READY := {"harin": true, "yujin": true}
 
 var selected := 2
 var _cards: Array[Button] = []

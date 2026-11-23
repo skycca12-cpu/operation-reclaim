@@ -48,8 +48,13 @@ static func plate(color: Color = GOLD, fill: Color = INK, padding: float = 6.0) 
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
 	style.border_color = color
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(3)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(7)
+	style.corner_detail = 1
+	style.anti_aliasing = false
+	style.shadow_color = Color("#050504d9")
+	style.shadow_size = 2
+	style.shadow_offset = Vector2(0, 2)
 	style.content_margin_left = padding
 	style.content_margin_right = padding
 	style.content_margin_top = padding
@@ -72,9 +77,19 @@ static func tool_button(kind: String, hint: String, callback: Callable) -> Butto
 	result.tooltip_text = hint
 	result.add_theme_stylebox_override("normal", plate(Color("#776943")))
 	result.add_theme_stylebox_override("hover", plate(GOLD, Color("#41371f")))
-	var glyph := icon(kind, GOLD, 22.0)
-	glyph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	result.add_child(glyph)
+	var display := VBoxContainer.new()
+	display.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	display.alignment = BoxContainer.ALIGNMENT_CENTER
+	display.add_theme_constant_override("separation", 1)
+	display.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	result.add_child(display)
+	var glyph := icon(kind, GOLD, 21.0)
+	glyph.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	display.add_child(glyph)
+	var caption := label({"info": "정보", "build": "건설", "base": "기지", "pause": "메뉴"}[kind], 11)
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	display.add_child(caption)
+	result.custom_minimum_size = Vector2(39, 49)
 	result.pressed.connect(callback)
 	return result
 
@@ -108,13 +123,20 @@ static func augment_card(card: Dictionary, callback: Callable, width: float, hei
 		"range": "range", "armor": "defense", "health": "health", "building_hp": "defense", "speed": "motion",
 		"build": "build", "turret_damage": "offense", "turret_rate": "rate"}
 	var icon_key := String(keys.get(kind, "support"))
-	var glyph := icon(icon_key, accent, 24.0)
+	var glyph := icon(icon_key, accent.lightened(0.40), 28.0)
 	glyph.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(glyph)
-	for line in [String(card.get("name", "")), "%s  %s" % [rarity, "★".repeat(stars)] if stars > 0 else "등급·별 기록 없음"]:
-		var text := label(line, 14, Color("#efeadc") if line == String(card.get("name", "")) else accent)
-		text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		box.add_child(text)
+	var rating := label("★".repeat(stars), 14, Color("#ffce54"))
+	rating.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(rating)
+	var name_text := label(String(card.get("name", "")), 13)
+	name_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_text.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	box.add_child(name_text)
+	if show_description:
+		var tier := label(rarity, 12, accent)
+		tier.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(tier)
 	if show_description:
 		var description := label(String(card.get("description", "")), 12, Color("#cbc4b4"))
 		description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

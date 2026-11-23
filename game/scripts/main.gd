@@ -7,6 +7,7 @@ const OperatorInfo = preload("res://scripts/reclaim/operator_info.gd")
 const FieldWarning = preload("res://scripts/reclaim/field_warning.gd")
 const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
+const YujinVisual = preload("res://scripts/reclaim/yujin_visual.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
@@ -131,6 +132,7 @@ var awaiting_binding := ""
 var permanent_upgrades: Dictionary = {}
 var saved_run: Dictionary = {}
 var _random := RandomNumberGenerator.new()
+var _yujin_visual = YujinVisual.new()
 var _harin_visual = HarinVisual.new()
 var player_motion := Vector2.ZERO
 var boot_screen: Control
@@ -212,6 +214,7 @@ func _process(delta: float) -> void:
 		return
 	_update_player(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
+	_yujin_visual.update(delta)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	_update_spawn(delta)
 	_update_enemies(delta)
@@ -844,6 +847,7 @@ func _update_landing(delta: float) -> void:
 	player_motion = (player_pos - before) / maxf(delta, 0.001)
 	if player_motion.length() > 1.0:
 		player_facing = player_motion.normalized()
+	_yujin_visual.update(delta)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	hq_build_ratio = maxf(0.0, landing.hq_ratio())
 	if landing.done:
@@ -862,6 +866,7 @@ func _finish_landing() -> void:
 
 
 func _reset_run() -> void:
+	_yujin_visual.reset()
 	difficulty = Data.DIFFICULTIES[difficulty_index].duplicate(true)
 	stage = 1
 	stage_elapsed = 0.0
@@ -1520,6 +1525,7 @@ func _attack_player() -> void:
 	var kind := String(hero.id)
 	var interval := _weapon_interval(hero, player_mod_rate)
 	if kind == "yujin":
+		_yujin_visual.attack(interval)
 		player_attack_timer = interval
 		var direction := player_facing.normalized()
 		for i in range(enemies.size() - 1, -1, -1):
@@ -2629,6 +2635,8 @@ func _draw_player() -> void:
 		if player_reload_timer > 0.0:
 			reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
 		_harin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0, player_drone_level, reload_progress)
+	elif Data.CHARACTERS[player_index].id == "yujin":
+		_yujin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0)
 	else:
 		var color: Color = Data.CHARACTERS[player_index].color
 		if dash_timer > 0.0:
@@ -2641,8 +2649,6 @@ func _draw_player() -> void:
 		draw_line(p + dir * 11.0, p + dir * 28.0, Color(PALETTE.gold), 2.0)
 		if Data.CHARACTERS[player_index].id == "tae":
 			draw_arc(p - dir * 8.0, 18, -1.2, 1.2, 18, Color("#ccd4be"), 4.0)
-		elif Data.CHARACTERS[player_index].id == "yujin":
-			draw_arc(p, 51, dir.angle() - 0.8, dir.angle() + 0.8, 24, Color("#eea354", 0.26), 2.0)
 	if screen == "play" and manual_attack and not build_mode:
 		var color := Color(PALETTE.gold, 0.55)
 		var aim_length := p.distance_to(_world_to_screen(_screen_to_world(aim_screen)))
