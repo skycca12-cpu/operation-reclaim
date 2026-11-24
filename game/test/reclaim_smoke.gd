@@ -502,6 +502,22 @@ func _test_spawn_multiplier(game: Control) -> void:
 	_check(active.size() == 50, "early wave batches respect the active enemy target")
 
 
+func _test_harin_muzzle(game: Control) -> void:
+	game.set("player_index", 2)
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.set("camera_zoom", 2.0)
+	game.set("player_facing", Vector2.DOWN)
+	game.call("_attack_player")
+	var visual: RefCounted = game.get("_harin_visual")
+	var shots: Array = game.get("player_projectiles").shots
+	var player: Vector2 = game.get("player_pos")
+	_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(0, 21.5)),
+		"Harin's downward projectile starts at the on-screen barrel at 2x zoom")
+	_check(visual.call("_front_shot_frame") == 1, "Harin starts on the flash frame at discharge")
+	game.set("camera_zoom", 1.0)
+
+
 func _test_yujin(game: Control) -> void:
 	game.set("player_index", 3)
 	game.call("_reset_run")

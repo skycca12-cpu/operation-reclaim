@@ -264,7 +264,7 @@ func _process(delta: float) -> void:
 	if treatment_remaining <= 0.0:
 		_update_player(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
-	_yujin_visual.update(delta, player_motion.length_squared() > 36.0)
+	_yujin_visual.update(delta, player_motion)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	_update_spawn(delta)
 	_update_enemies(delta)
@@ -931,7 +931,7 @@ func _update_landing(delta: float) -> void:
 	player_motion = (player_pos - before) / maxf(delta, 0.001)
 	if player_motion.length() > 1.0:
 		player_facing = player_motion.normalized()
-	_yujin_visual.update(delta, player_motion.length_squared() > 36.0)
+	_yujin_visual.update(delta, player_motion)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	hq_build_ratio = maxf(0.0, landing.hq_ratio())
 	if landing.done:
@@ -970,6 +970,7 @@ func _reset_run() -> void:
 	last_reload_at = -10.0
 	clinic_shield = 0.0
 	_yujin_visual.reset()
+	_harin_visual = HarinVisual.new()
 	difficulty = Data.DIFFICULTIES[difficulty_index].duplicate(true)
 	stage = 1
 	stage_elapsed = 0.0
@@ -1729,10 +1730,10 @@ func _attack_player() -> void:
 	player_magazine -= 1
 	if player_magazine == 0:
 		player_reload_timer = float(hero.reload) / _csv_factor("reload")
-	var muzzle_offset := Vector2.ZERO
+	var muzzle := player_pos
 	if kind == "harin":
 		_harin_visual.trigger_attack(player_facing)
-		muzzle_offset = _harin_visual.muzzle_offset(player_facing)
+		muzzle += _harin_visual.muzzle_offset(player_facing) / _view_zoom()
 	if sound_on:
 		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
 	player_attack_timer = interval
@@ -1743,7 +1744,7 @@ func _attack_player() -> void:
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 * _csv_reduction("pellet_focus") if kind == "tae" else 0.0)
-		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, muzzle_offset, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")))
+		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")))
 
 
 func _update_spawn(delta: float) -> void:
@@ -3264,10 +3265,8 @@ func _draw_world() -> void:
 	for shot in player_projectiles.shots:
 		var traveled: float = shot.traveled
 		var tail_length := minf(12.0, traveled)
-		var offset: Vector2 = shot.muzzle_offset / zoom
-		var tip := _world_to_screen(shot.pos) + offset * maxf(0.0, 1.0 - traveled / 96.0)
+		var tip := _world_to_screen(shot.pos)
 		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length)
-		tail += offset * maxf(0.0, 1.0 - (traveled - tail_length) / 96.0)
 		draw_line(tail, tip, shot.color, 2.0)
 	if repair_drone_level > 0:
 		_draw_repair_drone()
