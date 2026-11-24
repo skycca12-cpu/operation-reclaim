@@ -1,6 +1,8 @@
 extends RefCounted
 
 const BACKGROUND := preload("res://assets/reclaim/jeju_v2/background.png")
+const PALETTE_SHADER := preload("res://assets/reclaim/jeju_v2/scenery_palette.gdshader")
+const PALETTE_MASK := preload("res://assets/reclaim/jeju_v2/palette_mask.png")
 const MAP_PATH := "res://assets/reclaim/jeju_v2/map.json"
 const SCALE := 2.65
 const HQ_WORLD := Vector2(24, 0)
@@ -38,7 +40,7 @@ func setup() -> void:
 		_obstacles.append(obstacle)
 		_obstacle_bounds.append(_polygon_bounds(obstacle))
 	build_bounds = _polygon_bounds(_polygon(data.build_polygon))
-	var entries := [Vector2(732, 260), Vector2(739, 750), Vector2(280, 451), Vector2(1180, 528), Vector2(768, 480), Vector2(768, 480), Vector2(768, 480), Vector2(1060, 640)]
+	var entries := [Vector2(695, 234), Vector2(739, 750), Vector2(360, 465), Vector2(1180, 528), Vector2(768, 480), Vector2(768, 480), Vector2(768, 480), Vector2(768, 480)]
 	for i in range(data.spawn_candidates.size()):
 		var point := _image_to_world(_point(data.spawn_candidates[i]))
 		var entry := _image_to_world(entries[i])
@@ -141,5 +143,19 @@ func camera_center(focus: Vector2, viewport: Vector2, zoom: float) -> Vector2:
 	return focus.clamp(bounds.position + half_view, bounds.end - half_view)
 
 
-func draw_background(canvas: CanvasItem, offset: Vector2) -> void:
-	canvas.draw_texture_rect(BACKGROUND, Rect2(bounds.position + offset, bounds.size), false)
+func create_background() -> Sprite2D:
+	var sprite := Sprite2D.new()
+	sprite.texture = BACKGROUND
+	sprite.centered = false
+	sprite.show_behind_parent = true
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var palette := ShaderMaterial.new()
+	palette.shader = PALETTE_SHADER
+	palette.set_shader_parameter("scenery_mask", PALETTE_MASK)
+	sprite.material = palette
+	return sprite
+
+
+func align_background(sprite: Sprite2D, focus: Vector2, viewport: Vector2, zoom: float) -> void:
+	sprite.position = viewport * 0.5 + (bounds.position - camera_center(focus, viewport, zoom)) * zoom
+	sprite.scale = Vector2.ONE * SCALE * zoom

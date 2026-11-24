@@ -62,6 +62,7 @@ const PALETTE := {
 }
 
 var jeju_map := JejuFixedMap.new()
+var jeju_background: Sprite2D
 var screen := "boot"
 var player_index := 0
 var difficulty_index := 1
@@ -244,6 +245,8 @@ func _ready() -> void:
 	add_child(flow_sfx)
 	flow_sfx.enabled = sound_on
 	jeju_map.setup()
+	jeju_background = jeju_map.create_background()
+	add_child(jeju_background)
 	_build_ui()
 	_show_screen("boot")
 	print("[reclaim-boot] 수도 탈환작전 · 한국어 메뉴 준비")
@@ -392,7 +395,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _draw() -> void:
 	var world_visible := screen in ["play", "pause", "augment", "result", "landing", "info"] or (screen == "settings" and settings_from_pause)
+	jeju_background.visible = world_visible
 	if world_visible:
+		jeju_map.align_background(jeju_background, player_pos, size, _view_zoom())
 		_draw_world()
 	else:
 		_draw_menu_backdrop()
@@ -3252,8 +3257,6 @@ func _draw_world() -> void:
 	var zoom := _view_zoom()
 	var camera := Transform2D(0.0, Vector2.ONE * zoom, 0.0, size * 0.5 * (1.0 - zoom))
 	draw_set_transform_matrix(camera)
-	var camera_offset := _world_to_screen(Vector2.ZERO)
-	jeju_map.draw_background(self, camera_offset)
 	if build_open or build_mode:
 		_draw_build_grid()
 	for route in tunnel_routes:
@@ -3350,31 +3353,33 @@ func _draw_structure(entry: Dictionary, camera: Transform2D) -> void:
 	var width := 2 if kind == "hq" or _is_building(kind) else 1
 	var bounds := Rect2(center - Vector2(CELL * float(width) * 0.5, CELL * 0.5), Vector2(CELL * float(width), CELL))
 	var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
-	var condition := Color.WHITE if ratio > DAMAGE_MARK else Color("#d3c0b5") if ratio > DAMAGE_FIRE else Color("#aa847a")
+	# Keep painted detail while bringing highlights into the battlefield palette.
+	var condition := Color("#d8c8c0") if ratio > DAMAGE_MARK else Color("#b4a094") if ratio > DAMAGE_FIRE else Color("#95756a")
 	var level := clampi(int(entry.get("level", 1)), 1, 5)
 	var bar_height := 31.0
+	if kind == "hq" and hq_build_ratio <= 0.0:
+		return
+	_draw_structure_shadow(bounds, kind, hq_build_ratio if kind == "hq" else 1.0)
 	if kind == "hq":
-		if hq_build_ratio <= 0.0:
-			return
-		_draw_structure_sprite(BASE_ART, level - 1, 0, center + Vector2(0, 23), 120.0,
+		_draw_structure_sprite(BASE_ART, level - 1, 0, center + Vector2(0, 24), 105.0,
 			Color(condition, hq_build_ratio))
 		bar_height = 77.0
 		draw_string(ThemeDB.fallback_font, center + Vector2(-34, 40), "지휘본부", HORIZONTAL_ALIGNMENT_LEFT, 90, 11, PALETTE.text)
 	elif kind == "wall":
-		_draw_structure_sprite(BASE_ART, level - 1, 1, center + Vector2(0, 18), 49.0, condition)
+		_draw_structure_sprite(BASE_ART, level - 1, 1, center + Vector2(0, 24), 51.0, condition)
 	elif TURRET_ROWS.has(kind):
 		var target := _nearest_enemy(_entry_world_center(entry), 370.0)
 		var look_left: bool = enemies[target].pos.x < _entry_world_center(entry).x if target >= 0 else player_facing.x < 0.0
 		var flip := Vector2(-1, 1) if look_left else Vector2.ONE
 		draw_set_transform_matrix(camera * Transform2D(0.0, flip, 0.0, center))
-		_draw_structure_sprite(TURRET_ART, level - 1, TURRET_ROWS[kind], Vector2(0, 16), 69.0, condition)
+		_draw_structure_sprite(TURRET_ART, level - 1, TURRET_ROWS[kind], Vector2(0, 24), 82.0, condition)
 		draw_set_transform_matrix(camera)
 		for pip in range(level):
 			draw_rect(Rect2(center.x - 12 + pip * 5, center.y + 19, 3, 2), PALETTE.gold)
 	elif FACILITY_COLUMNS.has(kind):
 		var def := _build_definition(kind)
 		bar_height = 60.0
-		_draw_structure_sprite(BASE_ART, FACILITY_COLUMNS[kind], 2, center + Vector2(0, 20), 104.0, condition)
+		_draw_structure_sprite(BASE_ART, FACILITY_COLUMNS[kind], 2, center + Vector2(0, 24), 103.0, condition)
 		draw_string(ThemeDB.fallback_font, center + Vector2(-21, 34), String(def.get("short", "시설")), HORIZONTAL_ALIGNMENT_LEFT, 60, 10, PALETTE.text)
 	_draw_structure_damage(center, ratio, width, kind == "wall")
 	var bar_width := 28.0 if kind == "wall" else 40.0 * float(width)
@@ -3384,6 +3389,21 @@ func _draw_structure(entry: Dictionary, camera: Transform2D) -> void:
 	draw_rect(bar, PALETTE.green if ratio > 0.35 else PALETTE.red)
 	if selected_entity >= 0 and selected_entity < structures.size() and structures[selected_entity] == entry:
 		draw_rect(bounds.grow(3), PALETTE.blue, false, 2.0)
+
+
+func _draw_structure_shadow(bounds: Rect2, kind: String, opacity: float) -> void:
+	var left := bounds.position.x + (9.0 if TURRET_ROWS.has(kind) else 2.0)
+	var right := bounds.end.x - (9.0 if TURRET_ROWS.has(kind) else 2.0)
+	var base := bounds.end.y
+	var depth := 10.0 if kind == "wall" else 21.0
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(left + 2, base - depth), Vector2(right + 2, base - depth),
+		Vector2(right + 13, base + 4), Vector2(left + 6, base + 4),
+	]), Color(0.13, 0.10, 0.10, 0.28 * opacity))
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(left + 3, base - 8), Vector2(right - 2, base - 8),
+		Vector2(right + 2, base), Vector2(left, base),
+	]), Color(0.11, 0.08, 0.08, 0.44 * opacity))
 
 
 func _draw_structure_damage(center: Vector2, ratio: float, width: int, wall: bool) -> void:

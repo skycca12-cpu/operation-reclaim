@@ -346,6 +346,19 @@ func _test_jeju_battlefield(game: Control) -> void:
 	_check(game.call("_hq_position") == map.call("_image_to_world", Vector2(768, 480)), "HQ matches the source anchor")
 	var obstacle: Vector2 = map.call("_image_to_world", Vector2(350, 365))
 	_check(not map.call("walkable", obstacle, 0.0), "source obstacle blocks the ground")
+	_check(map.call("walkable", map.call("_image_to_world", Vector2(692, 176)), 24.0)
+		and not map.call("walkable", map.call("_image_to_world", Vector2(732, 176)), 0.0),
+		"the northern approach follows the road beside the police station")
+	_check(map.call("walkable", map.call("_image_to_world", Vector2(980, 690)), 24.0)
+		and not map.call("walkable", map.call("_image_to_world", Vector2(1026, 711)), 0.0),
+		"the southeast obstacle blocks the rubble instead of the empty asphalt")
+	for point in [Vector2(349, 700), Vector2(330, 587), Vector2(519, 710), Vector2(559, 282), Vector2(387, 600),
+		Vector2(399, 308), Vector2(352, 315), Vector2(657, 278), Vector2(1129, 611)]:
+		_check(not map.call("walkable", map.call("_image_to_world", point), 0.0),
+			"Jeju rooftop, lamp, roadside concrete and rubble block ground movement at %s" % point)
+	for point in [Vector2(289, 510), Vector2(740, 756), Vector2(1190, 505), Vector2(680, 245)]:
+		_check(map.call("walkable", map.call("_image_to_world", point), 13.0),
+			"clear road stays walkable at %s" % point)
 	_check(not map.call("walkable", bounds.position + Vector2(40, 40), 13.0), "the outer landscape blocks passage")
 	game.set("player_pos", obstacle + Vector2(-120, 0))
 	game.call("_move_player", Vector2(230, 0))
