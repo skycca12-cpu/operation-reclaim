@@ -94,6 +94,7 @@ var saw_last_cut := -1.0
 var saw_chain := 0
 var saw_repair_kills := 0
 var saw_audio_at := 0.0
+var saw_cut_audio_at := 0.0
 var combat_drone_position := Vector2.ZERO
 var combat_drone_fire_at := -1.0
 var combat_drone_facing := Vector2.RIGHT
@@ -1101,6 +1102,7 @@ func _reset_run() -> void:
 	saw_chain = 0
 	saw_repair_kills = 0
 	saw_audio_at = 0.0
+	saw_cut_audio_at = 0.0
 	drone_timer = 0.0
 	combat_drone_position = PLAYER_START + Vector2(34, -28)
 	combat_drone_fire_at = -1.0
@@ -1151,6 +1153,7 @@ func _load_saved_run() -> void:
 	saw_chain = 0
 	saw_last_cut = -1.0
 	saw_audio_at = 0.0
+	saw_cut_audio_at = 0.0
 	shield_dash = false
 	shield_targets.clear()
 	dash_echoes.clear()
@@ -1889,19 +1892,20 @@ func _attack_player() -> void:
 		if not saw_overheated:
 			saw_heat = minf(100.0, saw_heat + interval * Skills.SAW_HEAT_PER_SECOND)
 			saw_overheated = saw_heat >= 100.0
-		if sound_on and run_seconds >= saw_audio_at:
-			saw_audio_at = run_seconds + 0.40
-			AudioDirector.play_cue("player.chainsaw", 0.91 if saw_overheated else 1.0)
 		_yujin_visual.attack(interval, player_facing)
 		player_attack_timer = interval
 		var direction := player_facing.normalized()
 		var reach := _weapon_range(hero)
+		var made_contact := false
 		for i in range(enemies.size() - 1, -1, -1):
 			var target_pos: Vector2 = enemies[i].pos
 			var toward := target_pos - player_pos
 			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > cos(deg_to_rad(minf(85.0, 45.0 * _csv_factor("saw_angle"))))):
 				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
 				saw_chain = mini(6, saw_chain + 1)
+				made_contact = true
+		if sound_on:
+			_play_saw_attack(made_contact)
 		return
 	player_magazine -= 1
 	if player_magazine == 0:
@@ -1915,7 +1919,7 @@ func _attack_player() -> void:
 		_infantry_visual.attack(player_facing)
 		tracer_offset = _infantry_visual.muzzle(kind, player_facing) / _view_zoom()
 	if sound_on:
-		AudioDirector.play_cue("player.shotgun" if kind == "tae" else "player.m4" if kind == "harin" else "player.action", 1.08 if kind == "si" else 1.0)
+		AudioDirector.play_cue("player.shotgun" if kind == "tae" else "player.m4", 1.08 if kind == "si" else 1.0)
 	player_attack_timer = interval
 	var direction := player_facing.normalized()
 	var max_range := _weapon_range(hero)
@@ -1925,6 +1929,18 @@ func _attack_player() -> void:
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 * _csv_reduction("pellet_focus") if kind == "tae" else 0.0)
 		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")), tracer_offset)
+
+
+func _play_saw_attack(made_contact: bool) -> void:
+	var pitch := 0.92 if saw_overheated else 1.0
+	if made_contact:
+		if run_seconds >= saw_cut_audio_at:
+			saw_cut_audio_at = run_seconds + 0.29
+			saw_audio_at = maxf(saw_audio_at, saw_cut_audio_at)
+			AudioDirector.play_cue("player.chainsaw", pitch)
+	elif run_seconds >= saw_audio_at:
+		saw_audio_at = run_seconds + 0.34
+		AudioDirector.play_cue("player.chainsaw_rev", pitch)
 
 
 func _update_spawn(delta: float) -> void:
@@ -2529,7 +2545,7 @@ func _damage_enemy(index: int, amount: float, source: String, origin: Variant = 
 		var angle := impact_origin.angle_to_point(point)
 		effects.append({"a": point, "b": point, "time": HIT_SPARK_TIME, "hit_angle": angle,
 			"color": ZombieVisual.NormalVisual.IMPACTS[hit_style][0]})
-	if amount > 0.0 and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
+	if amount > 0.0 and source != "chainsaw" and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 1.18)
 	if float(enemy.hp) <= 0.0:

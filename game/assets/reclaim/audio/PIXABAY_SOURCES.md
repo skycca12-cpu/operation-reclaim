@@ -6,7 +6,8 @@
 |---|---|
 | shotgun.ogg | 샷건 사운드.mp3 |
 | rifle_m4.ogg | m4 돌격소총 사운드.mp3 |
-| chainsaw_cut.ogg | 전기톱 사운드.mp3 |
+| chainsaw_rev.ogg | 전기톱 사운드.mp3 (공회전 구간) |
+| chainsaw_cut.ogg | 전기톱 사운드.mp3 (가동 구간과 필터링한 절삭 마찰음 혼합) |
 | zombie_growl_low.ogg | 좀비 사운드.mp3 |
 | zombie_growl_high.ogg | 좀비 사운드2.mp3 |
 | zombie_growl_elderly.ogg | 노인 좀비 사운드.mp3 |

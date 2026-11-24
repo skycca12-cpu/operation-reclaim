@@ -762,7 +762,7 @@ func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
 
 
 func _test_operator_skills(game: Control) -> void:
-	for cue in ["player.shotgun", "player.m4", "player.chainsaw", "enemy.low",
+	for cue in ["player.shotgun", "player.m4", "player.chainsaw", "player.chainsaw_rev", "enemy.low",
 			"enemy.high", "enemy.elderly", "enemy.boss_arrival"]:
 		_check(game.get_node("/root/AudioDirector").play_cue(cue), "imported combat cue is loaded: %s" % cue)
 	game.set("player_index", 0)
@@ -810,8 +810,13 @@ func _test_operator_skills(game: Control) -> void:
 	structures.append({"kind": "wall", "cell": Vector2i(5, 5), "hp": 60.0, "max_hp": 100.0})
 	var position: Vector2 = game.get("player_pos")
 	game.set("saw_repair_kills", 4)
-	_spawn_test_zombie(game, position + Vector2(40, 0), 1.0)
-	game.call("_damage_enemy", 0, 10.0, "chainsaw")
+	game.set("sound_on", true)
+	game.set("player_facing", Vector2.RIGHT)
+	var target := _spawn_test_zombie(game, position + Vector2(40, 0), 1.0)
+	var target_position: Vector2 = target.pos
+	game.call("_attack_player")
+	_check(game.get("saw_cut_audio_at") > 0.0 and target.pos == target_position,
+		"the saw triggers its cutting cue on contact without moving the zombie")
 	_check(structures.back().hp == 66.0, "the fifth saw kill repairs the nearest damaged non-HQ structure")
 
 

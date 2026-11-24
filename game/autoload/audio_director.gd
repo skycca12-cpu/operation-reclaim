@@ -9,6 +9,7 @@ const MAX_UI_VOICES := 2
 const CUES := {
 	"player.shotgun": {"path": "res://assets/reclaim/audio/shotgun.ogg", "bus": "SFX"},
 	"player.m4": {"path": "res://assets/reclaim/audio/rifle_m4.ogg", "bus": "SFX"},
+	"player.chainsaw_rev": {"path": "res://assets/reclaim/audio/chainsaw_rev.ogg", "bus": "SFX"},
 	"player.chainsaw": {"path": "res://assets/reclaim/audio/chainsaw_cut.ogg", "bus": "SFX"},
 	"enemy.low": {"path": "res://assets/reclaim/audio/zombie_growl_low.ogg", "bus": "SFX"},
 	"enemy.high": {"path": "res://assets/reclaim/audio/zombie_growl_high.ogg", "bus": "SFX"},

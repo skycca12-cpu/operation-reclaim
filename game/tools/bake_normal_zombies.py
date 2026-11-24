@@ -24,14 +24,29 @@ SHOULDERS = [[(62,85),(98,85)],[(62,87),(98,87)],[(60,87),(102,87)],
 ELBOWS = [[(56,103),(104,103)],[(55,104),(105,103)],[(54,106),(108,106)],
           [(54,106),(108,106)],[(55,102),(104,102)],[(54,105),(109,105)],
           [(53,105),(109,105)],[(0,0),(111,108)]]
-# Brace, raise arms, overhead wind-up, contact, follow-through, recovery.
-POSES = [(0.28,0.38,0.4),(0.66,0.57,-0.5),(1,.32,-2),
-         (.39,.45,4),(.47,.36,3),(.18,.18,1.5)]
+# Each pose is keyed as a pair of sleeve/forearm angles from vertical.
+# Negative angles point right. Body pitch and knee bend are independent of the arms.
+FRONT_POSES = [
+    ((24, -24), (-24, 24), 0, .99),
+    ((43, 147), (-43, -147), -2, 1),
+    ((149, 179), (-149, -179), -4, 1),
+    ((34, -26), (-34, 26), 7, .91),
+    ((49, -18), (-49, 18), 5, .94),
+    ((19, -8), (-19, 8), 2, .98),
+]
+SIDE_POSES = [
+    ((-18, -58), (-35, -74), 0, .99),
+    ((-43, -119), (-69, -144), -2, 1),
+    ((-139, -170), (-155, -177), -5, 1),
+    ((-36, -62), (-51, -23), 9, .91),
+    ((-42, -62), (-55, -33), 6, .94),
+    ((-18, -16), (-23, -29), 3, .98),
+]
 DIRECTIONS = [(0, 1), (-1, 0), (1, 0), (0, -1)]
 IDLE = [0, 2]
 WALK = [4, 6, 8, 10]
 DEATH = [22, 23, 24, 25, 26]
-COLUMNS = len(IDLE) + len(WALK) + len(DEATH) + 4 + len(DIRECTIONS) * len(POSES) + 16
+COLUMNS = len(IDLE) + len(WALK) + len(DEATH) + 4 + len(DIRECTIONS) * len(FRONT_POSES) + 16
 
 
 def cell(image, column, row):
@@ -81,38 +96,42 @@ def transformed(sprite, matrix, translation):
                             Image.Resampling.NEAREST)
 
 
-def attack(parts, base, palette, row, pose):
-    x, y = DIRECTIONS[row]
-    reach, bend, lean = pose
-    flip = -1 if row == 1 else 1
-    body = rotation(x*lean*.012) @ np.diag([flip, 1-max(0,lean)*.018])
-    root = PIVOT + np.array([x,y])*max(0,lean)*.65 + np.array([0,lean])
-    layers = []
-    for arm in range(2):
+def attack(parts, base, palette, row, beat, walk_source):
+    left, right, pitch, knee_bend = (SIDE_POSES if row in (1, 2) else FRONT_POSES)[beat]
+    body = rotation(math.radians(pitch if row in (1, 2) else 0)) @ np.diag([1.0, knee_bend])
+    mirror = np.diag([-1.0 if row == 1 else 1.0, 1.0])
+    foot = np.array([49.0 if base == 7 else 80.0, 148.0])
+    body_origin = PIVOT + mirror @ (foot + body @ (PIVOT - foot) - PIVOT)
+    torso = jacket(parts[base][0], palette)
+    if row != 0:
+        # Keep the outfit and use the matching walking head for the attack direction.
+        facing = 2 if row in (1, 2) else 3
+        head_height = min(p[1] for p in SHOULDERS[base] if p[1] > 0) - 2
+        head = cell(walk_source, 0, facing).crop((0, 0, CELL, head_height))
+        torso.paste(head, (0, 0))
+    torso = transformed(torso, mirror @ body,
+                        body_origin - mirror @ body @ PIVOT)
+    result = Image.new("RGBA", (CELL, CELL))
+    if row != 3:
+        result.alpha_composite(torso)
+    for arm, angles in enumerate((left, right)):
         if base == 7 and arm == 0:
             continue
         shoulder = np.array(SHOULDERS[base][arm])
         elbow = np.array(ELBOWS[base][arm])
-        side = -1 if arm == 0 else 1
-        aim = (math.atan2(y,x*flip) - math.pi*.5 + math.pi) % math.tau - math.pi
-        t = min(1,max(0,(reach-.48)/(.94-.48)))
-        lift = t*t*(3-2*t)
-        angle = (aim*(1-lift) - side*(math.pi-.43)*lift)*min(1,reach*2.2)
-        if abs(y)>abs(x):
-            angle += side*bend*1.15*(1-lift)
-        upper = body @ rotation(angle)
-        lower = upper @ rotation(side*bend*.9*(1-lift)) * (1+max(0,lean)*.035)
-        joint = root + body @ (shoulder-PIVOT)
-        layers.append([
-            transformed(jacket(parts[base][1+arm*2],palette,arm=True),upper,joint-upper@shoulder),
-            transformed(jacket(parts[base][2+arm*2],palette,arm=True),lower,joint+upper@(elbow-shoulder)-lower@elbow),
-        ])
-    torso = transformed(jacket(parts[base][0],palette),body,root-body@PIVOT)
-    result = Image.new("RGBA",(CELL,CELL))
-    order = [*layers, [torso]] if row == 3 else [[torso], *layers]
-    for pair in order:
-        for layer in pair:
-            result.alpha_composite(layer)
+        sleeve_angle = math.atan2(-(elbow - shoulder)[0], (elbow - shoulder)[1])
+        upper = mirror @ rotation(math.radians(angles[0]) - sleeve_angle)
+        lower = mirror @ rotation(math.radians(angles[1]))
+        joint = body_origin + mirror @ body @ (shoulder - PIVOT)
+        for piece, transform, anchor, destination in (
+            (1, upper, shoulder, joint),
+            (2, lower, elbow, joint + upper @ (elbow - shoulder)),
+        ):
+            sprite = jacket(parts[base][piece + arm * 2], palette, arm=True)
+            result.alpha_composite(transformed(sprite, transform, destination - transform @ anchor))
+    if row == 3:
+        # Keep the raised hands visible around the silhouette during the wind-up.
+        result.alpha_composite(torso)
     return result
 
 
@@ -133,7 +152,7 @@ def elderly_walk(sprite, cane, column, row):
 
 def reaction(sprite, phase, elderly=False):
     # Baked silhouettes: recoil, buckled knees, tense recovery, return.
-    skew, squash, shift = [(0.16,.98,3),(-.20,.88,5),(.10,.95,2),(0,1,0)][phase]
+    skew, squash, shift = [(0.06,.99,0),(-.08,.96,0),(.04,.98,0),(0,1,0)][phase]
     foot = np.array([80,145])
     if elderly:
         # Brace on the cane: keep its tip planted while the body recoils.
@@ -161,8 +180,8 @@ def main():
                       for c in IDLE+WALK]
             frames += [jacket(cell(source[base],c,0),color,death=True) for c in DEATH]
             frames += [reaction(frames[0], i, elderly=base == 7) for i in range(4)]
-            frames += [attack(parts,base,color,row,pose)
-                       for row in range(4) for pose in POSES]
+            frames += [attack(parts,base,color,row,beat,walk_sources[base])
+                       for row in range(4) for beat in range(len(FRONT_POSES))]
             for row in range(4):
                 for column in range(4):
                     walk = jacket(cell(walk_sources[base], column, row), color)

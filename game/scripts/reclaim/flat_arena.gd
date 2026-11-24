@@ -3,7 +3,7 @@ extends RefCounted
 const SIDE := 60
 const CELL := 48.0
 const EXTENT := SIDE * CELL
-const GROUND := preload("res://assets/reclaim/jeju_v2/background.png")
+const GROUND := preload("res://assets/reclaim/flat_arena_asphalt.png")
 const GROUND_SHADER := preload("res://assets/reclaim/flat_arena_ground.gdshader")
 
 var bounds := Rect2(Vector2.ONE * (-EXTENT * 0.5), Vector2.ONE * EXTENT)
@@ -32,7 +32,6 @@ func create_background() -> Sprite2D:
 	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	var material := ShaderMaterial.new()
 	material.shader = GROUND_SHADER
-	material.set_shader_parameter("repeats", EXTENT / (120.0 * 2.65))
 	sprite.material = material
 	return sprite
 

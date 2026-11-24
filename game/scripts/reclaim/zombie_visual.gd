@@ -12,33 +12,14 @@ const SHEETS: Array[Texture2D] = [
 	preload("res://assets/reclaim/zombies/zombie_07_soldier.png"),
 	preload("res://assets/reclaim/zombies/zombie_08_elderly.png"),
 ]
-const ATTACK_PARTS: Texture2D = preload("res://assets/reclaim/zombies/attack_parts.png")
-# Left and right pivots follow each original garment seam.
-const SHOULDERS := [
-	[Vector2(62, 85), Vector2(98, 85)], [Vector2(62, 87), Vector2(98, 87)],
-	[Vector2(60, 87), Vector2(102, 87)], [Vector2(59, 87), Vector2(103, 87)],
-	[Vector2(62, 82), Vector2(98, 82)], [Vector2(61, 86), Vector2(101, 86)],
-	[Vector2(61, 88), Vector2(102, 88)], [Vector2.ZERO, Vector2(103, 87)],
-]
-const ELBOWS := [
-	[Vector2(56, 103), Vector2(104, 103)], [Vector2(55, 104), Vector2(105, 103)],
-	[Vector2(54, 106), Vector2(108, 106)], [Vector2(54, 106), Vector2(108, 106)],
-	[Vector2(55, 102), Vector2(104, 102)], [Vector2(54, 105), Vector2(109, 105)],
-	[Vector2(53, 105), Vector2(109, 105)], [Vector2.ZERO, Vector2(111, 108)],
-]
-# Eight beats from the reference: rest, brace, raise, high guard, impact, follow-through, recover, rest.
-const POSES := [
-	Vector3(0.0, 0.0, 0.0), Vector3(0.28, 0.38, 0.4), Vector3(0.66, 0.57, -0.5),
-	Vector3(1.0, 0.32, -2.0), Vector3(0.39, 0.45, 4.0), Vector3(0.47, 0.36, 3.0),
-	Vector3(0.18, 0.18, 1.5), Vector3(0.0, 0.0, 0.0),
-]
 const SPRITE_CENTER := Vector2(80.0, 86.0)
 const CELL := 160.0
 # The 126 px standing silhouette becomes ~86 world pixels.
 const SCALE := 0.68
 const RADIUS := 21.0
 const ATTACK_TIME := 0.6
-const IMPACT_TIME := ATTACK_TIME * 4.0 / 8.0
+const ATTACK_BEATS := 8
+const IMPACT_TIME := ATTACK_TIME * 4.0 / ATTACK_BEATS
 const HIT_TIME := 0.4
 # The supplied last death cell (column 27) is fully transparent in every row.
 const DEATH_FRAMES := 5
@@ -59,12 +40,11 @@ static func start_attack(enemy: Dictionary, toward: Vector2, now: float) -> void
 
 static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, camera: Transform2D, tint := Color.WHITE, compact := false) -> void:
 	if enemy.kind == "normal":
-		_draw_normal(canvas, enemy, center, now, tint)
+		_draw_normal(canvas, enemy, center, now, camera, tint)
 		return
 	var phase := now + float(int(enemy.spawn_id) % 31) * 0.063
 	if now < float(enemy.attack_until):
-		var progress := 1.0 - (float(enemy.attack_until) - now) / ATTACK_TIME
-		_draw_attack(canvas, enemy, center, clampf(progress, 0.0, 1.0), camera, tint)
+		_draw_attack(canvas, enemy, center, now, tint)
 	elif now < float(enemy.hit_until):
 		var column := 18 + clampi(int((now + HIT_TIME - float(enemy.hit_until)) * 10.0), 0, 3)
 		var impact := clampf((float(enemy.hit_until) - now - HIT_TIME + 0.09) / 0.09, 0.0, 1.0)
@@ -79,22 +59,24 @@ static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, n
 		_draw_frame(canvas, enemy.variant, enemy.row, int(phase * 5.0) % 4, center, tint)
 
 
-static func _draw_normal(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, tint: Color) -> void:
-	var attacking := now < float(enemy.attack_until)
+static func _draw_normal(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, camera: Transform2D, tint: Color) -> void:
 	var hit_age := now + HIT_TIME - float(enemy.hit_until)
-	if now < float(enemy.hit_until) and (not attacking or hit_age < 0.11):
-		NormalVisual.reaction(canvas, enemy, center, maxf(0.0, hit_age), tint)
-		return
-	if attacking:
-		var attack_row := facing_row(enemy.attack_direction)
-		var progress := clampf(1.0 - (float(enemy.attack_until) - now) / ATTACK_TIME, 0.0, 1.0)
-		var beat := int(progress * 8.0)
-		var column := 0 if beat == 0 or beat >= 7 else 15 + attack_row * 6 + beat - 1
-		NormalVisual.frame(canvas, enemy.appearance, column, center, tint)
+	var being_hit := now < float(enemy.hit_until)
+	if now < float(enemy.attack_until):
+		_draw_attack(canvas, enemy, center, now,
+			NormalVisual.impact_tint(enemy, hit_age, tint) if being_hit else tint)
 		return
 	var stride := fposmod(float(enemy.walk_distance) / 30.0, 1.0)
-	var column := 39 + int(enemy.row) * 4 + int(stride * 4.0) if enemy.moving else int(now * 5.0 + float(enemy.spawn_id)) % 2
-	NormalVisual.frame(canvas, enemy.appearance, column, center, tint)
+	var row := int(enemy.row)
+	var walk_column := 39 + row * 4 + int(stride * 4.0)
+	if being_hit and row == 0:
+		NormalVisual.reaction(canvas, enemy, center, maxf(0.0, hit_age), tint)
+		return
+	var column := walk_column if enemy.moving or row != 0 else int(now * 5.0 + float(enemy.spawn_id)) % 2
+	if being_hit:
+		NormalVisual.directional_reaction(canvas, enemy, column, center, camera, hit_age, tint)
+	else:
+		NormalVisual.frame(canvas, enemy.appearance, column, center, tint)
 
 
 static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, camera: Transform2D, tint: Color) -> void:
@@ -123,55 +105,14 @@ static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, c
 	canvas.draw_set_transform_matrix(camera)
 
 
-static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2, progress: float, camera: Transform2D, tint: Color) -> void:
-	var direction: Vector2 = enemy.attack_direction
-	var variant: int = enemy.variant
-	var row := facing_row(direction)
-	var mirror := -1.0 if row == 1 else 1.0
-	var phase := minf(progress * 8.0, 7.0)
-	var pose: Vector3 = POSES[int(phase)].lerp(POSES[mini(int(phase) + 1, 7)], fposmod(phase, 1.0))
-	var lean := direction * maxf(0.0, pose.z) * 0.65 + Vector2(0.0, pose.z)
-	var compression := 1.0 - maxf(0.0, pose.z) * 0.018
-	var body := camera * Transform2D(direction.x * pose.z * 0.012,
-		Vector2(mirror, compression), 0.0, center + lean)
-	var cell_rect := Rect2(-SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
-	var source := Rect2(Vector2(variant * CELL, 0.0), Vector2.ONE * CELL)
-	if row != 0:
-		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose, tint)
-	canvas.draw_set_transform_matrix(body)
-	canvas.draw_texture_rect_region(ATTACK_PARTS, cell_rect, source, tint)
-	if row == 0:
-		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose, tint)
-	_draw_attack_arm(canvas, body, variant, 1, direction, mirror, pose, tint)
-	canvas.draw_set_transform_matrix(camera)
-
-
-static func _draw_attack_arm(canvas: CanvasItem, body: Transform2D, variant: int, arm: int,
-		direction: Vector2, mirror: float, pose: Vector3, tint: Color) -> void:
-	if variant == 7 and arm == 0:
-		return
-	var shoulder: Vector2 = SHOULDERS[variant][arm]
-	var elbow: Vector2 = ELBOWS[variant][arm]
-	var side := -1.0 if arm == 0 else 1.0
-	var aimed := Vector2(direction.x * mirror, direction.y)
-	var aim_angle := angle_difference(PI * 0.5, aimed.angle())
-	# Fan both sleeves out around the head during the wind-up, then turn toward impact.
-	var raised := -side * (PI - 0.43)
-	var lift := smoothstep(0.48, 0.94, pose.x)
-	var extension := lerpf(aim_angle, raised, lift)
-	var angle := extension * minf(1.0, pose.x * 2.2)
-	if absf(direction.y) > absf(direction.x):
-		angle += side * pose.y * 1.15 * (1.0 - lift)
-	var upper := body * Transform2D(angle, (shoulder - SPRITE_CENTER) * SCALE)
-	var lower := upper * Transform2D(side * pose.y * 0.9 * (1.0 - lift),
-		Vector2.ONE * (1.0 + maxf(0.0, pose.z) * 0.035), 0.0, (elbow - shoulder) * SCALE)
-	var size := Vector2.ONE * CELL * SCALE
-	var cell := Vector2.ONE * CELL
-	var source := Vector2(variant * CELL, (1 + arm * 2) * CELL)
-	canvas.draw_set_transform_matrix(upper)
-	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-shoulder * SCALE, size), Rect2(source, cell), tint)
-	canvas.draw_set_transform_matrix(lower)
-	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-elbow * SCALE, size), Rect2(source + Vector2(0.0, CELL), cell), tint)
+static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, tint: Color) -> void:
+	var row := facing_row(enemy.attack_direction)
+	var progress := 1.0 - (float(enemy.attack_until) - now) / ATTACK_TIME
+	var beat := clampi(int(progress * ATTACK_BEATS + 0.00001), 0, ATTACK_BEATS - 1)
+	var column := 15 + row * 6 + beat - 1
+	if beat == 0 or beat == ATTACK_BEATS - 1:
+		column = 0 if row == 0 else 39 + row * 4
+	NormalVisual.frame(canvas, int(enemy.get("appearance", enemy.variant)), column, center, tint)
 
 
 static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:
