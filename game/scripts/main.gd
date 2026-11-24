@@ -634,19 +634,21 @@ func _build_game_hud() -> void:
 	build_panel = PanelContainer.new()
 	build_panel.anchor_left = 1.0
 	build_panel.anchor_right = 1.0
-	build_panel.anchor_top = 0.18
-	build_panel.anchor_bottom = 0.90
-	build_panel.offset_left = -354
-	build_panel.offset_right = -16
-	build_panel.add_theme_stylebox_override("panel", _panel_style(PALETTE.gold))
+	build_panel.offset_top = 70
+	build_panel.offset_bottom = 70
+	build_panel.offset_left = -278
+	build_panel.offset_right = -14
+	build_panel.custom_minimum_size.x = 264
+	build_panel.add_theme_stylebox_override("panel", OpsUI.plate(OpsUI.GOLD, Color("#1c2220f8"), 9.0))
 	build_panel.visible = false
 	build_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	run_hud.add_child(build_panel)
 	build_content = VBoxContainer.new()
-	build_content.add_theme_constant_override("separation", 8)
+	build_content.add_theme_constant_override("separation", 5)
 	build_panel.add_child(build_content)
-	build_status_label = _make_label("시설을 고르고 전장 칸을 클릭하세요. 전투는 계속됩니다.", 12, PALETTE.muted)
-	build_status_label.custom_minimum_size.y = 30
+	build_status_label = _make_label("전장 클릭 · 우클릭 취소", 12, PALETTE.muted)
+	build_status_label.custom_minimum_size.y = 16
+	build_status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	build_content.add_child(build_status_label)
 	var hint := _make_label("건설 [B]   포탑 [1–7]   방벽 [8]   시설 [F1–F5]   강화 [U]   우클릭 취소", 12, PALETTE.muted, true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
@@ -1199,7 +1201,7 @@ func _cancel_build() -> void:
 	build_mode = false
 	selected_build = ""
 	if build_status_label != null and build_open:
-		build_status_label.text = "시설을 고르고 전장 칸을 클릭하세요. 전투는 계속됩니다."
+		build_status_label.text = "전장 클릭 · 우클릭 취소"
 	queue_redraw()
 
 
@@ -1207,33 +1209,69 @@ func _refresh_build_panel() -> void:
 	if build_content == null: return
 	for child in build_content.get_children():
 		if child != build_status_label:
+			build_content.remove_child(child)
 			child.queue_free()
-	var title := _make_label("실시간 건설 · 11×11", 21, PALETTE.gold)
-	build_content.add_child(title)
+	var header := HBoxContainer.new()
+	build_content.add_child(header)
+	var title := _make_label("건설 · 11×11", 15, PALETTE.gold)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close := _build_menu_button("닫기 ×", _toggle_build_panel, PALETTE.gold)
+	close.name = "CloseBuild"
+	close.tooltip_text = "건설 창 닫기 [B]"
+	header.add_child(close)
 	var tabrow := HBoxContainer.new()
-	tabrow.add_theme_constant_override("separation", 5)
+	tabrow.add_theme_constant_override("separation", 4)
 	build_content.add_child(tabrow)
 	for tab in ["turret", "building", "wall"]:
-		var tab_title: String = String({"turret": "포탑", "building": "시설", "wall": "방벽"}.get(tab, "건설"))
-		tabrow.add_child(_make_button(tab_title, _select_build_tab.bind(tab), PALETTE.blue if build_tab == tab else PALETTE.gold, 90))
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.custom_minimum_size.y = 250
-	build_content.add_child(scroll)
+		var tab_title: String = {"turret": "포탑", "building": "시설", "wall": "방벽"}[tab]
+		var tab_button := _build_menu_button(tab_title, _select_build_tab.bind(tab), PALETTE.blue if build_tab == tab else PALETTE.gold)
+		tab_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tabrow.add_child(tab_button)
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	list.add_theme_constant_override("separation", 5)
-	scroll.add_child(list)
-	if build_tab == "turret":
-		for item in Data.TURRETS:
-			list.add_child(_make_button("[%s] %s  ·  %d 보급품\n%s" % [OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id)), item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), item.color, 285))
-	elif build_tab == "building":
-		for item in Data.BUILDINGS:
-			list.add_child(_make_button("[%s] %s  ·  %d 보급품\n%s" % [OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id)), item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), PALETTE.green, 285))
+	list.add_theme_constant_override("separation", 3)
+	if build_tab == "wall":
+		build_content.add_child(list)
+		_add_build_option(list, _build_definition("wall"), PALETTE.gold)
 	else:
-		list.add_child(_make_button("[8] 모래주머니 방벽  ·  12 보급품\n1×1칸 · 사방 출입구를 막을 수 없습니다", _select_build.bind("wall"), PALETTE.gold, 285))
-	build_content.add_child(_make_button("선택 취소", _cancel_build, PALETTE.red, 285))
-	build_content.move_child(build_status_label, 0)
+		var scroll := ScrollContainer.new()
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		scroll.custom_minimum_size.y = 153
+		build_content.add_child(scroll)
+		scroll.add_child(list)
+		var items := Data.TURRETS if build_tab == "turret" else Data.BUILDINGS
+		for item in items:
+			_add_build_option(list, item, item.get("color", PALETTE.green))
+	build_content.move_child(build_status_label, build_content.get_child_count() - 1)
+	_fit_build_panel.call_deferred()
+
+
+func _fit_build_panel() -> void:
+	build_panel.size = Vector2(264, 0)
+
+
+func _add_build_option(list: VBoxContainer, item: Dictionary, accent: Color) -> void:
+	var key := OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id))
+	var price := _effective_cost(int(item.cost))
+	var button := _build_menu_button("[%s] %s  ·  %d" % [key, item.name, price], _select_build.bind(String(item.id)), accent)
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.tooltip_text = "%s · %d 보급품" % [item.role, price]
+	list.add_child(button)
+
+
+func _build_menu_button(label: String, action: Callable, accent: Color) -> Button:
+	var button := _make_button(label, action, accent, 0.0)
+	button.custom_minimum_size.y = 26
+	button.add_theme_font_size_override("font_size", 13)
+	for state in ["normal", "hover", "pressed", "focus"]:
+		var style := button.get_theme_stylebox(state).duplicate() as StyleBoxFlat
+		style.content_margin_left = 6.0
+		style.content_margin_right = 6.0
+		style.content_margin_top = 3.0
+		style.content_margin_bottom = 3.0
+		button.add_theme_stylebox_override(state, style)
+	return button
 
 
 func _select_build_tab(tab: String) -> void:
@@ -1247,7 +1285,7 @@ func _select_build(kind: String) -> void:
 	build_mode = true
 	selected_entity = -1
 	var item := _build_definition(kind)
-	build_status_label.text = "%s 선택됨 · 설치 칸을 클릭하세요 (우클릭 취소)" % String(item.get("name", "방벽"))
+	build_status_label.text = "%s 선택 · 전장 클릭" % String(item.get("name", "방벽"))
 	var inspector := run_hud.find_child("Inspector", true, false) as Control
 	if inspector: inspector.visible = false
 

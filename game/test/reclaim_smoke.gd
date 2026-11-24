@@ -57,6 +57,24 @@ func _run() -> void:
 	_check(String(game.call("_validate_placement", "wall", Vector2i(3, 2))) != "", "a wall cannot block the north escape route")
 	_check(String(game.call("_validate_placement", "clinic", Vector2i(8, 4))) != "", "two-cell building stays within the eleven-by-eleven area")
 	_check(String(game.call("_validate_placement", "basic", Vector2i(8, 8))) == "", "outer expansion ring accepts a one-cell turret")
+	var panel_key := InputEventKey.new()
+	panel_key.physical_keycode = KEY_B
+	panel_key.keycode = KEY_B
+	panel_key.pressed = true
+	root.push_input(panel_key, true)
+	var build_panel: Control = game.get("build_panel")
+	await process_frame
+	await process_frame
+	_check(build_panel.visible and build_panel.size.x <= 270.0 and build_panel.size.y < 320.0,
+		"B opens a compact construction panel")
+	game.call("_select_build_tab", "wall")
+	await process_frame
+	await process_frame
+	_check(build_panel.size.y < 170.0, "the wall tab collapses around its only option")
+	var close_build := build_panel.find_child("CloseBuild", true, false) as Button
+	game.call("_select_build", "wall")
+	close_build.pressed.emit()
+	_check(not build_panel.visible and not game.get("build_mode"), "close cancels the preview and hides the construction panel")
 	var build_key := InputEventKey.new()
 	build_key.physical_keycode = KEY_1
 	build_key.keycode = KEY_1
