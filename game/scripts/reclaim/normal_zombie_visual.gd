@@ -40,8 +40,9 @@ static func frame(canvas: CanvasItem, appearance: int, column: int, center: Vect
 static func reaction(canvas: CanvasItem, enemy: Dictionary, center: Vector2, age: float, tint: Color) -> void:
 	var hit: Array = IMPACTS.get(String(enemy.get("hit_style", "rifle")), IMPACTS.rifle)
 	var direction: Vector2 = enemy.get("hit_direction", Vector2.DOWN)
-	var recoil := direction * float(hit[1]) * maxf(0.0, 1.0 - age / 0.23)
+	var braced := int(enemy.appearance) % 8 == 7
+	var recoil := Vector2.ZERO if braced else direction * float(hit[1]) * maxf(0.0, 1.0 - age / 0.23)
 	var phase := mini(3, int(age * 13.0) + int(hit[2]))
 	var accent: Color = hit[0]
 	frame(canvas, enemy.appearance, 11 + phase, center + recoil,
-		tint.lerp(accent, 0.44 * maxf(0.0, 1.0 - age / 0.25)), direction.x < -0.25)
+		tint.lerp(accent, 0.44 * maxf(0.0, 1.0 - age / 0.25)), not braced and direction.x < -0.25)

@@ -9,6 +9,8 @@ const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const YujinVisual = preload("res://scripts/reclaim/yujin_visual.gd")
 const InfantryVisual = preload("res://scripts/reclaim/infantry_visual.gd")
+const TACTICAL_DRONE = preload("res://assets/reclaim/characters/tactical_drone.png")
+const Skills = preload("res://scripts/reclaim/operator_skills.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const REPAIR_DRONE_ART = preload("res://assets/reclaim/jeju/structures/repair_drone.png")
 const FacilityEffects = preload("res://scripts/reclaim/flow/heli_art.gd")
@@ -48,7 +50,7 @@ const BUILD_SHORTCUTS := {
 	KEY_5: "flame", KEY_6: "freeze", KEY_7: "repair", KEY_8: "wall", KEY_9: "aa",
 	KEY_F1: "clinic", KEY_F2: "supply", KEY_F3: "workshop", KEY_F4: "research", KEY_F5: "outpost",
 }
-const RESERVED_KEYS := [KEY_TAB, KEY_C, KEY_B, KEY_G, KEY_U, KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_F6]
+const RESERVED_KEYS := [KEY_Q, KEY_TAB, KEY_C, KEY_B, KEY_G, KEY_U, KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_F6]
 const MAX_ENEMIES := 3000
 const MAX_CORPSES := 160
 const WAVE_TARGETS := [50, 100, 200, 350, 500, 750, 1000, 1300, 1600, 1900, 2000]
@@ -82,6 +84,21 @@ var enemy_spawn_id := 0
 const DASH_ECHO_LIFE := 0.18
 var dash_echoes: Array[Dictionary] = []
 var dash_echo_time := 0.0
+var skill_ready_at := 0.0
+var skill_active_until := 0.0
+var shield_dash := false
+var shield_targets: Dictionary = {}
+var saw_heat := 0.0
+var saw_overheated := false
+var saw_last_cut := -1.0
+var saw_chain := 0
+var saw_repair_kills := 0
+var saw_audio_at := 0.0
+var combat_drone_position := Vector2.ZERO
+var combat_drone_fire_at := -1.0
+var combat_drone_facing := Vector2.RIGHT
+var skill_button: Button
+var dash_status: Label
 var dash_timer := 0.0
 var dash_cooldown := 0.0
 var player_attack_timer := 0.0
@@ -272,6 +289,7 @@ func _process(delta: float) -> void:
 		dash_echoes.pop_front()
 	if treatment_remaining <= 0.0:
 		_update_player(delta)
+	_update_operator_skill(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
 	_yujin_visual.update(delta, player_motion)
 	_infantry_visual.update(delta, player_motion)
@@ -373,6 +391,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if screen == "play":
 			if code == KEY_B:
 				_toggle_build_panel()
+				get_viewport().set_input_as_handled()
+			elif code == KEY_Q:
+				_use_operator_skill()
 				get_viewport().set_input_as_handled()
 			elif code == dash_key:
 				_try_dash()
@@ -700,6 +721,31 @@ func _build_game_hud() -> void:
 	build_status_label.custom_minimum_size.y = 16
 	build_status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	build_content.add_child(build_status_label)
+	var abilities := HBoxContainer.new()
+	abilities.name = "CombatAbilities"
+	run_hud.add_child(abilities)
+	abilities.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
+	abilities.offset_left = -160
+	abilities.offset_right = 160
+	abilities.offset_top = -91
+	abilities.offset_bottom = -42
+	abilities.alignment = BoxContainer.ALIGNMENT_CENTER
+	abilities.add_theme_constant_override("separation", 7)
+	skill_button = Button.new()
+	skill_button.custom_minimum_size = Vector2(204, 44)
+	skill_button.focus_mode = Control.FOCUS_NONE
+	skill_button.add_theme_stylebox_override("normal", OpsUI.plate(Color("#a182db"), Color("#201a30")))
+	skill_button.add_theme_stylebox_override("hover", OpsUI.plate(Color("#d4c0ff"), Color("#342442")))
+	skill_button.add_theme_stylebox_override("disabled", OpsUI.plate(Color("#63596a"), Color("#18161e")))
+	skill_button.pressed.connect(_use_operator_skill)
+	abilities.add_child(skill_button)
+	var dash_panel := PanelContainer.new()
+	dash_panel.add_theme_stylebox_override("panel", OpsUI.plate(OpsUI.GOLD, Color("#241e16")))
+	abilities.add_child(dash_panel)
+	dash_status = OpsUI.label("", 13)
+	dash_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	dash_status.custom_minimum_size.x = 90.0
+	dash_panel.add_child(dash_status)
 	var hint := _make_label("건설 [B]   포탑 [1–6]   수리 드론 [7]   방벽 [8]   시설 [F1–F5]   강화 [U]   배속 [F6]   우클릭 취소", 12, PALETTE.muted, true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	hint.offset_top = -31
@@ -782,7 +828,8 @@ func _toggle_operator_info() -> void:
 	elif screen == "play":
 		operator_info.fill("캐릭터 정보  /  %s  ·  Lv.%d" % [Data.CHARACTERS[player_index].name, player_level],
 			_operator_portrait(), _operator_stat_rows(), acquired_augments.values(),
-			"전투 시작 기준에 훈장 강화·고유 보정이 포함됩니다. 사격 빈도는 재장전 제외, 건설 보정은 비용에 적용됩니다.")
+			"고유 능력 · %s
+%s" % Skills.PROFILES[Data.CHARACTERS[player_index].id])
 		_show_screen("info")
 
 
@@ -1044,6 +1091,19 @@ func _reset_run() -> void:
 	dash_timer = 0.0
 	dash_echoes.clear()
 	dash_echo_time = 0.0
+	skill_ready_at = 0.0
+	skill_active_until = 0.0
+	shield_dash = false
+	shield_targets.clear()
+	saw_heat = 0.0
+	saw_overheated = false
+	saw_last_cut = -1.0
+	saw_chain = 0
+	saw_repair_kills = 0
+	saw_audio_at = 0.0
+	drone_timer = 0.0
+	combat_drone_position = PLAYER_START + Vector2(34, -28)
+	combat_drone_fire_at = -1.0
 	dash_cooldown = 0.0
 	player_mod_damage += float(permanent_upgrades.get("damage", 0)) * 0.06
 	player_mod_speed += float(permanent_upgrades.get("speed", 0)) * 0.04
@@ -1082,6 +1142,19 @@ func _load_saved_run() -> void:
 	stage = clampi(int(state.get("stage", 1)), 1, 100)
 	stage_elapsed = float(state.get("stage_elapsed", 0.0))
 	run_seconds = float(state.get("run_seconds", 0.0))
+	var ability: Dictionary = state.get("operator_skill", {})
+	skill_ready_at = float(ability.get("ready", 0.0))
+	skill_active_until = float(ability.get("active", 0.0))
+	saw_heat = float(ability.get("heat", 0.0))
+	saw_overheated = bool(ability.get("overheated", false))
+	saw_repair_kills = int(ability.get("repair_kills", 0))
+	saw_chain = 0
+	saw_last_cut = -1.0
+	saw_audio_at = 0.0
+	shield_dash = false
+	shield_targets.clear()
+	dash_echoes.clear()
+	dash_timer = 0.0
 	money = int(state.get("money", 0))
 	kills = int(state.get("kills", 0))
 	player_level = int(state.get("level", 1))
@@ -1102,6 +1175,8 @@ func _load_saved_run() -> void:
 	manual_trigger = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
 	player_pos = jeju_map.nearest_land(Vector2(float(pp[0]), float(pp[1])), PLAYER_RADIUS)
+	combat_drone_position = player_pos + Vector2(34, -28)
+	combat_drone_fire_at = -1.0
 	repair_drone_level = clampi(int(state.get("repair_drone_level", 0)), 0, 11)
 	repair_drone_cooldown = 0.0
 	structures.clear()
@@ -1675,27 +1750,106 @@ func _update_player(delta: float) -> void:
 	if dash_timer > 0.0:
 		dash_timer = maxf(0.0, dash_timer - delta)
 		_move_player(dash_direction * speed * 2.8 * delta * _csv_factor("dash_distance"))
+		if shield_dash:
+			_resolve_shield_dash(previous_position)
 		dash_echo_time -= delta
 		if dash_echo_time <= 0.0 and previous_position.distance_squared_to(player_pos) > 4.0:
 			dash_echo_time = 0.032
 			dash_echoes.append({"pos": previous_position, "direction": dash_direction, "until": run_seconds + DASH_ECHO_LIFE})
 	else:
+		shield_dash = false
 		_move_player(direction * speed * delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	player_motion = (player_pos - previous_position) / maxf(delta, 0.001)
 	_update_player_attack(delta)
+	_update_combat_drone(delta)
+
+
+func _update_combat_drone(delta: float) -> void:
+	var harin: bool = Data.CHARACTERS[player_index].id == "harin"
 	var drone_level := player_drone_level + int(_csv_bonus("combat_drone"))
-	if drone_level > 0:
-		drone_timer -= delta
-		if drone_timer <= 0.0:
-			drone_timer = maxf(0.9, (3.2 - drone_level * 0.45) / _csv_factor("combat_drone_rate"))
-			var drone_target := _nearest_enemy(player_pos, 460.0)
-			if drone_target >= 0:
-				_mark_csv_trigger("drone")
-				var target_pos: Vector2 = enemies[drone_target].pos
-				_damage_enemy(drone_target, 24.0 * drone_level * player_mod_damage * _csv_factor("combat_drone_damage") * (_csv_factor("after_dash_drone") if run_seconds - last_dash_at < 5.0 else 1.0), "drone")
-				effects.append({"a": player_pos + Vector2(20, -30), "b": target_pos, "time": 0.15, "color": PALETTE.blue})
-	
+	if harin:
+		drone_level = maxi(1, drone_level)
+		var orbit := Vector2(cos(run_seconds * 2.4) * 42.0, sin(run_seconds * 2.4) * 13.0 - 29.0)
+		combat_drone_position = combat_drone_position.move_toward(player_pos + orbit, delta * 860.0)
+	if drone_level <= 0:
+		return
+	drone_timer -= delta
+	if drone_timer > 0.0:
+		return
+	var origin := combat_drone_position if harin else player_pos + Vector2(20, -30)
+	var drone_target := _nearest_enemy(player_pos, 460.0)
+	drone_timer = 0.18 if drone_target < 0 else maxf(0.9, (3.2 - drone_level * 0.45) / _csv_factor("combat_drone_rate"))
+	if harin and run_seconds < skill_active_until:
+		drone_timer /= Skills.DRONE_RATE
+	if drone_target < 0:
+		return
+	_mark_csv_trigger("drone")
+	var target_pos: Vector2 = enemies[drone_target].pos
+	combat_drone_facing = origin.direction_to(target_pos)
+	combat_drone_fire_at = run_seconds
+	var damage := 24.0 * drone_level * player_mod_damage * _csv_factor("combat_drone_damage")
+	if run_seconds - last_dash_at < 5.0:
+		damage *= _csv_factor("after_dash_drone")
+	_damage_enemy(drone_target, damage, "drone", origin)
+	var emitter := origin + combat_drone_facing * 9.0 if harin else origin
+	effects.append({"a": emitter, "b": target_pos, "time": 0.15, "color": Color("#b88dfb") if harin else PALETTE.blue})
+
+
+func _use_operator_skill() -> void:
+	if screen != "play" or treatment_remaining > 0.0 or run_seconds < skill_ready_at:
+		return
+	var hero: String = Data.CHARACTERS[player_index].id
+	match hero:
+		"tae":
+			if dash_timer > 0.0:
+				return
+			dash_direction = player_facing.normalized()
+			dash_timer = 0.29
+			dash_echo_time = 0.0
+			dash_cooldown = maxf(dash_cooldown, dash_timer)
+			shield_dash = true
+			shield_targets.clear()
+			skill_ready_at = run_seconds + Skills.SHIELD_COOLDOWN
+		"si":
+			skill_active_until = run_seconds + Skills.FOCUS_DURATION
+			skill_ready_at = run_seconds + Skills.FOCUS_COOLDOWN
+		"harin":
+			skill_active_until = run_seconds + Skills.DRONE_DURATION
+			skill_ready_at = run_seconds + Skills.DRONE_COOLDOWN
+			drone_timer = 0.0
+		"yujin":
+			if saw_heat <= 0.0:
+				return
+			saw_heat = 0.0
+			saw_overheated = false
+			skill_ready_at = run_seconds + Skills.VENT_COOLDOWN
+	_show_toast(Skills.PROFILES[hero][0])
+
+
+func _resolve_shield_dash(previous: Vector2) -> void:
+	if previous.is_equal_approx(player_pos):
+		return
+	for i in range(enemies.size() - 1, -1, -1):
+		var target := enemies[i]
+		if target.get("air", false) or target.get("underground", false) or shield_targets.has(target.spawn_id):
+			continue
+		var closest := Geometry2D.get_closest_point_to_segment(target.pos, previous, player_pos)
+		if closest.distance_squared_to(target.pos) <= 31.0 * 31.0:
+			shield_targets[target.spawn_id] = true
+			_damage_enemy(i, Skills.SHIELD_DAMAGE, "shield", previous)
+
+
+func _update_operator_skill(delta: float) -> void:
+	if Data.CHARACTERS[player_index].id != "yujin":
+		return
+	if run_seconds - saw_last_cut > 0.38 or saw_overheated:
+		saw_heat = maxf(0.0, saw_heat - delta * Skills.SAW_COOL_PER_SECOND)
+	if saw_overheated and saw_heat <= 40.0:
+		saw_overheated = false
+	if run_seconds - saw_last_cut > 0.55:
+		saw_chain = 0
+
 
 func _update_player_attack(delta: float) -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
@@ -1731,6 +1885,13 @@ func _attack_player() -> void:
 	_mark_csv_trigger("attack")
 	var interval := _weapon_interval(hero, player_mod_rate * (_csv_factor("rate") + _recent_combat_bonus("crit_rate", "kill_rate") / 100.0))
 	if kind == "yujin":
+		saw_last_cut = run_seconds
+		if not saw_overheated:
+			saw_heat = minf(100.0, saw_heat + interval * Skills.SAW_HEAT_PER_SECOND)
+			saw_overheated = saw_heat >= 100.0
+		if sound_on and run_seconds >= saw_audio_at:
+			saw_audio_at = run_seconds + 0.40
+			AudioDirector.play_cue("player.chainsaw", 0.91 if saw_overheated else 1.0)
 		_yujin_visual.attack(interval, player_facing)
 		player_attack_timer = interval
 		var direction := player_facing.normalized()
@@ -1740,6 +1901,7 @@ func _attack_player() -> void:
 			var toward := target_pos - player_pos
 			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > cos(deg_to_rad(minf(85.0, 45.0 * _csv_factor("saw_angle"))))):
 				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
+				saw_chain = mini(6, saw_chain + 1)
 		return
 	player_magazine -= 1
 	if player_magazine == 0:
@@ -1753,7 +1915,7 @@ func _attack_player() -> void:
 		_infantry_visual.attack(player_facing)
 		tracer_offset = _infantry_visual.muzzle(kind, player_facing) / _view_zoom()
 	if sound_on:
-		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
+		AudioDirector.play_cue("player.shotgun" if kind == "tae" else "player.m4" if kind == "harin" else "player.action", 1.08 if kind == "si" else 1.0)
 	player_attack_timer = interval
 	var direction := player_facing.normalized()
 	var max_range := _weapon_range(hero)
@@ -1862,6 +2024,8 @@ func _spawn_boss(at_stage: int) -> void:
 	var kind := "boss%d" % at_stage
 	_spawn_enemy(kind, spawn_at, true)
 	stage = old_stage
+	if sound_on:
+		AudioDirector.play_cue("enemy.boss_arrival")
 	_show_toast("보스 출현 · %s" % String(Data.BOSSES[at_stage].name))
 
 
@@ -2194,6 +2358,13 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 		return
 
 
+func _zombie_voice(enemy: Dictionary) -> String:
+	var body := int(enemy.get("variant", 0))
+	if body == 7:
+		return "enemy.elderly"
+	return "enemy.high" if body in [1, 3, 5] else "enemy.low"
+
+
 func _play_zombie_ambient() -> void:
 	if not sound_on or run_seconds < zombie_ambient_at:
 		return
@@ -2201,14 +2372,14 @@ func _play_zombie_ambient() -> void:
 	zombie_ambient_at = run_seconds + (0.35 if nearby < 0 else 1.8)
 	if nearby >= 0:
 		var pitch := 0.86 + float(int(enemies[nearby].spawn_id) % 7) * 0.045
-		AudioDirector.play_cue("enemy.ambient", pitch)
+		AudioDirector.play_cue(_zombie_voice(enemies[nearby]), pitch)
 
 
 func _animate_zombie_attack(enemy: Dictionary, toward: Vector2) -> void:
 	ZombieVisual.start_attack(enemy, toward, run_seconds)
 	if sound_on and run_seconds >= zombie_sound_at and player_pos.distance_squared_to(enemy.pos) < 400.0 * 400.0:
-		zombie_sound_at = run_seconds + 0.24
-		AudioDirector.play_cue("enemy.attack", 0.88 + float(int(enemy.spawn_id) % 7) * 0.035)
+		zombie_sound_at = run_seconds + 0.95
+		AudioDirector.play_cue(_zombie_voice(enemy), 0.97 + float(int(enemy.spawn_id) % 7) * 0.035)
 
 
 func _update_boss_pattern(e: Dictionary, delta: float) -> void:
@@ -2372,6 +2543,10 @@ func _damage_enemy(index: int, amount: float, source: String, origin: Variant = 
 			if _csv_bonus("kill_heal") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("kill_heal") / 100.0):
 				player_hp = minf(_effective_player_max_hp(), player_hp + _effective_player_max_hp() * 0.04 * _csv_factor("heal"))
 			if source == "chainsaw":
+				saw_repair_kills += 1
+				if saw_repair_kills >= Skills.SAW_REPAIR_KILLS:
+					saw_repair_kills = 0
+					_emergency_repair()
 				player_hp = minf(_effective_player_max_hp(), player_hp + _csv_bonus("saw_kill_heal") / 100.0 * amount)
 		money += reward
 		kills += 1
@@ -2397,12 +2572,28 @@ func _damage_enemy(index: int, amount: float, source: String, origin: Variant = 
 		enemy.hit_until = run_seconds + ZombieVisual.HIT_TIME
 
 
+func _emergency_repair() -> void:
+	var closest := 330.0 * 330.0
+	var damaged: Dictionary = {}
+	for facility in structures:
+		if facility.kind == "hq" or float(facility.hp) <= 0.0 or float(facility.hp) >= float(facility.max_hp):
+			continue
+		var distance := player_pos.distance_squared_to(_entry_world_center(facility))
+		if distance < closest:
+			closest = distance
+			damaged = facility
+	if not damaged.is_empty():
+		damaged.hp = minf(float(damaged.max_hp), float(damaged.hp) + float(damaged.max_hp) * 0.06)
+
+
 func _zombie_hit_style(source: String) -> String:
 	match source:
 		"player":
 			return "shotgun" if Data.CHARACTERS[player_index].id == "tae" else "rifle"
 		"chainsaw":
 			return "saw"
+		"shield":
+			return "shotgun"
 		"blast", "augment_blast", "rocket":
 			return "explosive"
 		"electric", "chain":
@@ -2527,6 +2718,7 @@ func _update_turrets(delta: float) -> void:
 		s.cool = maxf(0.12, fire_rate / (1.0 + float(s.level - 1) * 0.12))
 		var damage := float(def.get("damage", 20.0)) * 0.5 * (1.0 + float(s.level - 1) * 0.408) * player_mod_turret_damage * (_csv_factor("turret_damage") + _csv_bonus(kind + "_damage") / 100.0)
 		if kind == "outpost": damage = 9.0 * player_mod_turret_damage
+		elif Data.CHARACTERS[player_index].id == "yujin": damage *= Skills.YUJIN_TURRET_DAMAGE
 		if pos.distance_squared_to(_hq_position()) <= 220.0 * 220.0:
 			damage *= _csv_factor("hq_turret")
 		if _csv_bonus("turret_crit") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("turret_crit") / 100.0):
@@ -2939,11 +3131,17 @@ func _weapon_range(hero: Dictionary) -> float:
 
 
 func _weapon_interval(hero: Dictionary, rate: float) -> float:
-	return maxf(0.08 if hero.id == "yujin" else 0.05, float(hero.rate) / rate)
+	var focus := Skills.FOCUS_RATE if hero.id == "si" and run_seconds < skill_active_until else 1.0
+	return maxf(0.08 if hero.id == "yujin" else 0.05, float(hero.rate) / (rate * focus))
 
 
 func _weapon_damage(hero: Dictionary, multiplier: float) -> float:
-	return float(hero.damage) * multiplier * _csv_factor("damage") * (0.45 if hero.id == "yujin" else 1.0)
+	var output := 1.0
+	if hero.id == "yujin":
+		output = 0.45 * (1.0 + float(saw_chain) * 0.045)
+		if saw_overheated:
+			output *= Skills.SAW_OVERHEAT_OUTPUT
+	return float(hero.damage) * multiplier * _csv_factor("damage") * output
 
 
 func _incoming_damage_factor(hero: Dictionary, armor: float) -> float:
@@ -3127,7 +3325,8 @@ func _refresh_hud() -> void:
 			hud_hq.text = "HQ  %d / %d" % [ceili(base_bar.value), ceili(base_bar.max_value)]
 		var remaining := maxi(0, int(WAVE_SECONDS - stage_elapsed))
 		stage_label.text = "단계 %d / 100  ·  %s  ·  다음 단계 %02d초" % [stage, String(difficulty.get("label", "")), remaining]
-		currency_label.text = "보급품 %d  ·  처치 %d  ·  훈장 %d" % [money, kills, medals]
+		var elapsed := int(run_seconds)
+		currency_label.text = "보급품 %d  ·  처치 %d  ·  훈장 %d   |   %02d:%02d" % [money, kills, medals, elapsed / 60, elapsed % 60]
 		var boss_text := ""
 		for e in enemies:
 			if bool(e.get("boss", false)):
@@ -3140,6 +3339,18 @@ func _refresh_hud() -> void:
 		var ammo := "전기톱 · 탄약 미사용" if capacity == 0 else "탄약 %d / %d" % [player_magazine, capacity]
 		if player_reload_timer > 0.0:
 			ammo += " · 재장전 중"
+		var hero_id: String = Data.CHARACTERS[player_index].id
+		if hero_id == "yujin":
+			ammo = "전기톱 · 열 %d%%%s" % [int(saw_heat), " · 과열" if saw_overheated else ""]
+		if skill_button != null:
+			var profile: Array = Skills.PROFILES[hero_id]
+			var cooldown := maxf(0.0, skill_ready_at - run_seconds)
+			var active := maxf(0.0, skill_active_until - run_seconds)
+			var state_text := "작동 %d초" % ceili(active) if active > 0.0 else "%d초" % ceili(cooldown) if cooldown > 0.0 else ("열기 없음" if hero_id == "yujin" and saw_heat <= 0.0 else "준비")
+			skill_button.text = "%s [Q] · %s" % [profile[0], state_text]
+			skill_button.tooltip_text = String(profile[1])
+			skill_button.disabled = screen != "play" or treatment_remaining > 0.0 or cooldown > 0.0 or (hero_id == "yujin" and saw_heat <= 0.0)
+			dash_status.text = "대시 [%s]  %s" % [OS.get_keycode_string(dash_key), "%d초" % ceili(dash_cooldown) if dash_cooldown > 0.0 else "준비"]
 		combat_label.text = "%s [Tab]  ·  %s" % ["수동" if manual_attack else "자동", ammo]
 		status_label.text = "치료 중 · %d초 남음" % ceili(treatment_remaining) if treatment_remaining > 0.0 else ("좌클릭 유지: 사격" if manual_attack and not build_open else "")
 		var inspector := run_hud.find_child("Inspector", true, false) as Control
@@ -3162,6 +3373,8 @@ func _save_all() -> void:
 		for e in enemies:
 			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))})
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
+		saved_run["operator_skill"] = {"ready": skill_ready_at, "active": skill_active_until,
+			"heat": saw_heat, "overheated": saw_overheated, "repair_kills": saw_repair_kills}
 		saved_run["boss_flags"] = boss_spawned.keys()
 		saved_run["final_boss_defeated"] = final_boss_defeated
 		saved_run["augment_queue"] = augment_queue
@@ -3294,6 +3507,8 @@ func _draw_world() -> void:
 	for zone in toxin_zones:
 		draw_circle(_world_to_screen(zone.pos), 52.0, Color("#84ae5549"))
 	_draw_world_depth(camera)
+	if Data.CHARACTERS[player_index].id == "harin" and treatment_remaining <= 0.0 and screen != "landing":
+		_draw_tactical_drone(camera)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
 		var traveled: float = shot.traveled
@@ -3315,6 +3530,18 @@ func _draw_world() -> void:
 		_draw_cross(aim_screen, 7, Color(PALETTE.gold, 0.55))
 	if screen in ["pause", "augment", "result", "info"] or (screen == "settings" and settings_from_pause):
 		draw_rect(view, Color(0.025, 0.035, 0.035, 0.16 if screen == "augment" else 0.42))
+
+
+func _draw_tactical_drone(camera: Transform2D) -> void:
+	var elapsed := run_seconds - combat_drone_fire_at
+	var firing := combat_drone_fire_at >= 0.0 and elapsed < 0.21
+	var frame := (2 if elapsed < 0.075 else 3) if firing else int(run_seconds * 12.0) % 2
+	var point := _world_to_screen(combat_drone_position)
+	var tilt := combat_drone_facing.x * 0.21 if firing else sin(run_seconds * 2.4) * 0.10
+	var recoil := -combat_drone_facing * maxf(0.0, 4.0 - elapsed * 32.0) if firing else Vector2.ZERO
+	draw_set_transform_matrix(camera * Transform2D(tilt, point + recoil))
+	draw_texture_rect_region(TACTICAL_DRONE, Rect2(-23, -17, 46, 34), Rect2(frame * 64, 0, 64, 48))
+	draw_set_transform_matrix(camera)
 
 
 func _draw_world_depth(camera: Transform2D) -> void:
@@ -3575,8 +3802,7 @@ func _draw_operator_sprite(p: Vector2, dir: Vector2, motion: Vector2, dashing: b
 			var reload_progress := -1.0
 			if player_reload_timer > 0.0 and echo == 0.0:
 				reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
-			var drones := player_drone_level + int(_csv_bonus("combat_drone")) if echo == 0.0 else 0
-			_harin_visual.draw(self, p, dir, motion, dashing, drones, reload_progress, echo)
+			_harin_visual.draw(self, p, dir, motion, dashing, reload_progress, echo)
 		"yujin":
 			_yujin_visual.draw(self, p, dir, motion, dashing, echo)
 		_:

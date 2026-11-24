@@ -251,6 +251,7 @@ func _run() -> void:
 	_test_yujin(resumed)
 	_test_zombie_weapon_reactions(resumed)
 	_test_dash_echoes(resumed)
+	_test_operator_skills(resumed)
 	_test_spawn_multiplier(resumed)
 	_test_character_augments(resumed)
 	_test_enemy_wall_cover(resumed)
@@ -758,6 +759,60 @@ func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
 	_check(bodies.size() == deaths_before + 1, "corpse remains during its visible death frames")
 	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME + 0.01)
 	_check(bodies.is_empty(), "corpse is removed at the end of the death animation")
+
+
+func _test_operator_skills(game: Control) -> void:
+	for cue in ["player.shotgun", "player.m4", "player.chainsaw", "enemy.low",
+			"enemy.high", "enemy.elderly", "enemy.boss_arrival"]:
+		_check(game.get_node("/root/AudioDirector").play_cue(cue), "imported combat cue is loaded: %s" % cue)
+	game.set("player_index", 0)
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.set("player_facing", Vector2.RIGHT)
+	var starting_point: Vector2 = game.get("player_pos")
+	var zombie := _spawn_test_zombie(game, starting_point + Vector2(38, 0), 600.0)
+	game.call("_use_operator_skill")
+	for step in range(5):
+		game.call("_update_player", 0.03)
+	_check(zombie.hp == 555.0 and game.get("shield_targets").size() == 1,
+		"shield charge follows actual movement and strikes once per zombie")
+	_check(game.get("skill_ready_at") == 12.0, "shield charge starts its own cooldown")
+
+	game.set("player_index", 1)
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	var base_rate: float = game.call("_weapon_interval", Data.CHARACTERS[1], 1.0)
+	game.call("_use_operator_skill")
+	_check(float(game.call("_weapon_interval", Data.CHARACTERS[1], 1.0)) < base_rate, "focus accelerates the rifle")
+	game.set("run_seconds", 5.1)
+	_check(is_equal_approx(float(game.call("_weapon_interval", Data.CHARACTERS[1], 1.0)), base_rate),
+		"focus ends on the simulation clock")
+
+	game.set("player_index", 2)
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	var harin_pos: Vector2 = game.get("player_pos")
+	var drone_target := _spawn_test_zombie(game, harin_pos + Vector2(80, 0), 600.0)
+	game.call("_use_operator_skill")
+	game.call("_update_combat_drone", 0.1)
+	_check(drone_target.hp < 600.0 and game.get("combat_drone_fire_at") == 0.0
+		and float(game.get("drone_timer")) < 2.0, "the tactical drone attacks and overclock halves its attack delay")
+
+	game.set("player_index", 3)
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.set("saw_heat", 98.0)
+	game.call("_attack_player")
+	_check(game.get("saw_overheated"), "the chainsaw overheats under sustained use")
+	game.call("_use_operator_skill")
+	_check(game.get("saw_heat") == 0.0 and not game.get("saw_overheated"), "forced cooling clears heat")
+	var structures: Array = game.get("structures")
+	structures.append({"kind": "wall", "cell": Vector2i(5, 5), "hp": 60.0, "max_hp": 100.0})
+	var position: Vector2 = game.get("player_pos")
+	game.set("saw_repair_kills", 4)
+	_spawn_test_zombie(game, position + Vector2(40, 0), 1.0)
+	game.call("_damage_enemy", 0, 10.0, "chainsaw")
+	_check(structures.back().hp == 66.0, "the fifth saw kill repairs the nearest damaged non-HQ structure")
 
 
 func _test_dash_echoes(game: Control) -> void:

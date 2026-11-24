@@ -20,7 +20,6 @@ var attack_timer := 0.0
 var shot_facing := Vector2.DOWN
 var hurt_timer := 0.0
 var last_hp := -1.0
-var drone_clock := 0.0
 
 
 func update(delta: float, motion: Vector2, hp: float, active: bool) -> void:
@@ -30,7 +29,6 @@ func update(delta: float, motion: Vector2, hp: float, active: bool) -> void:
 	walk_distance = walk_distance + minf(speed, 380.0) * delta if speed > 6.0 else 0.0
 	attack_timer = maxf(0.0, attack_timer - delta)
 	hurt_timer = maxf(0.0, hurt_timer - delta)
-	drone_clock += delta
 	if last_hp >= 0.0 and hp < last_hp - 0.01:
 		hurt_timer = HURT_HOLD
 	last_hp = hp
@@ -57,7 +55,7 @@ func _side_recoil(row: int, phase: int) -> Vector2:
 	return Vector2(float(-4 + 2 * mini(phase, 2)) * (1.0 if row == 1 else -1.0), 0.0)
 
 
-func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2, dashing: bool, drone_level: int, reload_progress: float, echo := 0.0) -> void:
+func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2, dashing: bool, reload_progress: float, echo := 0.0) -> void:
 	var running := motion.length_squared() > 36.0
 	var attack_row := _facing_row(shot_facing)
 	var flash_duration := ATTACK_HOLD / 3.0 if attack_row == 0 or attack_row == 2 else ATTACK_HOLD / 4.0
@@ -98,8 +96,7 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2,
 	if dashing:
 		var dash_direction := (motion if running else facing).normalized()
 		canvas.draw_line(center - dash_direction * 27.0, center - dash_direction * 11.0, Color("#9dd9e6", 0.7), 2.0)
-	if drone_level > 0:
-		_draw_support_drone(canvas, center, drone_level)
+
 
 
 func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2, duration: float) -> void:
@@ -126,11 +123,3 @@ func _facing_row(facing: Vector2) -> int:
 	if absf(facing.x) > absf(facing.y):
 		return 3 if facing.x < 0.0 else 1
 	return 0 if facing.y >= 0.0 else 2
-
-
-func _draw_support_drone(canvas: CanvasItem, center: Vector2, level: int) -> void:
-	var orbit := Vector2(cos(drone_clock * 2.2), sin(drone_clock * 2.2) * 0.55) * (31.0 + float(level) * 2.0)
-	var p := center + orbit + Vector2(0.0, -19.0)
-	canvas.draw_rect(Rect2(p - Vector2(4.0, 3.0), Vector2(8.0, 6.0)), Color("#72cbd5"))
-	canvas.draw_rect(Rect2(p - Vector2(7.0, 1.0), Vector2(3.0, 2.0)), Color("#d3ebdc"))
-	canvas.draw_rect(Rect2(p + Vector2(4.0, -1.0), Vector2(3.0, 2.0)), Color("#d3ebdc"))

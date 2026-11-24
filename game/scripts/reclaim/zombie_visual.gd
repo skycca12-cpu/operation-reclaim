@@ -93,8 +93,8 @@ static func _draw_normal(canvas: CanvasItem, enemy: Dictionary, center: Vector2,
 		NormalVisual.frame(canvas, enemy.appearance, column, center, tint)
 		return
 	var stride := fposmod(float(enemy.walk_distance) / 30.0, 1.0)
-	var column := 2 + int(stride * 4.0) if enemy.moving else int(now * 5.0 + float(enemy.spawn_id)) % 2
-	NormalVisual.frame(canvas, enemy.appearance, column, center, tint, enemy.row == 1)
+	var column := 39 + int(enemy.row) * 4 + int(stride * 4.0) if enemy.moving else int(now * 5.0 + float(enemy.spawn_id)) % 2
+	NormalVisual.frame(canvas, enemy.appearance, column, center, tint)
 
 
 static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, camera: Transform2D, tint: Color) -> void:

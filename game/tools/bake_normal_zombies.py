@@ -31,7 +31,7 @@ DIRECTIONS = [(0, 1), (-1, 0), (1, 0), (0, -1)]
 IDLE = [0, 2]
 WALK = [4, 6, 8, 10]
 DEATH = [22, 23, 24, 25, 26]
-COLUMNS = len(IDLE) + len(WALK) + len(DEATH) + 4 + len(DIRECTIONS) * len(POSES)
+COLUMNS = len(IDLE) + len(WALK) + len(DEATH) + 4 + len(DIRECTIONS) * len(POSES) + 16
 
 
 def cell(image, column, row):
@@ -116,10 +116,29 @@ def attack(parts, base, palette, row, pose):
     return result
 
 
-def reaction(sprite, phase):
+def elderly_walk(sprite, cane, column, row):
+    # Use the original cane art, composited behind the gripping hand.
+    hand_x, hand_y = [
+        [(57,113),(58,108),(59,112),(58,108)],
+        [(72,112),(72,108),(71,105),(73,110)],
+        [(84,111),(90,110),(82,107),(89,110)],
+        [(106,111),(106,103),(108,111),(105,106)],
+    ][row][column]
+    planted = cane.resize((cane.width, 150-hand_y), Image.Resampling.NEAREST)
+    result = Image.new("RGBA", sprite.size)
+    result.alpha_composite(planted, (hand_x-planted.width//2, hand_y))
+    result.alpha_composite(sprite)
+    return result
+
+
+def reaction(sprite, phase, elderly=False):
     # Baked silhouettes: recoil, buckled knees, tense recovery, return.
     skew, squash, shift = [(0.16,.98,3),(-.20,.88,5),(.10,.95,2),(0,1,0)][phase]
     foot = np.array([80,145])
+    if elderly:
+        # Brace on the cane: keep its tip planted while the body recoils.
+        foot = np.array([49,149])
+        skew, squash, shift = [(0.10,.98,0),(-.12,.94,0),(.05,.98,0),(0,1,0)][phase]
     matrix = np.array([[1,skew],[0,squash]])
     return transformed(sprite,matrix,foot-matrix@foot+np.array([shift,0]))
 
@@ -127,6 +146,8 @@ def reaction(sprite, phase):
 def main():
     source = [Image.open(ROOT / f"zombie_{i:02}_{n}.png").convert("RGBA")
               for i,n in enumerate(SOURCES,1)]
+    walk_sources = [Image.open(ROOT / "walk" / f"{name}.png").convert("RGBA") for name in SOURCES]
+    cane = cell(source[7], 0, 0).crop((43, 116, 58, 150))
     rig = Image.open(ROOT / "attack_parts.png").convert("RGBA")
     parts = [[cell(rig,b,j) for j in range(5)] for b in range(len(source))]
     (ROOT/"population").mkdir(exist_ok=True)
@@ -139,9 +160,13 @@ def main():
             frames = [jacket(cell(source[base], c, 0),color)
                       for c in IDLE+WALK]
             frames += [jacket(cell(source[base],c,0),color,death=True) for c in DEATH]
-            frames += [reaction(frames[0], i) for i in range(4)]
+            frames += [reaction(frames[0], i, elderly=base == 7) for i in range(4)]
             frames += [attack(parts,base,color,row,pose)
                        for row in range(4) for pose in POSES]
+            for row in range(4):
+                for column in range(4):
+                    walk = jacket(cell(walk_sources[base], column, row), color)
+                    frames.append(elderly_walk(walk, cane, column, row) if base == 7 else walk)
             for column,sprite in enumerate(frames):
                 atlas.paste(sprite.resize((FRAME,FRAME),Image.Resampling.NEAREST),
                             (column*FRAME,line*FRAME))

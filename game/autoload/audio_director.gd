@@ -7,6 +7,13 @@ const MAX_UI_VOICES := 2
 # Optional resource paths. Empty means intentionally silent; add project audio
 # here or call register_cue() after importing an AudioStream resource.
 const CUES := {
+	"player.shotgun": {"path": "res://assets/reclaim/audio/shotgun.ogg", "bus": "SFX"},
+	"player.m4": {"path": "res://assets/reclaim/audio/rifle_m4.ogg", "bus": "SFX"},
+	"player.chainsaw": {"path": "res://assets/reclaim/audio/chainsaw_cut.ogg", "bus": "SFX"},
+	"enemy.low": {"path": "res://assets/reclaim/audio/zombie_growl_low.ogg", "bus": "SFX"},
+	"enemy.high": {"path": "res://assets/reclaim/audio/zombie_growl_high.ogg", "bus": "SFX"},
+	"enemy.elderly": {"path": "res://assets/reclaim/audio/zombie_growl_elderly.ogg", "bus": "SFX"},
+	"enemy.boss_arrival": {"path": "res://assets/reclaim/audio/boss_arrival.ogg", "bus": "SFX"},
 	"enemy.ambient": {"path": "res://assets/reclaim/audio/zombie_ambient.wav", "bus": "SFX"},
 	"enemy.attack": {"path": "res://assets/reclaim/audio/combat_zombie.wav", "bus": "SFX"},
 	"music.title": {"path": "", "kind": "music"},
