@@ -3,6 +3,7 @@ extends RefCounted
 const BACKGROUND := preload("res://assets/reclaim/jeju_v2/background.png")
 const PALETTE_SHADER := preload("res://assets/reclaim/jeju_v2/scenery_palette.gdshader")
 const PALETTE_MASK := preload("res://assets/reclaim/jeju_v2/palette_mask.png")
+const SCENERY_REDRAW := preload("res://assets/reclaim/jeju_v2/scenery_redraw.png")
 const MAP_PATH := "res://assets/reclaim/jeju_v2/map.json"
 const SCALE := 2.65
 const HQ_WORLD := Vector2(24, 0)
@@ -152,6 +153,7 @@ func create_background() -> Sprite2D:
 	var palette := ShaderMaterial.new()
 	palette.shader = PALETTE_SHADER
 	palette.set_shader_parameter("scenery_mask", PALETTE_MASK)
+	palette.set_shader_parameter("scenery_redraw", SCENERY_REDRAW)
 	sprite.material = palette
 	return sprite
 
