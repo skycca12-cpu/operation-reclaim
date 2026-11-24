@@ -353,12 +353,27 @@ func _test_jeju_battlefield(game: Control) -> void:
 		and not map.call("walkable", map.call("_image_to_world", Vector2(1026, 711)), 0.0),
 		"the southeast obstacle blocks the rubble instead of the empty asphalt")
 	for point in [Vector2(349, 700), Vector2(330, 587), Vector2(519, 710), Vector2(559, 282), Vector2(387, 600),
-		Vector2(399, 308), Vector2(352, 315), Vector2(657, 278), Vector2(1129, 611)]:
+		Vector2(399, 308), Vector2(352, 315), Vector2(657, 278), Vector2(1129, 611),
+		Vector2(647, 726), Vector2(664, 728), Vector2(1168, 422)]:
 		_check(not map.call("walkable", map.call("_image_to_world", point), 0.0),
 			"Jeju rooftop, lamp, roadside concrete and rubble block ground movement at %s" % point)
 	for point in [Vector2(289, 510), Vector2(740, 756), Vector2(1190, 505), Vector2(680, 245)]:
 		_check(map.call("walkable", map.call("_image_to_world", point), 13.0),
 			"clear road stays walkable at %s" % point)
+	# Drive the same movement routine players use from the road into the arena.
+	var approaches := [
+		[Vector2(735, 239), Vector2(735, 330)],
+		[Vector2(739, 762), Vector2(739, 655)],
+		[Vector2(286, 459), Vector2(375, 461)],
+		[Vector2(1191, 526), Vector2(1106, 526)],
+	]
+	for route in approaches:
+		var start_point: Vector2 = map.call("_image_to_world", route[0])
+		var target_point: Vector2 = map.call("_image_to_world", route[1])
+		game.set("player_pos", start_point)
+		game.call("_move_player", target_point - start_point)
+		_check(Vector2(game.get("player_pos")).distance_to(target_point) < 1.0,
+			"open road entry reaches the arena from %s" % route[0])
 	_check(not map.call("walkable", bounds.position + Vector2(40, 40), 13.0), "the outer landscape blocks passage")
 	game.set("player_pos", obstacle + Vector2(-120, 0))
 	game.call("_move_player", Vector2(230, 0))
