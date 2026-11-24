@@ -2635,6 +2635,11 @@ func _draw_world() -> void:
 	for prop in jeju_map.decorations:
 		if _zombie_on_screen(prop.feet + camera_offset, 190.0):
 			JejuMapArt.draw_prop(self, prop, camera_offset)
+	for feet in jeju_map.lamps:
+		var glow := feet + camera_offset + Vector2(11, -11)
+		if _zombie_on_screen(glow, 90.0):
+			for radius in [56.0, 45.0, 34.0, 23.0, 12.0]:
+				draw_circle(glow, radius, Color(1.0, 0.58, 0.19, 0.034), true, -1.0, true)
 	if build_open or build_mode:
 		_draw_build_grid()
 	_draw_world_depth(camera, camera_offset)
