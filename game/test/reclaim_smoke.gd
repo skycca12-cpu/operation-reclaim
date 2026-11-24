@@ -238,8 +238,8 @@ func _run() -> void:
 func _test_jeju_battlefield(game: Control) -> void:
 	var map: RefCounted = game.get("jeju_map")
 	var terrain: TileMapLayer = map.get("tiles")
-	_check(terrain.get_used_cells().size() == 35 * 35 and terrain.get_used_rect().size == Vector2i(35, 35),
-		"Jeju has exactly 35 by 35 terrain cells")
+	_check(terrain.get_used_cells().size() == 45 * 45 and terrain.get_used_rect().size == Vector2i(45, 45),
+		"Jeju has exactly 45 by 45 terrain cells")
 	_check(not map.call("walkable", Vector2(790, 768), 13.0), "southeast sea and cliffs block passage")
 	_check(not map.call("walkable", Vector2(512, -530), 0.0), "the gas station has a ground footprint")
 	_check(map.call("walkable", Vector2(512, -589), 0.0), "the gas station roof projection is walkable")
@@ -254,6 +254,13 @@ func _test_jeju_battlefield(game: Control) -> void:
 	for direction in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
 		for distance in range(24, 721, 24):
 			_check(map.call("walkable", direction * distance, 21.0), "cardinal approach %s stays open" % direction)
+	game.call("_reset_run")
+	game.set("spawn_timer", 0.0)
+	game.call("_update_spawn", 0.0)
+	var first_wave: Array = game.get("enemies")
+	var start: Vector2 = game.get("player_pos")
+	_check(first_wave.size() == 5 and first_wave.all(func(enemy): return start.distance_to(enemy.pos) >= 699.0),
+		"the first wave approaches from at least 700 pixels away")
 	game.call("_reset_run")
 	game.set("stage", 95)
 	for i in range(70):

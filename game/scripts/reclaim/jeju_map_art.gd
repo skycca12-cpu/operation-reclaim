@@ -1,8 +1,8 @@
 extends RefCounted
 
 const CELL := 48
-const SIDE := 35
-const HALF := 17
+const SIDE := 45
+const HALF := (SIDE - 1) / 2
 const LIMIT := Vector2.ONE * CELL * SIDE * 0.5
 const TERRAIN: Texture2D = preload("res://assets/reclaim/jeju/terrain.png")
 const HQ: Texture2D = preload("res://assets/reclaim/jeju/props/hq.png")

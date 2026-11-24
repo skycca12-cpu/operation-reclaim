@@ -1622,7 +1622,7 @@ func _update_spawn(delta: float) -> void:
 		for n in range(count):
 			var kind := _choose_enemy_kind()
 			var angle := _random.randf_range(0.0, TAU)
-			var distance := _random.randf_range(470.0, 740.0)
+			var distance := _random.randf_range(700.0, 940.0) if stage == 1 else _random.randf_range(470.0, 740.0)
 			var pos := _land_spawn(angle, distance)
 			_spawn_enemy(kind, pos, false)
 
@@ -2647,7 +2647,7 @@ func _draw_world() -> void:
 	for shot in player_projectiles.shots:
 		var traveled: float = shot.traveled
 		var tail_length := minf(12.0, traveled)
-		var offset: Vector2 = shot.muzzle_offset
+		var offset: Vector2 = shot.muzzle_offset / zoom
 		var tip := _world_to_screen(shot.pos) + offset * maxf(0.0, 1.0 - traveled / 96.0)
 		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length)
 		tail += offset * maxf(0.0, 1.0 - (traveled - tail_length) / 96.0)
@@ -2679,7 +2679,7 @@ func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
 		if _zombie_on_screen(_world_to_screen(enemy.pos), 100.0):
 			layers.append([enemy.pos.y + 40.0, 3, enemy])
 	if screen != "landing" or landing.player_visible():
-		layers.append([player_pos.y + 40.0, 4, {}])
+		layers.append([player_pos.y + 40.0 / _view_zoom(), 4, {}])
 	layers.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 	for item in layers:
 		match item[1]:
@@ -2687,7 +2687,11 @@ func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
 			1: _draw_structure(item[2])
 			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds)
 			3: _draw_enemy(item[2], camera)
-			4: _draw_player()
+			4:
+				# Draw at the camera focus point in screen pixels, then restore the world transform.
+				draw_set_transform(Vector2.ZERO)
+				_draw_player()
+				draw_set_transform_matrix(camera)
 
 
 func _draw_build_grid() -> void:
@@ -2858,7 +2862,7 @@ func _draw_player() -> void:
 			draw_arc(p - dir * 8.0, 18, -1.2, 1.2, 18, Color("#ccd4be"), 4.0)
 	if screen == "play" and manual_attack and not build_mode:
 		var color := Color(PALETTE.gold, 0.55)
-		var aim_length := p.distance_to(_world_to_screen(_screen_to_world(aim_screen)))
+		var aim_length := p.distance_to(aim_screen)
 		if aim_length > 24.0:
 			draw_line(p + dir * 20.0, p + dir * minf(aim_length - 5.0, 92.0), color, 1.0)
 
