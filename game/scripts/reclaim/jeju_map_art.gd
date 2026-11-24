@@ -4,8 +4,11 @@ const CELL := 48
 const SIDE := 45
 const HALF := (SIDE - 1) / 2
 const LIMIT := Vector2.ONE * CELL * SIDE * 0.5
+const DISTANT_CITY: Texture2D = preload("res://assets/reclaim/jeju/intro/jeju_city.png")
+const PLAZA_GROUND: Texture2D = preload("res://assets/reclaim/jeju/plaza_ground.png")
+const PLAZA_RECT := Rect2(-565, -469, 1135, 1019)
 const TERRAIN: Texture2D = preload("res://assets/reclaim/jeju/terrain.png")
-const HQ: Texture2D = preload("res://assets/reclaim/jeju/props/hq.png")
+const EDGE_SHADER = preload("res://assets/reclaim/jeju/terrain_edge.gdshader")
 const PROP_DIR := "res://assets/reclaim/jeju/props/"
 const LANDMARKS := [
 	# Feet positions reference the approved composition, with an open central plaza.
@@ -120,18 +123,46 @@ const COURTYARD_DRESSING := {
 }
 const FLAT_PROPS := ["tire_marks", "parking_lines", "wave", "rubble", "weeds", "ground_broken", "loose_rocks", "ground_stain"]
 
+const OUTSKIRTS := [
+	["ruin", -901, -900, 237, 147, 52], ["shop_blue", -667, -916, 176, 117, 48],
+	["shop_yellow", -432, -975, 152, 104, 41], ["shop_red", 286, -918, 186, 122, 52],
+	["ruin", 533, -913, 239, 157, 58], ["shop_blue", -969, -538, 176, 112, 45],
+	["red_roof_house", -957, 278, 173, 110, 45], ["traditional_house", -942, 65, 176, 115, 48],
+	["ruin", 944, -418, 219, 138, 48], ["shop_ruin", 993, -176, 171, 114, 46],
+	["ruin", 977, 268, 199, 128, 44], ["greenhouse", -930, 618, 175, 122, 46],
+	["farm_0", -944, 766, 169, 0, 0], ["farm_1", -778, 776, 157, 0, 0],
+	["farm_2", -942, 851, 163, 0, 0], ["farm_3", -773, 862, 159, 0, 0],
+	["farm_4", -940, 940, 174, 0, 0], ["farm_5", -768, 954, 164, 0, 0],
+	["farm_1", -587, 986, 167, 0, 0], ["farm_2", -413, 997, 156, 0, 0],
+	["stone_wall", -1014, 695, 141, 121, 22], ["stone_wall", -869, 704, 145, 122, 21],
+	["wall", -713, 720, 137, 115, 21], ["ruin", 273, 1001, 171, 106, 45],
+	["lamp", -885, -715, 47, 13, 15], ["lamp", -930, 429, 47, 13, 15],
+	["lamp", 891, 172, 47, 13, 15], ["lamp", 194, 952, 47, 13, 15],
+	["orange_tree", -1000, -816, 117, 26, 22], ["orange_tree", -967, -226, 124, 28, 24],
+	["orange_tree_small", -955, 695, 114, 26, 21], ["orange_tree", -633, 916, 128, 26, 22],
+	["orange_tree", 423, -878, 120, 27, 21], ["palms", 983, 401, 113, 27, 22],
+	["flowers", -1010, 879, 119, 0, 0], ["flowers", -846, 993, 132, 0, 0],
+	["flowers", -310, 914, 103, 0, 0], ["flowers", 368, 926, 115, 0, 0],
+	["coast_boulder", 866, 863, 105, 0, 0], ["coast_boulder", 951, 966, 117, 0, 0],
+	["coast_boulder", 952, -807, 106, 0, 0], ["wood_fence", 534, 844, 106, 0, 0],
+]
+
 var props: Array[Dictionary] = []
 var decorations: Array[Dictionary] = []
 var colliders: Array[Rect2] = []
 var lamps: Array[Vector2] = []
 var tiles: TileMapLayer
-var border: ColorRect
+var border: TextureRect
+var _edge_material: ShaderMaterial
 var _textures: Dictionary = {}
 
 
 func setup(parent: CanvasItem) -> void:
-	border = ColorRect.new()
-	border.color = Color("#231f24")
+	border = TextureRect.new()
+	border.texture = DISTANT_CITY
+	border.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	border.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	border.modulate = Color(0.38, 0.25, 0.26)
 	border.show_behind_parent = true
 	border.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	border.hide()
@@ -141,6 +172,10 @@ func setup(parent: CanvasItem) -> void:
 	tiles.show_behind_parent = true
 	tiles.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	tiles.hide()
+	_edge_material = ShaderMaterial.new()
+	_edge_material.shader = EDGE_SHADER
+	_edge_material.set_shader_parameter("world_half_extent", LIMIT.x)
+	tiles.material = _edge_material
 	var atlas := TileSetAtlasSource.new()
 	atlas.texture = TERRAIN
 	atlas.texture_region_size = Vector2i(CELL, CELL)
@@ -160,6 +195,8 @@ func setup(parent: CanvasItem) -> void:
 				_add_prop(["cliff_turn" if y % 3 == 0 else "cliff", shore.x - 14, shore.y + 20, 67, 0, 0])
 				_add_prop(["wave", shore.x + 25, shore.y + 30, 49, 0, 0])
 	for entry in LANDMARKS:
+		_add_prop(entry)
+	for entry in OUTSKIRTS:
 		_add_prop(entry)
 	for key in COURTYARD_DRESSING:
 		for placement in COURTYARD_DRESSING[key]:
@@ -210,6 +247,9 @@ func align(camera: Vector2, viewport: Vector2, zoom: float, shown: bool) -> void
 		border.size = viewport
 		tiles.scale = Vector2.ONE * zoom
 		tiles.position = viewport * 0.5 - (camera + Vector2.ONE * CELL * 0.5) * zoom
+		_edge_material.set_shader_parameter("viewport_size", viewport)
+		_edge_material.set_shader_parameter("map_center", viewport * 0.5 - camera * zoom)
+		_edge_material.set_shader_parameter("zoom", zoom)
 
 
 func walkable(point: Vector2, margin: float = 0.0) -> bool:
@@ -240,6 +280,10 @@ func nearest_land(point: Vector2, margin: float) -> Vector2:
 				best = next
 				distance = cost
 	return best
+
+
+func draw_ground_layers(canvas: CanvasItem, offset: Vector2) -> void:
+	canvas.draw_texture_rect(PLAZA_GROUND, Rect2(PLAZA_RECT.position + offset, PLAZA_RECT.size), false)
 
 
 static func draw_prop(canvas: CanvasItem, prop: Dictionary, camera_offset: Vector2) -> void:

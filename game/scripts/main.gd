@@ -9,6 +9,11 @@ const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const YujinVisual = preload("res://scripts/reclaim/yujin_visual.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
+const BASE_ART = preload("res://assets/reclaim/jeju/structures/base.png")
+const TURRET_ART = preload("res://assets/reclaim/jeju/structures/turrets.png")
+const STRUCTURE_FRAME := Vector2(112, 104)
+const TURRET_ROWS := {"basic": 0, "heavy": 1, "rocket": 2, "electric": 3, "flame": 4, "freeze": 5, "repair": 6}
+const FACILITY_COLUMNS := {"clinic": 0, "supply": 1, "workshop": 2, "research": 3, "outpost": 4}
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
 const MainMenuScreen = preload("res://scripts/reclaim/flow/main_menu_screen.gd")
@@ -2632,6 +2637,7 @@ func _draw_world() -> void:
 	var camera := Transform2D(0.0, Vector2.ONE * zoom, 0.0, size * 0.5 * (1.0 - zoom))
 	draw_set_transform_matrix(camera)
 	var camera_offset := _world_to_screen(Vector2.ZERO)
+	jeju_map.draw_ground_layers(self, camera_offset)
 	for prop in jeju_map.decorations:
 		if _zombie_on_screen(prop.feet + camera_offset, 190.0):
 			JejuMapArt.draw_prop(self, prop, camera_offset)
@@ -2684,7 +2690,7 @@ func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
 	for item in layers:
 		match item[1]:
 			0: JejuMapArt.draw_prop(self, item[2], camera_offset)
-			1: _draw_structure(item[2])
+			1: _draw_structure(item[2], camera)
 			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds)
 			3: _draw_enemy(item[2], camera)
 			4:
@@ -2721,50 +2727,51 @@ func _draw_placement_preview() -> void:
 		draw_rect(Rect2(p - Vector2(CELL * 0.5, CELL * 0.5), Vector2(CELL, CELL)), color, false, 2.0)
 
 
-func _draw_structure(entry: Dictionary) -> void:
+func _draw_structure(entry: Dictionary, camera: Transform2D) -> void:
 	var kind := String(entry.kind)
 	var center := _world_to_screen(_entry_world_center(entry))
 	var width := 2 if kind == "hq" or _is_building(kind) else 1
 	var bounds := Rect2(center - Vector2(CELL * float(width) * 0.5, CELL * 0.5), Vector2(CELL * float(width), CELL))
+	var level := clampi(int(entry.get("level", 1)), 1, 5)
+	var bar_height := 31.0
 	if kind == "hq":
 		if hq_build_ratio <= 0.0:
 			return
-		var tent_size := JejuMapArt.HQ.get_size() * (112.0 / JejuMapArt.HQ.get_width())
-		draw_texture_rect(JejuMapArt.HQ, Rect2(center + Vector2(-tent_size.x * 0.5, 24.0 - tent_size.y), tent_size), false, Color(1, 1, 1, hq_build_ratio))
+		_draw_structure_sprite(BASE_ART, level - 1, 0, center + Vector2(0, 23), 120.0,
+			Color(1, 1, 1, hq_build_ratio))
+		bar_height = 77.0
 		draw_string(ThemeDB.fallback_font, center + Vector2(-34, 40), "지휘본부", HORIZONTAL_ALIGNMENT_LEFT, 90, 11, PALETTE.text)
 	elif kind == "wall":
-		draw_rect(bounds.grow(-7), Color("#9a8667"))
-		for n in range(3): draw_circle(center + Vector2(-12 + n * 12, 0), 8, Color("#c0aa83"))
-	elif _is_turret(kind):
-		var def := _build_definition(kind)
-		var c: Color = def.get("color", PALETTE.green)
-		# Tripod base, turntable, and a deliberately long gun silhouette.
-		draw_line(center + Vector2(-13, 13), center + Vector2(0, -2), Color("#4b554b"), 4.0)
-		draw_line(center + Vector2(13, 13), center + Vector2(0, -2), Color("#4b554b"), 4.0)
-		draw_line(center + Vector2(-12, 13), center + Vector2(12, 13), Color("#4b554b"), 3.0)
-		draw_circle(center, 11, Color("#444e46"))
-		draw_circle(center, 7, c)
+		_draw_structure_sprite(BASE_ART, level - 1, 1, center + Vector2(0, 18), 49.0)
+	elif TURRET_ROWS.has(kind):
 		var target := _nearest_enemy(_entry_world_center(entry), 370.0)
-		var direction := player_facing
-		if target >= 0: direction = (enemies[target].pos - _entry_world_center(entry)).normalized()
-		draw_line(center, center + direction * 25.0, Color("#343a35"), 5.0)
-		draw_line(center, center + direction * 24.0, c.lightened(0.22), 2.0)
-		for level in range(mini(5, int(entry.level))): draw_rect(Rect2(center.x - 12 + level * 5, center.y + 16, 3, 3), PALETTE.gold)
-	elif _is_building(kind):
+		var look_left: bool = enemies[target].pos.x < _entry_world_center(entry).x if target >= 0 else player_facing.x < 0.0
+		var flip := Vector2(-1, 1) if look_left else Vector2.ONE
+		draw_set_transform_matrix(camera * Transform2D(0.0, flip, 0.0, center))
+		_draw_structure_sprite(TURRET_ART, level - 1, TURRET_ROWS[kind], Vector2(0, 16), 69.0)
+		draw_set_transform_matrix(camera)
+		for pip in range(level):
+			draw_rect(Rect2(center.x - 12 + pip * 5, center.y + 19, 3, 2), PALETTE.gold)
+	elif FACILITY_COLUMNS.has(kind):
 		var def := _build_definition(kind)
-		var c: Color = Color("#657d69") if kind == "clinic" else Color("#7c704f") if kind == "supply" else Color("#62717a") if kind == "workshop" else Color("#75657b") if kind == "research" else Color("#788165")
-		draw_rect(bounds.grow(-5), c)
-		draw_rect(Rect2(bounds.position.x + 7, bounds.position.y + 8, bounds.size.x - 14, 5), Color(c.lightened(0.23)))
-		draw_rect(Rect2(center.x - 6, center.y - 3, 13, 19), Color("#303832"))
-		draw_string(ThemeDB.fallback_font, center + Vector2(-21, 23), String(def.get("short", "시설")), HORIZONTAL_ALIGNMENT_LEFT, 60, 10, PALETTE.text)
+		bar_height = 60.0
+		_draw_structure_sprite(BASE_ART, FACILITY_COLUMNS[kind], 2, center + Vector2(0, 20), 104.0)
+		draw_string(ThemeDB.fallback_font, center + Vector2(-21, 34), String(def.get("short", "시설")), HORIZONTAL_ALIGNMENT_LEFT, 60, 10, PALETTE.text)
 	var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
 	var bar_width := 28.0 if kind == "wall" else 40.0 * float(width)
-	var bar := Rect2(center.x - bar_width * 0.5, bounds.position.y - 6, bar_width, 3)
+	var bar := Rect2(center.x - bar_width * 0.5, center.y - bar_height, bar_width, 3)
 	draw_rect(bar, Color(0, 0, 0, 0.7))
 	bar.size.x *= ratio
 	draw_rect(bar, PALETTE.green if ratio > 0.35 else PALETTE.red)
 	if selected_entity >= 0 and selected_entity < structures.size() and structures[selected_entity] == entry:
 		draw_rect(bounds.grow(3), PALETTE.blue, false, 2.0)
+
+
+func _draw_structure_sprite(texture: Texture2D, column: int, row: int, feet: Vector2, width: float, tint := Color.WHITE) -> void:
+	var source := Rect2(Vector2(column, row) * STRUCTURE_FRAME, STRUCTURE_FRAME)
+	var size_px := STRUCTURE_FRAME * (width / STRUCTURE_FRAME.x)
+	var anchor := Vector2(size_px.x * 0.5, size_px.y * (100.0 / STRUCTURE_FRAME.y))
+	draw_texture_rect_region(texture, Rect2(feet - anchor, size_px), source, tint)
 
 
 func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
