@@ -24,10 +24,15 @@ const ENEMIES: Dictionary = {
 }
 
 const BOSSES: Dictionary = {
+	20: {"name": "감염 지휘체", "hp": 5100.0, "speed": 41.0, "attack": 19.0, "color": Color("#a78669"), "pattern": "추격"},
+	60: {"name": "변이 수호체", "hp": 13000.0, "speed": 34.0, "attack": 28.0, "color": Color("#9a8aaf"), "pattern": "추격"},
 	40: {"name": "철갑 포식자", "hp": 9500.0, "speed": 37.0, "attack": 24.0, "color": Color("#9d6575"), "pattern": "방어"},
 	80: {"name": "파쇄자", "hp": 18000.0, "speed": 32.0, "attack": 34.0, "color": Color("#c27854"), "pattern": "철거"},
 	100: {"name": "군체 지배자", "hp": 30000.0, "speed": 30.0, "attack": 45.0, "color": Color("#b24962"), "pattern": "군체"}
 }
+
+const TURRET_CAP := 10
+const YUJIN_TURRET_CAP := 15
 
 const TURRETS: Array[Dictionary] = [
 	{"id": "basic", "name": "기본 자동포탑", "short": "기본", "cost": 34, "damage": 24.0, "rate": 0.70, "range": 350.0, "color": Color("#a7c08b"), "role": "균형"},
@@ -35,7 +40,8 @@ const TURRETS: Array[Dictionary] = [
 	{"id": "rocket", "name": "로켓 포탑", "short": "로켓", "cost": 58, "damage": 118.0, "rate": 2.30, "range": 440.0, "color": Color("#d87c60"), "role": "범위 폭발"},
 	{"id": "electric", "name": "전기 포탑", "short": "전기", "cost": 50, "damage": 42.0, "rate": 1.15, "range": 335.0, "color": Color("#71c8d1"), "role": "연쇄"},
 	{"id": "flame", "name": "화염 포탑", "short": "화염", "cost": 46, "damage": 11.0, "rate": 0.16, "range": 215.0, "color": Color("#ef9154"), "role": "지속 광역"},
-	{"id": "freeze", "name": "냉각 포탑", "short": "냉각", "cost": 44, "damage": 9.0, "rate": 0.82, "range": 305.0, "color": Color("#9cdbe1"), "role": "감속"}
+	{"id": "freeze", "name": "냉각 포탑", "short": "냉각", "cost": 44, "damage": 9.0, "rate": 0.82, "range": 305.0, "color": Color("#9cdbe1"), "role": "감속"},
+	{"id": "aa", "name": "대공 포탑", "short": "대공", "cost": 52, "damage": 36.0, "rate": 0.85, "range": 455.0, "color": Color("#dad28b"), "role": "공중 적 전용"}
 ]
 
 const REPAIR_DRONE := {"id": "repair", "name": "수리 드론", "cost": 55,
@@ -43,7 +49,7 @@ const REPAIR_DRONE := {"id": "repair", "name": "수리 드론", "cost": 55,
 
 const BUILDINGS: Array[Dictionary] = [
 	{"id": "clinic", "name": "의료소", "short": "의료", "cost": 76, "hp": 520.0, "role": "근처 생존자 회복"},
-	{"id": "supply", "name": "보급소", "short": "보급", "cost": 74, "hp": 580.0, "role": "주기적 전투 재화"},
+	{"id": "supply", "name": "용병 파견소", "short": "파견", "cost": 74, "hp": 580.0, "role": "용병 파견 · 확률 보급품 획득"},
 	{"id": "workshop", "name": "정비제작소", "short": "정비", "cost": 84, "hp": 650.0, "role": "포탑 성능 보조"},
 	{"id": "research", "name": "연구소", "short": "연구", "cost": 96, "hp": 520.0, "role": "증강 경험 보조"},
 	{"id": "outpost", "name": "초소", "short": "초소", "cost": 82, "hp": 610.0, "role": "가까운 적 자동 견제"}

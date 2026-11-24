@@ -55,23 +55,26 @@ static func start_attack(enemy: Dictionary, toward: Vector2, now: float) -> void
 	enemy.attack_direction = toward.normalized() if not toward.is_zero_approx() else Vector2.DOWN
 
 
-static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, camera: Transform2D) -> void:
+static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, camera: Transform2D, tint := Color.WHITE, compact := false) -> void:
 	var phase := now + float(int(enemy.spawn_id) % 31) * 0.063
 	if now < float(enemy.attack_until):
 		var progress := 1.0 - (float(enemy.attack_until) - now) / ATTACK_TIME
-		_draw_attack(canvas, enemy, center, clampf(progress, 0.0, 1.0), camera)
+		_draw_attack(canvas, enemy, center, clampf(progress, 0.0, 1.0), camera, tint)
 	elif now < float(enemy.hit_until):
 		var column := 18 + clampi(int((now + HIT_TIME - float(enemy.hit_until)) * 10.0), 0, 3)
 		var impact := clampf((float(enemy.hit_until) - now - HIT_TIME + 0.09) / 0.09, 0.0, 1.0)
-		var tint := Color.WHITE.lerp(Color("#ffb4a3"), impact)
-		_draw_frame(canvas, enemy.variant, enemy.row, column, center, tint)
+		var hit_tint := tint * Color.WHITE.lerp(Color("#ffb4a3"), impact)
+		_draw_frame(canvas, enemy.variant, enemy.row, column, center, hit_tint)
+	elif enemy.moving and compact:
+		var gait := int(fposmod(float(enemy.walk_distance) / 30.0, 1.0) * 8.0)
+		_draw_frame(canvas, enemy.variant, enemy.row, 4 + gait, center, tint)
 	elif enemy.moving:
-		_draw_walk(canvas, enemy, center, camera)
+		_draw_walk(canvas, enemy, center, camera, tint)
 	else:
-		_draw_frame(canvas, enemy.variant, enemy.row, int(phase * 5.0) % 4, center)
+		_draw_frame(canvas, enemy.variant, enemy.row, int(phase * 5.0) % 4, center, tint)
 
 
-static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, camera: Transform2D) -> void:
+static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, camera: Transform2D, tint: Color) -> void:
 	const LEG_START := 113.0
 	var gait := fposmod(float(enemy.walk_distance) / 30.0 + float(int(enemy.spawn_id) % 13) / 13.0, 1.0)
 	var stride := sin(gait * TAU)
@@ -82,7 +85,7 @@ static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, c
 	var upper_size := Vector2(CELL, LEG_START)
 	var body := camera * Transform2D(stride * 0.056, center + Vector2(stride * 1.35, bob))
 	canvas.draw_set_transform_matrix(body)
-	canvas.draw_texture_rect_region(sheet, Rect2(top_left, upper_size * SCALE), Rect2(source, upper_size))
+	canvas.draw_texture_rect_region(sheet, Rect2(top_left, upper_size * SCALE), Rect2(source, upper_size), tint)
 	var side_view: bool = enemy.row == 1 or enemy.row == 2
 	for leg in range(2):
 		var step := stride if leg == 0 else -stride
@@ -93,11 +96,11 @@ static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, c
 		var swing := step * (0.29 if side_view else 0.14)
 		canvas.draw_set_transform_matrix(body * Transform2D(swing, knee - Vector2(0.0, lift)))
 		canvas.draw_texture_rect_region(sheet, Rect2(Vector2(-CELL * 0.25 * SCALE, 0.0), leg_size * SCALE),
-			Rect2(source + Vector2(left, LEG_START), leg_size))
+			Rect2(source + Vector2(left, LEG_START), leg_size), tint)
 	canvas.draw_set_transform_matrix(camera)
 
 
-static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2, progress: float, camera: Transform2D) -> void:
+static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2, progress: float, camera: Transform2D, tint: Color) -> void:
 	var direction: Vector2 = enemy.attack_direction
 	var variant: int = enemy.variant
 	var row := facing_row(direction)
@@ -111,17 +114,17 @@ static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2,
 	var cell_rect := Rect2(-SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
 	var source := Rect2(Vector2(variant * CELL, 0.0), Vector2.ONE * CELL)
 	if row != 0:
-		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose)
+		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose, tint)
 	canvas.draw_set_transform_matrix(body)
-	canvas.draw_texture_rect_region(ATTACK_PARTS, cell_rect, source)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, cell_rect, source, tint)
 	if row == 0:
-		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose)
-	_draw_attack_arm(canvas, body, variant, 1, direction, mirror, pose)
+		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose, tint)
+	_draw_attack_arm(canvas, body, variant, 1, direction, mirror, pose, tint)
 	canvas.draw_set_transform_matrix(camera)
 
 
 static func _draw_attack_arm(canvas: CanvasItem, body: Transform2D, variant: int, arm: int,
-		direction: Vector2, mirror: float, pose: Vector3) -> void:
+		direction: Vector2, mirror: float, pose: Vector3, tint: Color) -> void:
 	if variant == 7 and arm == 0:
 		return
 	var shoulder: Vector2 = SHOULDERS[variant][arm]
@@ -143,9 +146,9 @@ static func _draw_attack_arm(canvas: CanvasItem, body: Transform2D, variant: int
 	var cell := Vector2.ONE * CELL
 	var source := Vector2(variant * CELL, (1 + arm * 2) * CELL)
 	canvas.draw_set_transform_matrix(upper)
-	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-shoulder * SCALE, size), Rect2(source, cell))
+	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-shoulder * SCALE, size), Rect2(source, cell), tint)
 	canvas.draw_set_transform_matrix(lower)
-	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-elbow * SCALE, size), Rect2(source + Vector2(0.0, CELL), cell))
+	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-elbow * SCALE, size), Rect2(source + Vector2(0.0, CELL), cell), tint)
 
 
 static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:

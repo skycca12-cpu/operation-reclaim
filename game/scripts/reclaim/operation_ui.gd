@@ -3,8 +3,8 @@ extends RefCounted
 const GOLD := Color("#dfc17b")
 const INK := Color("#191b1b")
 const RARITY := {
-	"일반": Color("#a6a7ab"), "고급": Color("#82bb71"), "희귀": Color("#74aeee"),
-	"영웅": Color("#b48be0"), "전설": Color("#eb6867"),
+	"일반": Color("#e3e3e3"), "고급": Color("#82bb71"), "희귀": Color("#74aeee"),
+	"영웅": Color("#b48be0"), "전설": Color("#e8cd62"), "신화": Color("#eb6867"),
 }
 const ICONS := {
 	"build": ["0011110","0110111","0111001","0011000","0011000","0110000","1100000"],
@@ -99,7 +99,7 @@ static func augment_card(card: Dictionary, callback: Callable, width: float, hei
 	result.custom_minimum_size = Vector2(width, height)
 	result.clip_contents = true
 	var rarity := String(card.get("rarity", ""))
-	var stars := clampi(int(card.get("stars", 0)), 0, 5)
+	var stars := clampi(int(card.get("stars", 0)), 0, 6)
 	var accent: Color = RARITY.get(rarity, Color("#a6a7ab"))
 	for state in ["normal", "pressed", "hover"]:
 		var style := plate(accent, INK.lerp(accent, 0.13 if state == "normal" else 0.24))

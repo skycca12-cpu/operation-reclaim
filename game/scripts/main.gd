@@ -17,8 +17,10 @@ const DAMAGE_FIRE := 0.25
 const BASE_ART = preload("res://assets/reclaim/jeju/structures/base.png")
 const TURRET_ART = preload("res://assets/reclaim/jeju/structures/turrets.png")
 const STRUCTURE_FRAME := Vector2(112, 104)
-const TURRET_ROWS := {"basic": 0, "heavy": 1, "rocket": 2, "electric": 3, "flame": 4, "freeze": 5}
+const TURRET_ROWS := {"basic": 0, "heavy": 1, "rocket": 2, "electric": 3, "flame": 4, "freeze": 5, "aa": 6}
 const FACILITY_COLUMNS := {"clinic": 0, "supply": 1, "workshop": 2, "research": 3, "outpost": 4}
+const AugmentCatalog = preload("res://scripts/reclaim/augment_catalog.gd")
+const SpecialEnemies = preload("res://scripts/reclaim/special_enemies.gd")
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
 const MainMenuScreen = preload("res://scripts/reclaim/flow/main_menu_screen.gd")
@@ -42,11 +44,14 @@ const MAX_CAMERA_ZOOM := 2.4
 const HIT_SPARK_TIME := 0.18
 const BUILD_SHORTCUTS := {
 	KEY_1: "basic", KEY_2: "heavy", KEY_3: "rocket", KEY_4: "electric",
-	KEY_5: "flame", KEY_6: "freeze", KEY_7: "repair", KEY_8: "wall",
+	KEY_5: "flame", KEY_6: "freeze", KEY_7: "repair", KEY_8: "wall", KEY_9: "aa",
 	KEY_F1: "clinic", KEY_F2: "supply", KEY_F3: "workshop", KEY_F4: "research", KEY_F5: "outpost",
 }
-const RESERVED_KEYS := [KEY_TAB, KEY_C, KEY_B, KEY_G, KEY_U, KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
-const MAX_ENEMIES := 320
+const RESERVED_KEYS := [KEY_TAB, KEY_C, KEY_B, KEY_G, KEY_U, KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_F6]
+const MAX_ENEMIES := 3000
+const MAX_CORPSES := 160
+const WAVE_TARGETS := [50, 100, 200, 350, 500, 750, 1000, 1300, 1600, 1900, 2000]
+const MAX_XP_CHOICES := 100
 const WAVE_SPAWN_MULTIPLIER := 5
 const WAVE_SECONDS := 22.0
 const BASE_CELL := Vector2i(3, 3)
@@ -87,6 +92,26 @@ var money := 150
 var medals := 0
 var boss_kills := 0
 var difficulty: Dictionary = {}
+var enemy_update_group := 0
+var tunnel_routes: Array[Dictionary] = []
+var pending_skill_blasts: Array[Dictionary] = []
+var last_crit_at := -10.0
+var last_kill_at := -10.0
+var toxin_zones: Array[Dictionary] = []
+var player_slime := 0.0
+var treatment_remaining := 0.0
+var expedition_remaining := 0.0
+var mercenary_level := 0
+var simulation_speed := 1.0
+var boss_spawned: Dictionary = {}
+var final_boss_defeated := false
+var augment_queue := 0
+var csv_passive: Dictionary = {}
+var csv_conditional: Dictionary = {}
+var csv_trigger_until: Dictionary = {}
+var last_dash_at := -10.0
+var last_reload_at := -10.0
+var clinic_shield := 0.0
 var repair_drone_level := 0
 var repair_drone_pos := Vector2.ZERO
 var repair_drone_cooldown := 0.0
@@ -110,7 +135,7 @@ var save_timer := 0.0
 var income_timer := 0.0
 var drone_timer := 0.0
 var augments_taken := 0
-var augment_reroll_used := false
+var augment_reroll_used := 0
 var augment_options: Array[Dictionary] = []
 var picked_augment_ids: Array[String] = []
 var acquired_augments: Dictionary = {}
@@ -122,10 +147,6 @@ var hud_name: Label
 var hud_health: Label
 var hud_level: Label
 var hud_hq: Label
-var boss_40_spawned := false
-var boss_80_spawned := false
-var boss_100_spawned := false
-var pending_final_boss := false
 var win_state := false
 var dead_count := 0
 var player_mod_damage := 1.0
@@ -239,12 +260,17 @@ func _process(delta: float) -> void:
 			_update_landing(delta)
 		_refresh_hud()
 		return
-	_update_player(delta)
+	delta *= simulation_speed
+	if treatment_remaining <= 0.0:
+		_update_player(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
 	_yujin_visual.update(delta, player_motion.length_squared() > 36.0)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	_update_spawn(delta)
 	_update_enemies(delta)
+	_update_toxins(delta)
+	_update_tunnels(delta)
+	_resolve_skill_blasts()
 	_update_turrets(delta)
 	_update_repair_drone(delta)
 	_update_projectiles(delta)
@@ -265,10 +291,13 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if screen == "play" and awaiting_binding.is_empty() and event is InputEventKey:
 		var code: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
-		if BUILD_SHORTCUTS.has(code) or code == KEY_U:
+		if BUILD_SHORTCUTS.has(code) or code in [KEY_U, KEY_F6]:
 			get_viewport().set_input_as_handled()
 			if event.pressed and not event.echo:
-				if code == KEY_U:
+				if code == KEY_F6:
+					simulation_speed = 2.0 if simulation_speed == 1.0 else 1.0
+					_show_toast("작전 속도 %.0f배" % simulation_speed)
+				elif code == KEY_U:
 					if not build_mode:
 						_upgrade_selected()
 				else:
@@ -659,7 +688,7 @@ func _build_game_hud() -> void:
 	build_status_label.custom_minimum_size.y = 16
 	build_status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	build_content.add_child(build_status_label)
-	var hint := _make_label("건설 [B]   포탑 [1–6]   수리 드론 [7]   방벽 [8]   시설 [F1–F5]   강화 [U]   우클릭 취소", 12, PALETTE.muted, true)
+	var hint := _make_label("건설 [B]   포탑 [1–6]   수리 드론 [7]   방벽 [8]   시설 [F1–F5]   강화 [U]   배속 [F6]   우클릭 취소", 12, PALETTE.muted, true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	hint.offset_top = -31
 	hint.offset_bottom = -8
@@ -691,6 +720,12 @@ func _build_game_hud() -> void:
 	inspector_label = _make_label("", 16, PALETTE.text)
 	ivbox.add_child(inspector_label)
 	ivbox.add_child(_make_button("강화 [U]", _upgrade_selected, PALETTE.green, 270))
+	var expedition := _make_button("용병 파견", _start_expedition, PALETTE.gold, 270)
+	expedition.name = "Expedition"
+	ivbox.add_child(expedition)
+	var mercenary := _make_button("용병 강화", _upgrade_mercenary, PALETTE.green, 270)
+	mercenary.name = "Mercenary"
+	ivbox.add_child(mercenary)
 	ivbox.add_child(_make_button("철거", _remove_selected, PALETTE.red, 270))
 	ivbox.add_child(_make_button("닫기", _close_inspector, PALETTE.blue, 270))
 	operator_info = OperatorInfo.new()
@@ -915,6 +950,25 @@ func _finish_landing() -> void:
 
 
 func _reset_run() -> void:
+	toxin_zones.clear()
+	tunnel_routes.clear()
+	pending_skill_blasts.clear()
+	last_crit_at = -10.0
+	last_kill_at = -10.0
+	player_slime = 0.0
+	treatment_remaining = 0.0
+	expedition_remaining = 0.0
+	mercenary_level = 0
+	simulation_speed = 1.0
+	boss_spawned.clear()
+	final_boss_defeated = false
+	augment_queue = 0
+	csv_passive.clear()
+	csv_conditional.clear()
+	csv_trigger_until.clear()
+	last_dash_at = -10.0
+	last_reload_at = -10.0
+	clinic_shield = 0.0
 	_yujin_visual.reset()
 	difficulty = Data.DIFFICULTIES[difficulty_index].duplicate(true)
 	stage = 1
@@ -930,7 +984,7 @@ func _reset_run() -> void:
 	player_xp = 0.0
 	player_level = 1
 	augments_taken = 0
-	augment_reroll_used = false
+	augment_reroll_used = 0
 	picked_augment_ids.clear()
 	acquired_augments.clear()
 	repair_drone_level = 0
@@ -945,10 +999,6 @@ func _reset_run() -> void:
 	enemy_shots.clear()
 	player_projectiles.shots.clear()
 	effects.clear()
-	boss_40_spawned = false
-	boss_80_spawned = false
-	boss_100_spawned = false
-	pending_final_boss = false
 	win_state = false
 	player_mod_damage = 1.0
 	player_mod_rate = 1.0
@@ -1022,14 +1072,20 @@ func _load_saved_run() -> void:
 	boss_kills = int(state.get("boss_kills", 0))
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	player_max_hp = float(state.get("player_max_hp", hero.hp))
-	player_hp = clampf(float(state.get("player_hp", player_max_hp)), 1.0, player_max_hp)
+	treatment_remaining = maxf(0.0, float(state.get("treatment_remaining", 0.0)))
+	expedition_remaining = maxf(0.0, float(state.get("expedition_remaining", 0.0)))
+	mercenary_level = clampi(int(state.get("mercenary_level", 0)), 0, 10)
+	simulation_speed = 1.0
+	augment_queue = maxi(0, int(state.get("augment_queue", 0)))
+	final_boss_defeated = bool(state.get("final_boss_defeated", false))
+	player_hp = clampf(float(state.get("player_hp", player_max_hp)), 0.0 if treatment_remaining > 0.0 else 1.0, player_max_hp)
 	player_projectiles.shots.clear()
 	enemy_shots.clear()
 	manual_attack = bool(state.get("manual_attack", false))
 	manual_trigger = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
 	player_pos = jeju_map.nearest_land(Vector2(float(pp[0]), float(pp[1])), PLAYER_RADIUS)
-	repair_drone_level = clampi(int(state.get("repair_drone_level", 0)), 0, 5)
+	repair_drone_level = clampi(int(state.get("repair_drone_level", 0)), 0, 11)
 	repair_drone_cooldown = 0.0
 	structures.clear()
 	for entry in state.get("structures", []):
@@ -1059,12 +1115,9 @@ func _load_saved_run() -> void:
 		var saved_variant := int(entry.get("variant", -1))
 		if enemy.has("variant") and saved_variant >= 0 and saved_variant < ZombieVisual.SHEETS.size():
 			enemy.variant = saved_variant
+			enemy.appearance = clampi(int(entry.get("appearance", saved_variant)), 0, 49)
 		enemies.append(enemy)
 		_warn_enemy_once(enemy.kind)
-	boss_40_spawned = stage >= 40
-	boss_80_spawned = stage >= 80
-	boss_100_spawned = stage >= 100
-	pending_final_boss = stage >= 100
 	_restore_run_modifiers()
 	var capacity := _magazine_capacity()
 	player_magazine = clampi(int(state.get("magazine", capacity)), 0, capacity)
@@ -1076,7 +1129,7 @@ func _load_saved_run() -> void:
 			player_magazine = capacity
 	win_state = false
 	spawn_timer = 1.5
-	augment_reroll_used = false
+	augment_reroll_used = 0
 	build_mode = false
 	selected_build = ""
 	build_open = false
@@ -1267,9 +1320,9 @@ func _refresh_build_panel() -> void:
 				_add_build_option(list, Data.REPAIR_DRONE, Data.REPAIR_DRONE.color)
 				list.move_child(list.get_child(-1), 0)
 			else:
-				var label := "수리 드론 Lv.%d · 강화 %d" % [repair_drone_level, _repair_drone_upgrade_cost()] if repair_drone_level < 5 else "수리 드론 Lv.5 · 최대 강화"
+				var label := "수리 드론 Lv.%d · 강화 %d" % [repair_drone_level, _repair_drone_upgrade_cost()] if repair_drone_level < 11 else "수리 드론 +10 · 최대 강화"
 				var upgrade := _build_menu_button(label, _upgrade_repair_drone, Data.REPAIR_DRONE.color)
-				upgrade.disabled = repair_drone_level >= 5
+				upgrade.disabled = repair_drone_level >= 11
 				list.add_child(upgrade)
 				list.move_child(upgrade, 0)
 
@@ -1283,7 +1336,7 @@ func _fit_build_panel() -> void:
 
 func _add_build_option(list: VBoxContainer, item: Dictionary, accent: Color) -> void:
 	var key := OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id))
-	var price := _effective_cost(int(item.cost))
+	var price := _structure_cost(String(item.id), int(item.cost))
 	var button := _build_menu_button("[%s] %s  ·  %d" % [key, item.name, price], _select_build.bind(String(item.id)), accent)
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.tooltip_text = "%s · %d 보급품" % [item.role, price]
@@ -1321,6 +1374,11 @@ func _select_build(kind: String) -> void:
 	build_status_label.text = "%s 선택 · 전장 클릭" % String(item.get("name", "방벽"))
 	var inspector := run_hud.find_child("Inspector", true, false) as Control
 	if inspector: inspector.visible = false
+
+
+func _structure_cost(kind: String, price: int) -> int:
+	var key := "wall_cost" if kind == "wall" else "turret_cost" if _is_turret(kind) else "facility_cost" if _is_building(kind) else ""
+	return maxi(1, roundi(_effective_cost(price) * _csv_reduction(key)))
 
 
 func _effective_cost(base: int) -> int:
@@ -1388,17 +1446,17 @@ func _validate_placement(kind: String, cell: Vector2i) -> String:
 	var center := _cell_world(cell) + Vector2(CELL * 0.5 * float(width - 1), 0.0)
 	var overlap_depth := _structure_overlap_depth(player_pos, center, width, PLAYER_RADIUS)
 	if overlap_depth >= 0.0: return "대원이 서 있는 곳에는 배치할 수 없습니다."
-	if kind != "wall" and kind != "hq":
+	if _is_building(kind):
 		for entry in structures:
 			if String(entry.kind) == kind and float(entry.hp) > 0.0:
 				return "같은 종류의 시설은 한 개만 지을 수 있습니다."
 	if _is_turret(kind):
-		var cap := 8 if Data.CHARACTERS[player_index].id == "yujin" else 6
+		var cap := (Data.YUJIN_TURRET_CAP if Data.CHARACTERS[player_index].id == "yujin" else Data.TURRET_CAP) + int(_csv_bonus("turret_cap")) + int(_csv_bonus("iron_fortress"))
 		var count := 0
 		for entry in structures:
 			if _is_turret(String(entry.kind)) and float(entry.hp) > 0.0: count += 1
 		if count >= cap: return "포탑 한도 %d기에 도달했습니다." % cap
-	var cost := _effective_cost(int(definition.get("cost", 0)))
+	var cost := _structure_cost(kind, int(definition.get("cost", 0)))
 	if money < cost: return "보급품이 부족합니다. 필요: %d" % cost
 	if kind == "wall" and not _path_stays_open(cell): return "방벽이 기지 탈출 경로를 막습니다."
 	return ""
@@ -1440,8 +1498,10 @@ func _try_place_at(world_point: Vector2) -> void:
 		build_status_label.text = problem
 		return
 	var def := _build_definition(selected_build)
-	var cost := _effective_cost(int(def.get("cost", 0)))
-	var maxhp := float(def.get("hp", 180.0)) * player_mod_building_hp
+	var cost := _structure_cost(selected_build, int(def.get("cost", 0)))
+	var hp_key := "wall_hp" if selected_build == "wall" else "turret_hp" if _is_turret(selected_build) else "facility_hp"
+	var maxhp := float(def.get("hp", 180.0)) * player_mod_building_hp * (_csv_factor(hp_key) + (_csv_bonus("clinic_hp") / 100.0 if selected_build == "clinic" else 0.0))
+	_mark_csv_trigger("build")
 	money -= cost
 	structures.append({"kind": selected_build, "cell": cell, "hp": maxhp, "max_hp": maxhp, "level": 1, "cool": 0.35, "built": true})
 	_show_toast("%s 설치 완료 · 전투는 계속됩니다." % String(def.name))
@@ -1485,6 +1545,8 @@ func _open_inspector() -> void:
 	var inspector := run_hud.find_child("Inspector", true, false) as Control
 	inspector.visible = true
 	var s: Dictionary = structures[selected_entity]
+	inspector.find_child("Expedition", true, false).visible = s.kind == "supply"
+	inspector.find_child("Mercenary", true, false).visible = s.kind == "supply"
 	var def := _build_definition(String(s.kind))
 	inspector_label.text = "%s\n레벨 %d  ·  내구도 %d/%d\n%s" % [String(def.get("name", "군용 텐트 HQ")), int(s.level), int(s.hp), int(s.max_hp), String(def.get("role", "지휘본부 · 파괴 시 패배"))]
 
@@ -1499,16 +1561,17 @@ func _upgrade_selected() -> void:
 	if selected_entity < 0 or selected_entity >= structures.size(): return
 	var s: Dictionary = structures[selected_entity]
 	var kind := String(s.kind)
-	if int(s.level) >= 5:
+	if int(s.level) >= (6 if kind == "wall" else 11):
 		_show_toast("최대 레벨입니다.")
 		return
-	var cost := 30 + int(s.level) * 24
+	var key := "wall_upgrade" if kind == "wall" else "hq_upgrade" if kind == "hq" else "turret_upgrade" if _is_turret(kind) else "facility_upgrade"
+	var cost := roundi((30 + int(s.level) * 24) * 1.30 * _csv_reduction(key))
 	if money < cost:
 		_show_toast("강화에 보급품 %d개가 필요합니다." % cost)
 		return
 	money -= cost
 	s.level = int(s.level) + 1
-	s.max_hp *= 1.22
+	s.max_hp *= 1.264
 	s.hp = minf(float(s.max_hp), float(s.hp) + float(s.max_hp) * 0.28)
 	if _is_turret(kind):
 		for item in Data.TURRETS:
@@ -1525,7 +1588,7 @@ func _remove_selected() -> void:
 	if String(s.kind) == "hq":
 		_show_toast("지휘본부는 철거할 수 없습니다.")
 		return
-	money += int(round(float(_build_definition(String(s.kind)).get("cost", 0)) * 0.35))
+	money += int(round(float(_build_definition(String(s.kind)).get("cost", 0)) * 0.35 * _csv_factor("refund")))
 	structures.remove_at(selected_entity)
 	selected_entity = -1
 	_close_inspector()
@@ -1533,7 +1596,7 @@ func _remove_selected() -> void:
 
 
 func _try_dash() -> void:
-	if dash_cooldown > 0.0 or screen != "play": return
+	if dash_cooldown > 0.0 or screen != "play" or treatment_remaining > 0.0: return
 	var direction := Vector2.ZERO
 	if Input.is_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): direction.y -= 1.0
 	if Input.is_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): direction.y += 1.0
@@ -1542,7 +1605,8 @@ func _try_dash() -> void:
 	if direction.length() < 0.1: direction = player_facing
 	dash_direction = direction.normalized()
 	dash_timer = 0.2
-	dash_cooldown = 1.25
+	dash_cooldown = 1.25 * _csv_reduction("dash_cooldown")
+	last_dash_at = run_seconds
 
 
 
@@ -1589,23 +1653,25 @@ func _update_player(delta: float) -> void:
 	if direction.length() > 0.0:
 		direction = direction.normalized()
 		player_facing = direction
-	var speed := float(Data.CHARACTERS[player_index].speed) * player_mod_speed
+	var speed := float(Data.CHARACTERS[player_index].speed) * player_mod_speed * (_csv_factor("move") + _recent_combat_bonus("crit_move", "kill_move") / 100.0) * (_csv_factor("after_dash_speed") if run_seconds - last_dash_at < 5.0 else 1.0) * (0.62 if player_slime > 0.0 else 1.0)
 	if dash_timer > 0.0:
 		dash_timer = maxf(0.0, dash_timer - delta)
-		_move_player(dash_direction * speed * 2.8 * delta)
+		_move_player(dash_direction * speed * 2.8 * delta * _csv_factor("dash_distance"))
 	else:
 		_move_player(direction * speed * delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	player_motion = (player_pos - previous_position) / maxf(delta, 0.001)
 	_update_player_attack(delta)
-	if player_drone_level > 0:
+	var drone_level := player_drone_level + int(_csv_bonus("combat_drone"))
+	if drone_level > 0:
 		drone_timer -= delta
 		if drone_timer <= 0.0:
-			drone_timer = maxf(0.9, 3.2 - player_drone_level * 0.45)
+			drone_timer = maxf(0.9, (3.2 - drone_level * 0.45) / _csv_factor("combat_drone_rate"))
 			var drone_target := _nearest_enemy(player_pos, 460.0)
 			if drone_target >= 0:
+				_mark_csv_trigger("drone")
 				var target_pos: Vector2 = enemies[drone_target].pos
-				_damage_enemy(drone_target, 24.0 * player_drone_level * player_mod_damage, "drone")
+				_damage_enemy(drone_target, 24.0 * drone_level * player_mod_damage * _csv_factor("combat_drone_damage") * (_csv_factor("after_dash_drone") if run_seconds - last_dash_at < 5.0 else 1.0), "drone")
 				effects.append({"a": player_pos + Vector2(20, -30), "b": target_pos, "time": 0.15, "color": PALETTE.blue})
 	
 
@@ -1630,6 +1696,7 @@ func _update_player_attack(delta: float) -> void:
 		player_reload_timer = maxf(0.0, player_reload_timer - delta)
 		if player_reload_timer == 0.0:
 			player_magazine = _magazine_capacity()
+			last_reload_at = run_seconds
 	if wants_attack and player_attack_timer <= 0.0 and player_reload_timer <= 0.0:
 		_attack_player()
 
@@ -1637,7 +1704,8 @@ func _update_player_attack(delta: float) -> void:
 func _attack_player() -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var kind := String(hero.id)
-	var interval := _weapon_interval(hero, player_mod_rate)
+	_mark_csv_trigger("attack")
+	var interval := _weapon_interval(hero, player_mod_rate * (_csv_factor("rate") + _recent_combat_bonus("crit_rate", "kill_rate") / 100.0))
 	if kind == "yujin":
 		_yujin_visual.attack(interval)
 		player_attack_timer = interval
@@ -1646,7 +1714,7 @@ func _attack_player() -> void:
 		for i in range(enemies.size() - 1, -1, -1):
 			var target_pos: Vector2 = enemies[i].pos
 			var toward := target_pos - player_pos
-			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > 0.70):
+			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > cos(deg_to_rad(minf(85.0, 45.0 * _csv_factor("saw_angle"))))):
 				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
 				if effects.size() < 40: effects.append({"a": player_pos + direction * 26, "b": target_pos, "time": 0.09, "color": Color("#f1a34f")})
 		return
@@ -1654,7 +1722,7 @@ func _attack_player() -> void:
 		return
 	player_magazine -= 1
 	if player_magazine == 0:
-		player_reload_timer = float(hero.reload)
+		player_reload_timer = float(hero.reload) / _csv_factor("reload")
 	var muzzle_offset := Vector2.ZERO
 	if kind == "harin":
 		_harin_visual.trigger_attack(player_facing)
@@ -1664,12 +1732,12 @@ func _attack_player() -> void:
 	player_attack_timer = interval
 	var direction := player_facing.normalized()
 	var max_range := _weapon_range(hero)
-	var pellets := int(hero.pellets) + player_extra_pellets if kind == "tae" else 1
+	var pellets := (int(hero.pellets) + player_extra_pellets if kind == "tae" else 1) + int(_csv_bonus("pellets"))
 	var damage := _weapon_damage(hero, player_mod_damage) / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 if kind == "tae" else 0.0)
-		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1), color, muzzle_offset)
+		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, muzzle_offset, _csv_factor("projectile_speed"))
 
 
 func _update_spawn(delta: float) -> void:
@@ -1679,23 +1747,22 @@ func _update_spawn(delta: float) -> void:
 		stage += 1
 		stage_elapsed -= WAVE_SECONDS
 		_show_toast("경계 단계 %d / 100" % stage)
-		if stage == 40 and not boss_40_spawned:
-			boss_40_spawned = true
-			_spawn_boss(40)
-		elif stage == 80 and not boss_80_spawned:
-			boss_80_spawned = true
-			_spawn_boss(80)
-		elif stage == 100 and not boss_100_spawned:
-			boss_100_spawned = true
-			pending_final_boss = true
-			_spawn_boss(100)
-	if stage == 100 and pending_final_boss and _count_live_bosses() == 0 and boss_100_spawned:
+		if Data.BOSSES.has(stage) and not boss_spawned.has(stage):
+			boss_spawned[stage] = true
+			_spawn_boss(stage)
+		for special in SpecialEnemies.TYPES:
+			if SpecialEnemies.TYPES[special][1] == stage:
+				_spawn_enemy(special, _land_spawn(_random.randf_range(0, TAU), 620.0), false)
+	if stage == 100 and stage_elapsed >= WAVE_SECONDS:
+		if enemies.is_empty() and final_boss_defeated:
+			_finish_run(true)
 		return
-	if spawn_timer <= 0.0 and enemies.size() < MAX_ENEMIES:
+	var target: int = WAVE_TARGETS[10 if stage == 100 else (stage - 1) / 10]
+	if spawn_timer <= 0.0 and enemies.size() < target:
 		var base_interval := 1.25 / float(difficulty.get("spawn", 1.0))
 		spawn_timer = maxf(0.18, base_interval * (1.0 - minf(0.55, float(stage) * 0.004)))
 		var base_count := 1 + (1 if stage >= 16 and _random.randf() < 0.25 else 0)
-		var count := mini(base_count * WAVE_SPAWN_MULTIPLIER, MAX_ENEMIES - enemies.size())
+		var count := mini(maxi(base_count * WAVE_SPAWN_MULTIPLIER, ceili(target / 9.0)) if stage > 10 else base_count * WAVE_SPAWN_MULTIPLIER, target - enemies.size())
 		for n in range(count):
 			var kind := _choose_enemy_kind()
 			var angle := _random.randf_range(0.0, TAU)
@@ -1716,21 +1783,13 @@ func _land_spawn(angle: float, distance: float) -> Vector2:
 
 
 func _choose_enemy_kind() -> String:
-	var choices: Array[String] = ["normal"]
-	if stage >= 10: choices.append("runner")
-	if stage >= 20: choices.append("bomber")
-	if stage >= 25: choices.append("spitter")
-	if stage >= 35: choices.append("brute")
-	var weights: Array[float] = []
-	for id in choices:
-		weights.append(0.46 if id == "normal" else 0.16 if id == "runner" else 0.12 if id == "bomber" else 0.14 if id == "spitter" else 0.12)
-	var total_weight: float = 0.0
-	for weight in weights: total_weight += weight
-	var roll: float = _random.randf() * total_weight
-	for i in range(choices.size()):
-		roll -= weights[i]
-		if roll <= 0.0: return choices[i]
-	return choices.back()
+	if stage < 5 or _random.randf() >= minf(0.092, stage * 0.001):
+		return "normal"
+	var choices: Array[String] = []
+	for kind in SpecialEnemies.TYPES:
+		if SpecialEnemies.TYPES[kind][1] <= stage:
+			choices.append(kind)
+	return choices[_random.randi_range(0, choices.size() - 1)]
 
 
 func _spawn_enemy(kind: String, pos: Vector2, is_boss: bool) -> void:
@@ -1745,7 +1804,10 @@ func _warn_enemy_once(kind: String) -> void:
 
 
 func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
-	var data: Dictionary = Data.BOSSES[100] if is_boss and stage >= 100 else Data.BOSSES[80] if is_boss and stage >= 80 else Data.BOSSES[40] if is_boss else Data.ENEMIES.get(kind, Data.ENEMIES.normal)
+	var data: Dictionary = Data.BOSSES.get(int(kind.trim_prefix("boss")), Data.BOSSES[40]) if is_boss else Data.ENEMIES.get(kind, Data.ENEMIES.normal)
+	var special := SpecialEnemies.definition(kind)
+	if not special.is_empty():
+		data = special
 	var hp := float(data.hp) * float(difficulty.get("hp", 1.0))
 	if is_boss: hp *= 1.0 + float(maxi(stage - 40, 0)) * 0.012
 	var enemy: Dictionary = enemy_pool.pop_back() if not enemy_pool.is_empty() else {}
@@ -1753,8 +1815,19 @@ func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
 	enemy.merge({"kind": kind, "name": String(data.name), "pos": pos, "hp": hp, "max_hp": hp, "speed": float(data.speed) * (1.0 + float(stage) * 0.0012), "attack": float(data.attack) * float(difficulty.get("attack", 1.0)), "color": data.color, "ranged": bool(data.get("ranged", is_boss)), "boss": is_boss, "cool": 1.0, "charge": 0.0, "target": "player", "slow": 0.0, "pattern_timer": 3.0, "reward": 8 if is_boss else 2 if kind == "normal" or kind == "runner" else 4}, true)
 	enemy_spawn_id += 1
 	enemy.spawn_id = enemy_spawn_id
-	if kind == "normal" and not is_boss:
-		enemy.variant = _random.randi_range(0, ZombieVisual.SHEETS.size() - 1)
+	if kind == "normal" or kind == "small" or not special.is_empty() or is_boss:
+		enemy.appearance = _random.randi_range(0, 49)
+		enemy.variant = int(enemy.appearance) % ZombieVisual.SHEETS.size()
+		enemy.art_scale = 3.5 if is_boss else 0.55 if kind == "small" else float(special.get("scale", 1.0))
+		enemy.special = not special.is_empty()
+		enemy.air = SpecialEnemies.airborne(kind)
+		enemy.ability = float(special.get("period", 0.0))
+		enemy.ability_cool = enemy.ability
+		if kind == "small":
+			enemy.hp *= 0.38
+			enemy.max_hp = enemy.hp
+		if kind == "S10":
+			enemy.underground = true
 		enemy.row = 0
 		enemy.moving = false
 		enemy.walk_distance = 0.0
@@ -1768,7 +1841,7 @@ func _spawn_boss(at_stage: int) -> void:
 	stage = at_stage
 	var angle := _random.randf_range(0, TAU)
 	var spawn_at := _land_spawn(angle, 650.0)
-	var kind := "boss40" if at_stage == 40 else "boss80" if at_stage == 80 else "boss100"
+	var kind := "boss%d" % at_stage
 	_spawn_enemy(kind, spawn_at, true)
 	stage = old_stage
 	_show_toast("보스 출현 · %s" % String(Data.BOSSES[at_stage].name))
@@ -1788,22 +1861,34 @@ func _update_enemies(delta: float) -> void:
 	for index in range(structures.size()):
 		if structures[index].kind == "wall" and float(structures[index].hp) > 0.0:
 			walls.append(index)
+	enemy_update_group = (enemy_update_group + 1) % 4
+	var crowd := enemies.size() >= 500
 	for i in range(enemies.size() - 1, -1, -1):
 		var e: Dictionary = enemies[i]
 		var previous_pos: Vector2 = e.pos
-		var animated := e.has("variant")
-		var body_radius := ZombieVisual.RADIUS if animated else 11.0
-		e.cool = maxf(0.0, float(e.cool) - delta)
-		e.slow = maxf(0.0, float(e.slow) - delta)
-		if e.has("strike_remaining"):
-			_resolve_normal_strike(e, delta)
+		var step := delta + float(e.get("pending_step", 0.0))
+		if crowd and not e.get("special", false) and not e.boss and not e.has("strike_remaining") and previous_pos.distance_squared_to(player_pos) > 120.0 * 120.0 and previous_pos.distance_squared_to(hq_pos) > 115.0 * 115.0 and int(e.spawn_id) % 4 != enemy_update_group:
+			e.pending_step = step
 			continue
-		if bool(e.boss): _update_boss_pattern(e, delta)
+		if e.has("pending_step"):
+			e.erase("pending_step")
+		if (e.has("burn") or e.has("poison")) and _tick_enemy_status(e, i):
+			continue
+		var animated := e.has("variant")
+		var body_radius := PlayerProjectiles.enemy_radius(e)
+		if e.get("special", false) and _update_special(e, i, step):
+			continue
+		e.cool = maxf(0.0, float(e.cool) - step)
+		e.slow = maxf(0.0, float(e.slow) - step)
+		if e.has("strike_remaining"):
+			_resolve_normal_strike(e, step)
+			continue
+		if bool(e.boss): _update_boss_pattern(e, step)
 		if String(e.kind) == "bomber":
 			var d_player: float = e.pos.distance_to(player_pos)
 			var d_hq: float = e.pos.distance_to(hq_pos)
 			if float(e.charge) > 0.0:
-				e.charge -= delta
+				e.charge -= step
 				if e.charge <= 0.0:
 					_explode_bomber(e)
 					_remove_enemy(i)
@@ -1812,13 +1897,13 @@ func _update_enemies(delta: float) -> void:
 				e.charge = 0.72
 				e.target = "player" if d_player < d_hq else "hq"
 			continue
-		var d_to_player: float = e.pos.distance_to(player_pos)
-		var d_to_hq: float = e.pos.distance_to(hq_pos)
-		var target_player: bool = d_to_player < d_to_hq and d_to_player < 440.0
+		var d_to_player: float = e.pos.distance_squared_to(player_pos)
+		var d_to_hq: float = e.pos.distance_squared_to(hq_pos)
+		var target_player: bool = treatment_remaining <= 0.0 and d_to_player < d_to_hq and d_to_player < 440.0 * 440.0
 		e.target = "player" if target_player else "hq"
 		var target_pos: Vector2 = player_pos if target_player else hq_pos
 		var target_structure := -1 if target_player else hq_index
-		if not bool(e.ranged) and not walls.is_empty():
+		if not bool(e.ranged) and not walls.is_empty() and not e.get("air", false) and previous_pos.distance_squared_to(hq_pos) <= 440.0 * 440.0:
 			var wall := int(_first_wall_hit(e.pos, target_pos).index)
 			if wall < 0:
 				wall = _priority_wall(e.pos, walls)
@@ -1826,12 +1911,12 @@ func _update_enemies(delta: float) -> void:
 				target_structure = wall
 				e.target = "wall"
 				target_pos = _entry_world_center(structures[wall])
-		var dist: float = e.pos.distance_to(target_pos)
-		if animated and dist > 0.01:
+		var dist_squared: float = e.pos.distance_squared_to(target_pos)
+		if animated and dist_squared > 0.0001:
 			e.row = ZombieVisual.facing_row(target_pos - e.pos)
-		if bool(e.ranged) and dist < 390.0:
+		if bool(e.ranged) and dist_squared < 390.0 * 390.0:
 			if float(e.charge) > 0.0:
-				e.charge -= delta
+				e.charge -= step
 				if e.charge <= 0.0:
 					_launch_enemy_shot(e, e.get("warn_pos", target_pos))
 					e.cool = 2.0 if not bool(e.boss) else 1.35
@@ -1840,14 +1925,100 @@ func _update_enemies(delta: float) -> void:
 				e.warn_pos = target_pos
 				e.cool = 2.6
 		else:
-			_update_melee_enemy(e, target_pos, target_structure, body_radius, delta)
-		if e.target == "player" and e.pos.distance_to(player_pos) < 22.0 and float(e.charge) <= 0.0 and not bool(e.ranged):
+			_update_melee_enemy(e, target_pos, target_structure, body_radius, step)
+		if e.target == "player" and e.pos.distance_squared_to(player_pos) < 22.0 * 22.0 and float(e.charge) <= 0.0 and not bool(e.ranged):
 			e.pos += (e.pos - player_pos).normalized() * 6.0
 		if animated:
 			var traveled := previous_pos.distance_to(e.pos)
 			e.moving = traveled > 0.001
 			e.walk_distance += traveled
 	_play_zombie_ambient()
+
+
+func _update_special(enemy: Dictionary, index: int, delta: float) -> bool:
+	var kind := String(enemy.kind)
+	var point: Vector2 = enemy.pos
+	var hq := _hq_position()
+	var goal := player_pos if point.distance_squared_to(player_pos) < point.distance_squared_to(hq) and treatment_remaining <= 0.0 else hq
+	var distance := point.distance_to(goal)
+	enemy.ability_cool = maxf(0.0, float(enemy.ability_cool) - delta)
+	if kind == "S09":
+		enemy.hp = minf(float(enemy.max_hp), float(enemy.hp) + delta * float(enemy.max_hp) * 0.055)
+	if kind == "S10" and enemy.get("underground", false):
+		if enemy.ability_cool <= 0.0 or distance <= 84.0:
+			enemy.underground = false
+		else:
+			enemy.pos = point.move_toward(hq, 112.0 * delta)
+			return true
+	if kind == "S05" and distance <= 53.0:
+		enemy.target = "player" if goal == player_pos else "hq"
+		enemy.charge = float(enemy.charge) + delta
+		if enemy.charge >= float(enemy.ability):
+			_explode_bomber(enemy)
+			_remove_enemy(index)
+		return true
+	if float(enemy.ability) <= 0.0 or float(enemy.ability_cool) > 0.0:
+		return false
+	if kind in ["S06", "S15", "S19"] and distance < 280.0:
+		if toxin_zones.size() < 24:
+			toxin_zones.append({"pos": goal, "life": 3.5, "tick": 0.0, "damage": float(enemy.attack) * 0.32, "slime": kind == "S19"})
+	elif kind == "S08":
+		for nearby in enemies:
+			if nearby.pos.distance_squared_to(point) < 170.0 * 170.0:
+				nearby.rage_until = run_seconds + 4.0
+	elif kind == "S11" and point.distance_to(hq) < 410.0 and tunnel_routes.size() < 8:
+		tunnel_routes.append({"entry": point, "exit": hq + Vector2(56, 94), "life": 4.0, "cool": 0.0, "used": 0})
+	elif kind == "S12" and distance < 160.0:
+		var landing := point.move_toward(goal, 112.0)
+		if jeju_map.walkable(landing, 24.0) and _blocking_structure(landing, 21.0) < 0:
+			enemy.pos = landing
+	elif kind == "S16":
+		for structure in structures:
+			if _is_turret(structure.kind) and _entry_world_center(structure).distance_squared_to(point) < 175.0 * 175.0:
+				structure.cool = maxf(float(structure.cool), 2.8)
+	enemy.ability_cool = enemy.ability
+	return false
+
+
+func _update_tunnels(delta: float) -> void:
+	for i in range(tunnel_routes.size() - 1, -1, -1):
+		var route := tunnel_routes[i]
+		route.life -= delta
+		route.cool -= delta
+		if route.life <= 0.0 or route.used >= 4:
+			tunnel_routes.remove_at(i)
+			continue
+		if route.cool > 0.0:
+			continue
+		for nearby in enemies:
+			if nearby.kind != "normal" or nearby.pos.distance_squared_to(route.entry) >= 140.0 * 140.0:
+				continue
+			var exit: Vector2 = route.exit + Vector2(float(route.used) * 18.0, 0)
+			if _blocking_structure(exit, ZombieVisual.RADIUS) >= 0:
+				exit = route.exit + Vector2(-72, 42)
+			if _blocking_structure(exit, ZombieVisual.RADIUS) < 0:
+				nearby.pos = exit
+				route.used += 1
+				route.cool = 0.45
+			break
+
+
+func _update_toxins(delta: float) -> void:
+	player_slime = maxf(0.0, player_slime - delta)
+	for i in range(toxin_zones.size() - 1, -1, -1):
+		var zone := toxin_zones[i]
+		zone.life -= delta
+		if zone.life <= 0.0:
+			toxin_zones.remove_at(i)
+			continue
+		zone.tick -= delta
+		if zone.tick <= 0.0:
+			zone.tick = 0.5
+			if player_pos.distance_squared_to(zone.pos) <= 52.0 * 52.0:
+				if zone.slime:
+					player_slime = 0.8
+				else:
+					_player_take_damage(zone.damage, "독성 지대")
 
 
 func _first_wall_hit(start: Vector2, end: Vector2, padding := 0.0) -> Dictionary:
@@ -1905,13 +2076,14 @@ func _priority_wall(point: Vector2, walls: Array[int]) -> int:
 
 func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: int, body_radius: float, delta: float) -> void:
 	var toward: Vector2 = target - enemy.pos
+	var rage: bool = float(enemy.get("rage_until", -1.0)) > run_seconds or (enemy.get("kind", "") == "S20" and float(enemy.hp) < float(enemy.max_hp) * 0.35)
 	if target_structure >= 0:
 		var kind := String(structures[target_structure].kind)
 		var width := 2 if kind == "hq" or _is_building(kind) else 1
 		if _structure_overlap_depth(enemy.pos, target, width, body_radius + 5.0) >= 0.0:
 			_strike_structure(enemy, target_structure)
 			return
-	elif toward.length_squared() <= 30.0 * 30.0:
+	elif toward.length_squared() <= pow(_enemy_melee_reach(enemy), 2):
 		if float(enemy.cool) <= 0.0:
 			if enemy.has("variant"):
 				_queue_normal_strike(enemy, toward)
@@ -1919,33 +2091,47 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 				_apply_enemy_melee_to_player(enemy)
 			enemy.cool = 0.65 if enemy.boss else 1.0
 		return
-	var speed := float(enemy.speed) * (0.48 if float(enemy.slow) > 0.0 else 1.0)
+	var speed := float(enemy.speed) * (float(enemy.get("slow_factor", 0.48)) if float(enemy.slow) > 0.0 else 1.0) * (1.55 if rage else 1.0)
 	var movement := toward.normalized() * speed * delta
 	var radius := 24.0 if enemy.boss else body_radius
 	var proposed: Vector2 = enemy.pos + movement
+	if enemy.get("air", false):
+		enemy.pos = proposed
+		return
 	if not jeju_map.walkable(proposed, radius):
+		var found := false
 		var followed := float(enemy.get("terrain_side", 1.0 if int(enemy.spawn_id) % 2 == 0 else -1.0))
 		for angle in [0.72 * followed, 1.42 * followed, -0.72 * followed, -1.42 * followed]:
 			var alternate: Vector2 = enemy.pos + movement.rotated(angle)
 			if jeju_map.walkable(alternate, radius):
 				proposed = alternate
 				enemy.terrain_side = signf(angle)
+				found = true
 				break
-	if not jeju_map.walkable(proposed, radius):
-		return
-	var blocker := _blocking_structure(proposed, radius)
+		if not found:
+			return
+	var blocker := _blocking_structure(proposed, radius) if proposed.length_squared() < 465.0 * 465.0 else -1
 	if blocker < 0:
 		enemy.pos = proposed
 	else:
 		_strike_structure(enemy, blocker)
 
 
+func _enemy_melee_reach(enemy: Dictionary) -> float:
+	return 30.0 + maxf(0.0, float(enemy.get("art_scale", 1.0)) - 1.0) * 8.0
+
+
+func _enemy_attack_power(enemy: Dictionary) -> float:
+	var rage: bool = float(enemy.get("rage_until", -1.0)) > run_seconds or (enemy.get("kind", "") == "S20" and float(enemy.hp) < float(enemy.max_hp) * 0.35)
+	return float(enemy.attack) * (1.45 if rage else 1.0)
+
+
 func _apply_enemy_melee_to_player(enemy: Dictionary) -> void:
-	var wall := int(_first_wall_hit(enemy.pos, player_pos).index)
+	var wall := -1 if enemy.get("air", false) else int(_first_wall_hit(enemy.pos, player_pos).index)
 	if wall >= 0:
 		_damage_structure(wall, float(enemy.attack))
 	else:
-		_player_take_damage(float(enemy.attack), "적의 근접 공격")
+		_player_take_damage(_enemy_attack_power(enemy), "적의 근접 공격")
 
 
 func _strike_structure(enemy: Dictionary, index: int) -> void:
@@ -1955,7 +2141,7 @@ func _strike_structure(enemy: Dictionary, index: int) -> void:
 	if enemy.has("variant"):
 		_queue_normal_strike(enemy, toward, structures[index])
 	else:
-		_damage_structure(index, float(enemy.attack))
+		_damage_structure(index, _enemy_attack_power(enemy) * (1.85 if enemy.kind == "S04" else 1.0))
 	enemy.cool = 1.15
 
 
@@ -1974,7 +2160,7 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 	enemy.erase("strike_target")
 	if target == null:
 		var offset: Vector2 = player_pos - enemy.pos
-		if offset.length_squared() <= 30.0 * 30.0 and offset.dot(enemy.attack_direction) >= 0.0:
+		if offset.length_squared() <= pow(_enemy_melee_reach(enemy), 2) and offset.dot(enemy.attack_direction) >= 0.0:
 			_apply_enemy_melee_to_player(enemy)
 		return
 	for index in range(structures.size()):
@@ -1982,9 +2168,9 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 			continue
 		var kind := String(target.kind)
 		var width := 2 if kind == "hq" or _is_building(kind) else 1
-		if _structure_overlap_depth(enemy.pos, _entry_world_center(target), width, ZombieVisual.RADIUS + 5.0) >= 0.0:
-			var wall := int(_first_wall_hit(enemy.pos, _entry_world_center(target)).index)
-			_damage_structure(wall if wall >= 0 else index, float(enemy.attack))
+		if _structure_overlap_depth(enemy.pos, _entry_world_center(target), width, (24.0 if enemy.boss else PlayerProjectiles.enemy_radius(enemy)) + 5.0) >= 0.0:
+			var wall := -1 if enemy.get("air", false) else int(_first_wall_hit(enemy.pos, _entry_world_center(target)).index)
+			_damage_structure(wall if wall >= 0 else index, _enemy_attack_power(enemy) * (1.85 if enemy.kind == "S04" else 1.0))
 		return
 
 
@@ -2055,9 +2241,89 @@ func _explode_bomber(enemy: Dictionary) -> void:
 	_show_toast("자폭체 폭발 · 경고 원에서 벗어나세요.")
 
 
+func _apply_status(enemy: Dictionary, key: String, seconds: float, damage: float) -> void:
+	var effect: Dictionary = enemy.get(key, {})
+	enemy[key] = {"until": run_seconds + seconds, "tick": float(effect.get("tick", run_seconds + 0.45)), "damage": damage}
+	_mark_csv_trigger(key)
+
+
+func _tick_enemy_status(enemy: Dictionary, index: int) -> bool:
+	for element in ["burn", "poison"]:
+		if not enemy.has(element):
+			continue
+		var effect: Dictionary = enemy[element]
+		if float(effect.until) <= run_seconds:
+			enemy.erase(element)
+		elif float(effect.tick) <= run_seconds:
+			effect.tick = run_seconds + 0.45
+			var spawn_id: int = enemy.spawn_id
+			_damage_enemy(index, float(effect.damage), "status")
+			if float(enemy.hp) <= 0.0 or int(enemy.spawn_id) != spawn_id:
+				return true
+	return false
+
+
+func _status_damage_bonus(enemy: Dictionary) -> float:
+	var bonus := 0.0
+	var count := 0
+	for status in ["burn", "poison", "shock", "freeze"]:
+		if enemy.has(status) and float(enemy[status].until) > run_seconds:
+			bonus += _csv_bonus(status + "_target")
+			count += 1
+	if count > 0: bonus += _csv_bonus("status_target")
+	if count > 1: bonus += _csv_bonus("multistatus_target")
+	return bonus
+
+
+func _apply_weapon_status(enemy: Dictionary, damage: float) -> void:
+	for key in ["burn", "poison", "shock", "explosion"]:
+		var percent := _csv_bonus(key + "_chance")
+		if percent <= 0.0 or _random.randf() >= minf(0.8, percent / 100.0):
+			continue
+		if key == "explosion":
+			if pending_skill_blasts.size() < 20:
+				pending_skill_blasts.append({"pos": enemy.pos, "damage": damage * 0.3 * _csv_factor("blast_damage")})
+			_mark_csv_trigger(key)
+		elif key == "shock":
+			_apply_status(enemy, key, 2.0, 0.0)
+			enemy.hp = float(enemy.hp) - damage * 0.25 * _csv_factor("shock_damage")
+		else:
+			_apply_status(enemy, key, 2.5 * _csv_factor(key + "_time"), damage * 0.13 * _csv_factor(key + "_damage"))
+
+
+func _resolve_skill_blasts() -> void:
+	while not pending_skill_blasts.is_empty():
+		var blast: Dictionary = pending_skill_blasts.pop_back()
+		_explode_damage_center(blast.pos, 64.0 * _csv_factor("blast_radius"), blast.damage, "augment_blast")
+		if effects.size() < 80:
+			effects.append({"a": blast.pos, "b": blast.pos, "time": 0.18, "color": Color("#a1b86b"), "blast": true})
+
+
 func _damage_enemy(index: int, amount: float, source: String) -> void:
 	if index < 0 or index >= enemies.size(): return
 	var enemy: Dictionary = enemies[index]
+	if enemy.get("underground", false):
+		return
+	if enemy.kind == "S02":
+		amount *= 0.58
+	if source in ["player", "chainsaw", "drone"]:
+		var bonus := _status_damage_bonus(enemy)
+		if enemy.get("special", false): bonus += _csv_bonus("combat_drone_special" if source == "drone" else "special_damage")
+		if enemy.boss: bonus += _csv_bonus("combat_drone_boss" if source == "drone" else "boss_damage")
+		if enemy.get("air", false): bonus += _csv_bonus("air_damage")
+		if enemy.kind == "S02": bonus += _csv_bonus("armored_damage")
+		if float(enemy.hp) < float(enemy.max_hp) * 0.35: bonus += _csv_bonus("low_damage")
+		if source != "drone":
+			bonus += _csv_bonus("base_damage" if player_pos.distance_squared_to(_hq_position()) <= 264.0 * 264.0 else "outside_damage")
+			if run_seconds - last_dash_at < 5.0: bonus += _csv_bonus("after_dash_damage")
+			if run_seconds - last_reload_at < 5.0: bonus += _csv_bonus("after_reload")
+			if player_motion.length_squared() > 36.0: bonus += _csv_bonus("on_move_damage")
+			if _csv_bonus("crit") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("crit") / 100.0):
+				amount *= 1.5 + _csv_bonus("crit_damage") / 100.0
+				last_crit_at = run_seconds
+		amount *= 1.0 + bonus / 100.0
+		if source != "drone" and (csv_passive.has("burn_chance") or csv_passive.has("poison_chance") or csv_passive.has("shock_chance") or csv_passive.has("explosion_chance")):
+			_apply_weapon_status(enemy, amount)
 	if bool(enemy.get("boss", false)) and float(enemy.get("guard", 0.0)) > 0.0:
 		amount *= 0.4
 		enemy.guard = maxf(0.0, float(enemy.guard) - 0.28)
@@ -2066,25 +2332,41 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 		var point: Vector2 = enemy.pos
 		var angle := player_pos.angle_to_point(point)
 		effects.append({"a": point, "b": point, "time": HIT_SPARK_TIME, "hit_angle": angle,
-			"color": Color("#ffb34f") if source == "chainsaw" else Color("#f8d4aa")})
+			"color": Color("#ffb34f") if source == "chainsaw" else Color("#9abc75")})
 	if amount > 0.0 and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 1.18)
 	if float(enemy.hp) <= 0.0:
-		var reward := int(round(float(enemy.reward) * player_mod_salvage))
+		last_kill_at = run_seconds
+		_mark_csv_trigger("kill")
+		if source != "augment_blast" and _csv_bonus("kill_blast") > 0.0 and pending_skill_blasts.size() < 20:
+			pending_skill_blasts.append({"pos": enemy.pos, "damage": amount * _csv_bonus("kill_blast") / 100.0})
+		var reward_scale := _csv_factor("money") + _csv_bonus("boss_money" if enemy.boss else "special_money" if enemy.get("special", false) else "") / 100.0
+		var reward := int(round(float(enemy.reward) * player_mod_salvage * reward_scale))
+		if treatment_remaining <= 0.0:
+			if _csv_bonus("kill_heal") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("kill_heal") / 100.0):
+				player_hp = minf(player_max_hp, player_hp + player_max_hp * 0.04 * _csv_factor("heal"))
+			if source == "chainsaw":
+				player_hp = minf(player_max_hp, player_hp + _csv_bonus("saw_kill_heal") / 100.0 * amount)
 		money += reward
 		kills += 1
-		player_xp += (16.0 if bool(enemy.boss) else 4.0 if enemy.kind != "normal" else 2.6) * player_mod_xp * (1.0 + float(research_bonus) * 0.05)
+		player_xp += (16.0 if bool(enemy.boss) else 4.0 if enemy.kind != "normal" else 2.6) * player_mod_xp * (_csv_factor("xp") + _csv_bonus("boss_xp" if enemy.boss else "special_xp" if enemy.get("special", false) else "") / 100.0) * (1.0 + float(research_bonus) * 0.05)
 		if bool(enemy.boss):
 			boss_kills += 1
 			medals += 12
+			augment_queue += 2
 			if String(enemy.kind) == "boss100":
-				pending_final_boss = false
-				_finish_run(true)
-				return
-		elif String(enemy.kind) != "normal":
+				final_boss_defeated = true
+		elif enemy.get("special", false):
 			medals += 1
+			augment_queue += 1
+		var split: bool = enemy.kind == "S18"
+		var split_at: Vector2 = enemy.pos
 		_remove_enemy(index)
+		if split:
+			for piece in range(3):
+				if enemies.size() >= MAX_ENEMIES: break
+				_spawn_enemy("small", split_at + Vector2.from_angle(piece * TAU / 3.0) * 25.0, false)
 		_check_level_up()
 	elif enemy.has("variant"):
 		enemy.hit_until = run_seconds + ZombieVisual.HIT_TIME
@@ -2094,7 +2376,7 @@ func _remove_enemy(index: int) -> void:
 	if index < 0 or index >= enemies.size(): return
 	var dead: Dictionary = enemies[index]
 	enemies.remove_at(index)
-	if dead.has("variant") and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_ENEMIES:
+	if dead.has("variant") and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_CORPSES:
 		zombie_corpses.append({"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds})
 	if enemy_pool.size() < MAX_ENEMIES: enemy_pool.append(dead)
 
@@ -2110,10 +2392,10 @@ func _zombie_on_screen(point: Vector2, padding := 48.0) -> bool:
 	return Rect2((size - visible_size) * 0.5, visible_size).grow(padding).has_point(point)
 
 
-func _explode_damage_center(center: Vector2, radius: float, damage: float) -> void:
+func _explode_damage_center(center: Vector2, radius: float, damage: float, source := "blast") -> void:
 	for i in range(enemies.size() - 1, -1, -1):
 		if enemies[i].pos.distance_to(center) <= radius:
-			_damage_enemy(i, damage, "blast")
+			_damage_enemy(i, damage, source)
 
 
 func _install_repair_drone() -> void:
@@ -2135,11 +2417,11 @@ func _install_repair_drone() -> void:
 
 
 func _repair_drone_upgrade_cost() -> int:
-	return 30 + repair_drone_level * 24
+	return roundi((30 + repair_drone_level * 24) * 1.30)
 
 
 func _upgrade_repair_drone() -> void:
-	if repair_drone_level <= 0 or repair_drone_level >= 5:
+	if repair_drone_level <= 0 or repair_drone_level >= 11:
 		return
 	var price := _repair_drone_upgrade_cost()
 	if money < price:
@@ -2156,15 +2438,22 @@ func _update_repair_drone(delta: float) -> void:
 	if repair_drone_level <= 0:
 		return
 	repair_drone_cooldown = maxf(0.0, repair_drone_cooldown - delta)
-	var target := _nearest_structure(repair_drone_pos, INF, true)
+	var target := _hq_index()
+	if target < 0 or float(structures[target].hp) <= 0.0 or float(structures[target].hp) >= float(structures[target].max_hp):
+		target = _nearest_structure(repair_drone_pos, INF, true)
 	var destination := _hq_position() + Vector2.from_angle(run_seconds * 0.6) * 105.0
 	if target >= 0:
 		destination = _entry_world_center(structures[target])
-	repair_drone_pos = repair_drone_pos.move_toward(destination, 150.0 * delta)
+	repair_drone_pos = repair_drone_pos.move_toward(destination, 150.0 * delta * _csv_factor("drone_move"))
 	if target >= 0 and repair_drone_cooldown <= 0.0 and repair_drone_pos.distance_to(destination) <= 29.0:
 		var facility := structures[target]
-		facility.hp = minf(float(facility.max_hp), float(facility.hp) + 24.0 * repair_drone_level)
-		repair_drone_cooldown = 1.0
+		var key := "wall_repair" if facility.kind == "wall" else "hq_repair" if facility.kind == "hq" else "facility_repair"
+		var bonus := _csv_bonus(key) + (_csv_bonus("clinic_repair") if facility.kind == "clinic" else 0.0)
+		if float(facility.hp) < float(facility.max_hp) * 0.35: bonus += _csv_bonus("drone_low")
+		facility.hp = minf(float(facility.max_hp), float(facility.hp) + 12.0 * repair_drone_level * (_csv_factor("drone_repair") + bonus / 100.0))
+		_mark_csv_trigger("repair")
+		_mark_csv_trigger(String(facility.kind))
+		repair_drone_cooldown = 1.0 / _csv_factor("drone_repair_rate")
 		if effects.size() < 80:
 			effects.append({"a": repair_drone_pos + Vector2(0, -30), "b": destination, "time": 0.22, "color": PALETTE.green})
 
@@ -2179,37 +2468,61 @@ func _update_turrets(delta: float) -> void:
 		var pos := _entry_world_center(s)
 		if kind == "hq": continue
 		var def := _build_definition(kind)
-		var turret_range := float(def.get("range", 330.0)) * player_mod_range
+		var turret_range := float(def.get("range", 330.0)) * player_mod_range * (_csv_factor("turret_range") + _csv_bonus(kind + "_range") / 100.0)
 		if kind == "outpost": turret_range = 390.0
 		if float(s.cool) > 0.0: continue
-		var target_index := _nearest_enemy(pos, turret_range)
+		var target_index := _nearest_enemy(pos, turret_range, -1, kind == "aa")
 		if target_index < 0: continue
 		var target_pos: Vector2 = enemies[target_index].pos
-		var fire_rate := float(def.get("rate", 1.0)) / player_mod_turret_rate
+		var fire_rate := float(def.get("rate", 1.0)) / (player_mod_turret_rate * (_csv_factor("turret_rate") + _csv_bonus(kind + "_rate") / 100.0))
 		s.cool = maxf(0.12, fire_rate / (1.0 + float(s.level - 1) * 0.12))
-		var damage := float(def.get("damage", 20.0)) * (1.0 + float(s.level - 1) * 0.34) * player_mod_turret_damage
-		if kind == "outpost": damage = 18.0 * player_mod_turret_damage
+		var damage := float(def.get("damage", 20.0)) * 0.5 * (1.0 + float(s.level - 1) * 0.408) * player_mod_turret_damage * (_csv_factor("turret_damage") + _csv_bonus(kind + "_damage") / 100.0)
+		if kind == "outpost": damage = 9.0 * player_mod_turret_damage
+		if pos.distance_squared_to(_hq_position()) <= 220.0 * 220.0:
+			damage *= _csv_factor("hq_turret")
+		if _csv_bonus("turret_crit") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("turret_crit") / 100.0):
+			damage *= 1.5 + _csv_bonus("turret_crit_damage") / 100.0
+		_mark_csv_trigger("turret")
+		_mark_csv_trigger(kind)
 		if kind == "rocket":
-			_explode_damage_center(target_pos, 82.0, damage * 0.72)
-			effects.append({"a": pos, "b": target_pos, "time": 0.22, "color": PALETTE.red, "blast": true})
+			_explode_damage_center(target_pos, 82.0 * (_csv_factor("blast_radius") + _csv_bonus("rocket_radius") / 100.0), damage * 0.72 * _csv_factor("blast_damage"))
+			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.22, "color": PALETTE.red, "blast": true})
 		elif kind == "electric":
 			_damage_enemy(target_index, damage, "turret")
-			var skip_index := target_index if target_index < enemies.size() and enemies[target_index].pos.distance_to(target_pos) < 0.5 else -1
-			var secondary := _nearest_enemy(target_pos, 94.0, skip_index)
-			if secondary >= 0: _damage_enemy(secondary, damage * 0.55, "chain")
+			var struck := target_pos
+			for jump in range(1 + mini(5, int(_csv_bonus("electric_targets")))):
+				var skip_index := target_index if target_index < enemies.size() and enemies[target_index].pos.distance_squared_to(struck) < 0.25 else -1
+				target_index = _nearest_enemy(struck, 94.0 * _csv_factor("electric_range"), skip_index)
+				if target_index < 0: break
+				struck = enemies[target_index].pos
+				_damage_enemy(target_index, damage * pow(0.55, jump + 1), "chain")
 			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.16, "color": PALETTE.blue})
+		elif kind == "flame":
+			var direction := pos.direction_to(target_pos)
+			var threshold := cos(deg_to_rad(minf(78.0, 28.0 * _csv_factor("flame_angle"))))
+			for i in range(enemies.size() - 1, -1, -1):
+				var offset: Vector2 = enemies[i].pos - pos
+				if offset.length_squared() <= turret_range * turret_range and offset.normalized().dot(direction) >= threshold:
+					_apply_status(enemies[i], "burn", 2.0 * _csv_factor("burn_time"), damage * 0.15 * _csv_factor("burn_damage"))
+					_damage_enemy(i, damage, "turret")
+			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.12, "color": Color("#ef9154")})
 		else:
 			_damage_enemy(target_index, damage, "turret")
 			if kind == "freeze" and target_index < enemies.size() and enemies[target_index].pos.distance_to(target_pos) < 0.5:
-				enemies[target_index].slow = 2.2
+				var cold := enemies[target_index]
+				cold.slow = 2.2 * _csv_factor("freeze_time")
+				_apply_status(cold, "freeze", cold.slow, 0.0)
+				cold.slow_factor = maxf(0.1, 0.48 - _csv_bonus("freeze_strength") / 100.0)
+				if _random.randf() < minf(0.8, 0.08 + _csv_bonus("freeze_chance") / 100.0):
+					cold.slow_factor = 0.0
 			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.11, "color": def.get("color", PALETTE.gold)})
 
 
-func _nearest_enemy(pos: Vector2, range: float, skip := -1) -> int:
+func _nearest_enemy(pos: Vector2, range: float, skip := -1, air_only := false) -> int:
 	var nearest := -1
 	var nearest_dist := range
 	for i in range(enemies.size()):
-		if i == skip or enemies[i].hp <= 0.0: continue
+		if i == skip or enemies[i].hp <= 0.0 or enemies[i].get("underground", false) or (air_only and not enemies[i].get("air", false)): continue
 		var dist: float = pos.distance_to(enemies[i].pos)
 		if dist <= range and (nearest < 0 or dist < nearest_dist):
 			nearest_dist = dist
@@ -2263,83 +2576,195 @@ func _update_effects(delta: float) -> void:
 		if float(effects[i].time) <= 0.0: effects.remove_at(i)
 
 
+func _living_facility(kind: String) -> int:
+	for index in range(structures.size()):
+		if structures[index].kind == kind and float(structures[index].hp) > 0.0:
+			return index
+	return -1
+
+
 func _update_facilities(delta: float) -> void:
-	for s in structures:
-		if float(s.hp) <= 0.0: continue
-		var kind := String(s.kind)
-		if kind == "clinic" and player_pos.distance_to(_entry_world_center(s)) <= 245.0:
-			player_hp = minf(player_max_hp, player_hp + delta * 2.8)
-		elif kind == "supply":
-			income_timer += delta
-			if income_timer >= 24.0:
-				income_timer = 0.0
-				money += 18
-		elif kind == "research": research_bonus = 1
-		elif kind == "workshop": player_mod_turret_damage = maxf(player_mod_turret_damage, 1.12)
+	clinic_shield = maxf(0.0, clinic_shield - delta)
+	var clinic := _living_facility("clinic")
+	if player_hp > 0.0 and treatment_remaining <= 0.0 and _csv_bonus("regen") > 0.0:
+		player_hp = minf(player_max_hp, player_hp + delta * _csv_bonus("regen") * player_max_hp / 100.0)
+	if treatment_remaining > 0.0:
+		if clinic < 0:
+			_finish_run(false)
+			return
+		treatment_remaining = maxf(0.0, treatment_remaining - delta)
+		if treatment_remaining == 0.0:
+			player_pos = _hq_position() + Vector2(0, CELL)
+			player_hp = player_max_hp
+			clinic_shield = _csv_bonus("clinic_invulnerability")
+			_mark_csv_trigger("clinic")
+			_show_toast("치료 완료 · 지휘본부 복귀")
+	elif clinic >= 0 and player_hp > 0.0 and player_pos.distance_to(_entry_world_center(structures[clinic])) <= 245.0:
+		player_hp = minf(player_max_hp, player_hp + delta * 2.8 * _csv_factor("heal") * (_csv_factor("low_heal") if player_hp < player_max_hp * 0.35 else 1.0))
+	if expedition_remaining > 0.0:
+		var depot := _living_facility("supply")
+		if depot < 0:
+			expedition_remaining = 0.0
+			_show_toast("파견 시설 파괴 · 파견 중단")
+		else:
+			expedition_remaining = maxf(0.0, expedition_remaining - delta)
+			if expedition_remaining == 0.0:
+				var chance := clampf(0.88 - difficulty_index * 0.09 + mercenary_level * 0.025 + _csv_bonus("expedition_chance") / 100.0, 0.10, 0.98)
+				var reward := roundi(35.0 * (1.0 + difficulty_index * 0.33 + mercenary_level * 0.12) * (1.0 + float(structures[depot].level - 1) * 0.08) * _csv_factor("expedition_reward"))
+				_mark_csv_trigger("expedition")
+				if _random.randf() < chance:
+					money += reward
+					_show_toast("용병 파견 성공 · 보급품 +%d" % reward)
+				else:
+					_show_toast("용병 파견 실패")
+	if _living_facility("research") >= 0: research_bonus = 1
+	if _living_facility("workshop") >= 0: player_mod_turret_damage = maxf(player_mod_turret_damage, 1.12)
 
 
-func _update_progress(delta: float) -> void:
-	if player_hp <= 0.0:
-		_finish_run(false)
+func _start_expedition() -> void:
+	var depot := _living_facility("supply")
+	if depot < 0 or expedition_remaining > 0.0:
+		return
+	var reduction := minf(0.8, (int(structures[depot].level) - 1) * 0.05 + mercenary_level * 0.035 + _csv_bonus("expedition_time") / 100.0)
+	expedition_remaining = (32.0 + difficulty_index * 12.0) * (1.0 - reduction)
+	_show_toast("용병 파견 시작 · %d초" % ceili(expedition_remaining))
+	_save_all()
+
+
+func _upgrade_mercenary() -> void:
+	var cost := roundi((30 + mercenary_level * 15) * _csv_reduction("mercenary_cost"))
+	if _living_facility("supply") < 0 or mercenary_level >= 10 or money < cost:
+		return
+	money -= cost
+	mercenary_level += 1
+	_open_inspector()
+	_save_all()
+
+
+func _update_progress(_delta: float) -> void:
+	if screen == "result":
 		return
 	var hq := _hq_index()
 	if hq < 0 or float(structures[hq].hp) <= 0.0:
 		_finish_run(false)
 		return
-	if player_xp >= float(player_level) * 42.0 and augments_taken < 15 and screen == "play":
-		player_xp -= float(player_level) * 42.0
-		player_level += 1
-		augments_taken += 1
-		augment_reroll_used = false
-		_offer_augments()
+	if player_hp <= 0.0 and treatment_remaining <= 0.0:
+		var clinic := _living_facility("clinic")
+		if clinic < 0:
+			_finish_run(false)
+			return
+		var reduction := minf(0.8, (int(structures[clinic].level) - 1) * 0.08 + _csv_bonus("clinic_time") / 100.0)
+		treatment_remaining = 600.0 * (1.0 - reduction)
+		player_hp = 0.0
+		player_motion = Vector2.ZERO
+		manual_trigger = false
+		_show_toast("의료소에서 치료 중 · 기지 관리는 계속할 수 있습니다.")
+	_check_level_up()
 
 
 func _check_level_up() -> void:
-	if player_xp >= float(player_level) * 42.0 and augments_taken < 15 and screen == "play":
-		player_xp -= float(player_level) * 42.0
+	while augments_taken < MAX_XP_CHOICES:
+		var required := 16.0 + player_level * 9.0 + pow(float(player_level), 1.35) * 2.2
+		if player_xp < required:
+			break
+		player_xp -= required
 		player_level += 1
 		augments_taken += 1
-		augment_reroll_used = false
+		augment_queue += 1
+	if augment_queue > 0 and screen == "play":
+		augment_reroll_used = 0
 		_offer_augments()
+
+
+func _csv_bonus(key: String) -> float:
+	var amount := float(csv_passive.get(key, 0.0))
+	if not csv_conditional.has(key):
+		return amount
+	var timed: Dictionary = csv_conditional[key]
+	for trigger in timed:
+		if float(csv_trigger_until.get(trigger, -1.0)) > run_seconds:
+			amount += float(timed[trigger])
+	return amount
+
+
+func _recent_combat_bonus(crit_key: String, kill_key: String) -> float:
+	return (_csv_bonus(crit_key) if run_seconds - last_crit_at < 5.0 else 0.0) + (_csv_bonus(kill_key) if run_seconds - last_kill_at < 5.0 else 0.0)
+
+
+func _csv_factor(key: String) -> float:
+	return 1.0 + _csv_bonus(key) / 100.0
+
+
+func _csv_reduction(key: String) -> float:
+	return 1.0 - clampf(_csv_bonus(key) / 100.0, 0.0, 0.80)
+
+
+func _mark_csv_trigger(trigger: String) -> void:
+	if not csv_conditional.is_empty():
+		csv_trigger_until[trigger] = run_seconds + 5.0
+
+
+func _rebuild_csv_stats() -> void:
+	csv_passive.clear()
+	csv_conditional.clear()
+	for card in acquired_augments.values():
+		var key := String(card.get("key", ""))
+		if key.is_empty():
+			continue
+		var amount := float(card.amount) * int(card.count)
+		var trigger := String(card.trigger)
+		if trigger.is_empty():
+			csv_passive[key] = float(csv_passive.get(key, 0.0)) + amount
+		else:
+			var timed: Dictionary = csv_conditional.get(key, {})
+			timed[trigger] = float(timed.get(trigger, 0.0)) + amount
+			csv_conditional[key] = timed
 
 
 func _eligible_augments() -> Array[Dictionary]:
 	var available: Array[Dictionary] = []
-	var hero_id := String(Data.CHARACTERS[player_index].id)
-	for card in Data.augment_catalog():
-		if String(card.get("hero", hero_id)) != hero_id:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	var built: Dictionary = {}
+	for structure in structures:
+		if float(structure.hp) > 0.0:
+			built[structure.kind] = true
+	var equipment := {"기본 포탑": "basic", "중기관총": "heavy", "로켓": "rocket", "전기 포탑": "electric", "화염 포탑": "flame", "냉기": "freeze", "냉각 포탑": "freeze",
+		"대공": "aa", "의료": "clinic", "파견": "supply"}
+	for card in AugmentCatalog.cards():
+		if card.key == "" or (card.hero != "" and card.hero != hero.id):
 			continue
-		if (card.effect == "projectile" and hero_id != "tae") or (card.effect == "pierce" and hero_id == "yujin"):
+		if int(acquired_augments.get(card.id, {}).get("count", 0)) >= int(card.limit):
 			continue
-		if card.id == Data.HARIN_MAGAZINE_AUGMENT:
-			if _magazine_augment_stacks() < Data.MAGAZINE_AUGMENT_LIMIT:
-				available.append(card)
-		elif not picked_augment_ids.has(card.id):
-			available.append(card)
+		if int(acquired_augments.get(card.requires, {}).get("count", 0)) < int(card.required_count):
+			continue
+		if int(hero.magazine) == 0 and card.family == "탄약":
+			continue
+		if equipment.has(card.family) and not built.has(equipment[card.family]):
+			continue
+		if card.family == "수리 드론" and repair_drone_level == 0:
+			continue
+		available.append(card)
 	return available
 
 
-func _offer_augments() -> void:
+func _draw_augment_offer() -> void:
 	var available := _eligible_augments()
-	while available.size() < 3:
-		available.append({"id": "field_%02d" % available.size(), "name": "현장 적응", "effect": "damage", "description": "공격 피해가 증가합니다."})
 	augment_options.clear()
-	for i in range(3):
-		var pick_index := _random.randi_range(0, available.size() - 1)
-		var card: Dictionary = available.pop_at(pick_index)
-		card["rarity"] = _pick_rarity()
-		card["stars"] = _random.randi_range(1, 5)
-		augment_options.append(card)
-	_show_screen("augment")
+	for i in range(mini(3, available.size())):
+		var ticket := _random.randf()
+		var best := _random.randi_range(0, available.size() - 1)
+		# Rarity is defined by the catalog. Sample several candidates for a rarity bias.
+		for attempt in range(3):
+			var challenger := _random.randi_range(0, available.size() - 1)
+			if ticket < 0.93 and int(available[challenger].stars) < int(available[best].stars):
+				best = challenger
+		augment_options.append(available.pop_at(best))
 
 
-func _pick_rarity() -> String:
-	var roll := _random.randf() * 100.0
-	if roll < 45: return "일반"
-	if roll < 75: return "고급"
-	if roll < 90: return "희귀"
-	if roll < 98: return "영웅"
-	return "전설"
+func _offer_augments() -> void:
+	_draw_augment_offer()
+	if not augment_options.is_empty():
+		_show_screen("augment")
 
 
 func _rebuild_augment_cards() -> void:
@@ -2352,28 +2777,54 @@ func _rebuild_augment_cards() -> void:
 	for card in augment_options:
 		var display := card.duplicate()
 		display.description = _augment_effect_text(card)
-		if card.has("hero"):
+		if String(card.get("hero", "")) != "":
 			display.name = "%s · %s" % [Data.CHARACTERS[player_index].name, card.name]
 		row.add_child(OpsUI.augment_card(display, _choose_augment.bind(card), 189.0, 158.0, true))
-	augment_reroll_button.disabled = augment_reroll_used
-	augment_reroll_button.text = "무료 리롤 사용됨" if augment_reroll_used else "무료 리롤 1회"
+	augment_reroll_button.disabled = augment_reroll_used >= 2
+	augment_reroll_button.text = "무료 리롤 %d회 남음" % (2 - augment_reroll_used)
 
 
 func _reroll_augments() -> void:
-	if augment_reroll_used: return
-	augment_reroll_used = true
-	augment_options.clear()
-	# One reroll keeps every offer distinct and keeps the specified rarity odds.
-	var available := _eligible_augments()
-	for i in range(3):
-		var card: Dictionary = available.pop_at(_random.randi_range(0, available.size() - 1))
-		card["rarity"] = _pick_rarity()
-		card["stars"] = _random.randi_range(1, 5)
-		augment_options.append(card)
+	if augment_reroll_used >= 2: return
+	augment_reroll_used += 1
+	_draw_augment_offer()
 	_rebuild_augment_cards()
 
 
+func _choose_csv_augment(card: Dictionary) -> void:
+	var previous: Dictionary = acquired_augments.get(card.id, {})
+	if not _eligible_augments().has(card):
+		return
+	var entry := card.duplicate()
+	entry.count = int(previous.get("count", 0)) + 1
+	entry.description = AugmentCatalog.description(card)
+	acquired_augments[card.id] = entry
+	_rebuild_csv_stats()
+	var hp_keys := {"hq": "hq_hp", "wall": "wall_hp", "clinic": "clinic_hp"}
+	if card.key == "hp":
+		var increase := float(Data.CHARACTERS[player_index].hp) * float(card.amount) / 100.0
+		player_max_hp += increase
+		if treatment_remaining <= 0.0: player_hp += increase
+	elif card.key in ["hq_hp", "wall_hp", "turret_hp", "facility_hp", "clinic_hp"]:
+		for item in structures:
+			var kind: String = item.kind
+			if float(item.hp) <= 0.0:
+				continue
+			var matches: bool = card.key == hp_keys.get(kind, "") or (card.key == "turret_hp" and _is_turret(kind)) or (card.key == "facility_hp" and _is_building(kind))
+			if matches:
+				var increase := float(item.max_hp) * float(card.amount) / maxf(100.0, 100.0 + _csv_bonus(card.key) - float(card.amount))
+				item.max_hp += increase
+				item.hp += increase
+	augment_queue = maxi(0, augment_queue - 1)
+	_show_screen("play")
+	_show_toast("현장 증강 · %s" % String(card.name))
+	_check_level_up()
+
+
 func _choose_augment(card: Dictionary) -> void:
+	if card.has("key"):
+		_choose_csv_augment(card)
+		return
 	var id := String(card.id)
 	if id == Data.HARIN_MAGAZINE_AUGMENT and (Data.CHARACTERS[player_index].id != "harin" or _magazine_augment_stacks() >= Data.MAGAZINE_AUGMENT_LIMIT):
 		return
@@ -2412,6 +2863,7 @@ func _choose_augment(card: Dictionary) -> void:
 		"drone": player_drone_level += 1
 		"magazine", "saw_reach": pass
 		_: player_mod_damage *= 1.06
+	augment_queue = maxi(0, augment_queue - 1)
 	_show_screen("play")
 	_show_toast("현장 증강 · %s" % String(card.name))
 
@@ -2423,11 +2875,11 @@ func _magazine_augment_stacks() -> int:
 
 func _magazine_capacity() -> int:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
-	return int(hero.magazine) + (_magazine_augment_stacks() * Data.MAGAZINE_AUGMENT_ROUNDS if hero.id == "harin" else 0)
+	return int(hero.magazine) + (int(_csv_bonus("magazine")) if int(hero.magazine) > 0 else 0) + (_magazine_augment_stacks() * Data.MAGAZINE_AUGMENT_ROUNDS if hero.id == "harin" else 0)
 
 
 func _weapon_range(hero: Dictionary) -> float:
-	var reach := float(hero.range) * player_mod_range
+	var reach := float(hero.range) * player_mod_range * _csv_factor("range")
 	if hero.id == "yujin" and picked_augment_ids.has(Data.YUJIN_REACH_AUGMENT):
 		reach += Data.SAW_REACH_BONUS
 	return reach
@@ -2438,7 +2890,7 @@ func _weapon_interval(hero: Dictionary, rate: float) -> float:
 
 
 func _weapon_damage(hero: Dictionary, multiplier: float) -> float:
-	return float(hero.damage) * multiplier * (0.45 if hero.id == "yujin" else 1.0)
+	return float(hero.damage) * multiplier * _csv_factor("damage") * (0.45 if hero.id == "yujin" else 1.0)
 
 
 func _incoming_damage_factor(hero: Dictionary, armor: float) -> float:
@@ -2455,8 +2907,8 @@ func _combat_stats() -> Dictionary:
 		"hp": player_max_hp,
 		"magazine": float(_magazine_capacity()),
 		"damage": _weapon_damage(hero, player_mod_damage),
-		"rate": 1.0 / _weapon_interval(hero, player_mod_rate),
-		"speed": float(hero.speed) * player_mod_speed,
+		"rate": 1.0 / _weapon_interval(hero, player_mod_rate * _csv_factor("rate")),
+		"speed": float(hero.speed) * player_mod_speed * _csv_factor("move"),
 		"range": _weapon_range(hero),
 		"armor": (1.0 - _incoming_damage_factor(hero, player_mod_armor)) * 100.0,
 		"build": _build_cost_factor(hero, player_mod_build) * 100.0,
@@ -2502,6 +2954,8 @@ func _operator_stat_rows() -> Array:
 
 
 func _augment_effect_text(card: Dictionary) -> String:
+	if card.has("key"):
+		return AugmentCatalog.description(card)
 	if not card.has("stars"):
 		return String(card.get("description", "")) + " · 세부 획득 기록 없음"
 	var scale := 1.0 + 0.025 * float(card.stars)
@@ -2533,8 +2987,11 @@ func _augment_effect_text(card: Dictionary) -> String:
 
 
 func _player_take_damage(amount: float, cause: String) -> void:
-	if dash_timer > 0.0: return
-	player_hp -= amount * _incoming_damage_factor(Data.CHARACTERS[player_index], player_mod_armor)
+	if dash_timer > 0.0 or treatment_remaining > 0.0: return
+	if clinic_shield > 0.0 or (_csv_bonus("evade") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("evade") / 100.0)):
+		return
+	var reduction := _csv_bonus("armor") + (_csv_bonus("low_armor") if player_hp < player_max_hp * 0.35 else 0.0)
+	player_hp -= amount * _incoming_damage_factor(Data.CHARACTERS[player_index], player_mod_armor) * (1.0 - clampf(reduction / 100.0, 0.0, 0.8))
 	if sound_on and run_seconds >= impact_sound_at:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 0.80)
@@ -2556,7 +3013,7 @@ func _damage_hq(amount: float) -> void:
 	var i := _hq_index()
 	if i < 0: return
 	var previous_hp := float(structures[i].hp)
-	structures[i].hp = maxf(0.0, previous_hp - amount)
+	structures[i].hp = maxf(0.0, previous_hp - amount * _csv_reduction("hq_armor"))
 	if previous_hp > 0.0 and float(structures[i].hp) <= 0.0:
 		_emit_structure_debris(structures[i])
 		_show_toast("지휘본부가 파괴되었습니다!")
@@ -2565,7 +3022,8 @@ func _damage_hq(amount: float) -> void:
 func _damage_structure(index: int, amount: float) -> void:
 	if index < 0 or index >= structures.size(): return
 	var previous_hp := float(structures[index].hp)
-	structures[index].hp = maxf(0.0, previous_hp - amount)
+	var reduction := _csv_reduction("wall_armor" if structures[index].kind == "wall" else "hq_armor" if structures[index].kind == "hq" else "")
+	structures[index].hp = maxf(0.0, previous_hp - amount * reduction)
 	if previous_hp > 0.0 and float(structures[index].hp) <= 0.0:
 		_emit_structure_debris(structures[index])
 		_show_toast("%s 파괴 · 슬롯 반환" % String(_build_definition(String(structures[index].kind)).get("name", structures[index].kind)))
@@ -2630,7 +3088,14 @@ func _refresh_hud() -> void:
 		if player_reload_timer > 0.0:
 			ammo += " · 재장전 중"
 		combat_label.text = "%s [Tab]  ·  %s" % ["수동" if manual_attack else "자동", ammo]
-		status_label.text = "건설 중에도 적과 시간은 계속 움직입니다." if build_open else ("좌클릭 유지: 사격" if manual_attack else "")
+		status_label.text = "치료 중 · %d초 남음" % ceili(treatment_remaining) if treatment_remaining > 0.0 else ("좌클릭 유지: 사격" if manual_attack and not build_open else "")
+		var inspector := run_hud.find_child("Inspector", true, false) as Control
+		if inspector.visible and selected_entity >= 0 and selected_entity < structures.size():
+			var facility := structures[selected_entity]
+			if facility.kind == "clinic":
+				inspector_label.text = "의료소 · 레벨 %d\n%s" % [facility.level, "%s 치료 중 · %d초" % [Data.CHARACTERS[player_index].name, ceili(treatment_remaining)] if treatment_remaining > 0.0 else "빈 병상 · 대기 중"]
+			elif facility.kind == "supply":
+				inspector_label.text = "용병 파견소 · 레벨 %d\n%s" % [facility.level, "복귀까지 %d초" % ceili(expedition_remaining) if expedition_remaining > 0.0 else "파견 대기 · 용병 강화 %d/10" % mercenary_level]
 
 
 func _save_all() -> void:
@@ -2642,13 +3107,14 @@ func _save_all() -> void:
 			structure_rows.append({"kind": String(s.kind), "x": cell.x, "y": cell.y, "hp": float(s.hp), "max_hp": float(s.max_hp), "level": int(s.level)})
 		var enemy_rows: Array[Dictionary] = []
 		for e in enemies:
-			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1))})
+			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))})
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
-		var boss_flags: Array[int] = []
-		if boss_40_spawned: boss_flags.append(40)
-		if boss_80_spawned: boss_flags.append(80)
-		if boss_100_spawned: boss_flags.append(100)
-		saved_run["boss_flags"] = boss_flags
+		saved_run["boss_flags"] = boss_spawned.keys()
+		saved_run["final_boss_defeated"] = final_boss_defeated
+		saved_run["augment_queue"] = augment_queue
+		saved_run["treatment_remaining"] = treatment_remaining
+		saved_run["expedition_remaining"] = expedition_remaining
+		saved_run["mercenary_level"] = mercenary_level
 		saved_run["base_stats"] = run_base_stats
 		saved_run["acquired_augments"] = acquired_augments
 		saved_run["warned_enemies"] = warned_enemies.keys()
@@ -2712,16 +3178,20 @@ func _restore_run_modifiers() -> void:
 	for value in mods.get("picked", []): picked_augment_ids.append(String(value))
 	run_base_stats = saved_run.get("base_stats", _legacy_base_stats())
 	acquired_augments = saved_run.get("acquired_augments", {}).duplicate(true)
+	csv_trigger_until.clear()
+	_rebuild_csv_stats()
 	for card in Data.augment_catalog():
 		if picked_augment_ids.has(card.id) and not acquired_augments.has(card.id):
 			var legacy := card.duplicate()
 			legacy.description = _augment_effect_text(card)
 			acquired_augments[card.id] = legacy
 	var flags: Array = saved_run.get("boss_flags", [])
-	boss_40_spawned = flags.has(40)
-	boss_80_spawned = flags.has(80)
-	boss_100_spawned = flags.has(100)
-	pending_final_boss = stage >= 100 and boss_100_spawned
+	boss_spawned.clear()
+	for flag in flags:
+		boss_spawned[int(flag)] = true
+	for milestone in Data.BOSSES:
+		if milestone < stage:
+			boss_spawned[milestone] = true
 
 
 func _world_to_screen(point: Vector2) -> Vector2:
@@ -2776,6 +3246,10 @@ func _draw_world() -> void:
 				draw_circle(glow, radius, Color(1.0, 0.58, 0.19, 0.034), true, -1.0, true)
 	if build_open or build_mode:
 		_draw_build_grid()
+	for route in tunnel_routes:
+		draw_arc(_world_to_screen(route.exit), 23.0, 0.0, TAU, 18, Color("#a78d6779"), 2.0)
+	for zone in toxin_zones:
+		draw_circle(_world_to_screen(zone.pos), 52.0, Color("#84ae5549"))
 	_draw_world_depth(camera, camera_offset)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
@@ -2814,7 +3288,7 @@ func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
 	for enemy in enemies:
 		if _zombie_on_screen(_world_to_screen(enemy.pos), 100.0):
 			layers.append([enemy.pos.y + 40.0, 3, enemy])
-	if screen != "landing" or landing.player_visible():
+	if treatment_remaining <= 0.0 and (screen != "landing" or landing.player_visible()):
 		layers.append([player_pos.y + 40.0 / _view_zoom(), 4, {}])
 	layers.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 	for item in layers:
@@ -2936,11 +3410,26 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 	var radius := PlayerProjectiles.enemy_radius(enemy)
 	if enemy.has("variant"):
 		if not _zombie_on_screen(p): return
-		ZombieVisual.draw_alive(self, enemy, p, run_seconds, camera)
+		if enemy.get("underground", false):
+			draw_arc(p, 18.0, 0.0, TAU, 16, Color("#a98b6270"), 2.0)
+			return
+		var art_scale := float(enemy.get("art_scale", 1.0))
+		var lift := -30.0 if enemy.get("air", false) else 0.0
+		var transform := Transform2D(0.0, Vector2.ONE * art_scale, 0.0, p * (1.0 - art_scale) + Vector2(0, lift))
+		var visual_camera := camera * transform
+		draw_set_transform_matrix(visual_camera)
+		var tint := Color.WHITE
+		if enemy.get("special", false) or boss:
+			tint = Color.WHITE.lerp(enemy.color, 0.42)
+		elif int(enemy.get("appearance", 0)) >= 8:
+			tint = Color.WHITE.lerp(Color.from_hsv(float(int(enemy.appearance) / 8) / 7.0, 0.35, 0.91), 0.34)
+		if enemy.kind == "S17": tint.a = 0.42
+		ZombieVisual.draw_alive(self, enemy, p, run_seconds, visual_camera, tint, enemies.size() >= 500)
+		draw_set_transform_matrix(camera)
 		if float(enemy.hp) < float(enemy.max_hp):
 			var ratio := clampf(float(enemy.hp) / float(enemy.max_hp), 0.0, 1.0)
-			draw_rect(Rect2(p.x - 12, p.y - 48, 24, 3), Color(0, 0, 0, 0.65))
-			draw_rect(Rect2(p.x - 12, p.y - 48, 24 * ratio, 3), PALETTE.green)
+			draw_rect(Rect2(p.x - 12, p.y - 47.0 * float(enemy.get("art_scale", 1.0)) + lift, 24, 3), Color(0, 0, 0, 0.65))
+			draw_rect(Rect2(p.x - 12, p.y - 47.0 * float(enemy.get("art_scale", 1.0)) + lift, 24 * ratio, 3), PALETTE.green)
 		return
 	if String(enemy.kind) == "bomber" and float(enemy.get("charge", 0)) > 0.0:
 		var pulse := 56.0 - 28.0 * maxf(0.0, float(enemy.charge)) / 0.72
@@ -3014,7 +3503,7 @@ func _draw_player() -> void:
 		var reload_progress := -1.0
 		if player_reload_timer > 0.0:
 			reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
-		_harin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0, player_drone_level, reload_progress)
+		_harin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0, player_drone_level + int(_csv_bonus("combat_drone")), reload_progress)
 	elif Data.CHARACTERS[player_index].id == "yujin":
 		_yujin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0)
 	else:

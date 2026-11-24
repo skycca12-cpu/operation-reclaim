@@ -1,8 +1,10 @@
 extends RefCounted
 
 const CELL := 48
-const SIDE := 45
-const HALF := (SIDE - 1) / 2
+const SIDE := 60
+const HALF := SIDE / 2
+const CENTER_CELL := Vector2i(30, 30)
+const ORIGIN_SHIFT := Vector2.ONE * CELL * 0.5
 const LIMIT := Vector2.ONE * CELL * SIDE * 0.5
 const DISTANT_CITY: Texture2D = preload("res://assets/reclaim/jeju/intro/jeju_city.png")
 const PLAZA_GROUND: Texture2D = preload("res://assets/reclaim/jeju/plaza_ground.png")
@@ -150,6 +152,8 @@ const OUTSKIRTS := [
 var props: Array[Dictionary] = []
 var decorations: Array[Dictionary] = []
 var colliders: Array[Rect2] = []
+var _collision_cells: Dictionary = {}
+const COLLISION_CELL := 128.0
 var lamps: Array[Vector2] = []
 var tiles: TileMapLayer
 var border: TextureRect
@@ -186,8 +190,8 @@ func setup(parent: CanvasItem) -> void:
 		atlas.create_tile(Vector2i(tile, 0))
 	tiles.tile_set = tileset
 	parent.add_child(tiles)
-	for y in range(-HALF, HALF + 1):
-		for x in range(-HALF, HALF + 1):
+	for y in range(-HALF, HALF):
+		for x in range(-HALF, HALF):
 			var cell := Vector2i(x, y)
 			tiles.set_cell(cell, source, Vector2i(_terrain_tile(cell), 0))
 			if _water(cell) and not _water(Vector2i(x - 1, y)):
@@ -211,17 +215,35 @@ func _add_prop(entry: Array) -> void:
 		_textures[key] = load(PROP_DIR + key + ".png")
 	var texture: Texture2D = _textures[key]
 	var feet := Vector2(entry[1], entry[2])
+	if footprint_landmark(key) and feet.length() > 525.0:
+		var expanded := feet * 1.29
+		if not _water(Vector2i((expanded / CELL).round())):
+			feet = expanded
 	var extent := texture.get_size() * (float(entry[3]) / texture.get_width())
 	var footprint := Vector2(entry[4], entry[5])
 	var record := {"texture": texture, "feet": feet, "size": extent}
 	if key == "lamp":
 		lamps.append(feet)
 	if footprint.x > 0:
-		colliders.append(Rect2(feet - Vector2(footprint.x * 0.5, footprint.y), footprint))
+		var bounds := Rect2(feet - Vector2(footprint.x * 0.5, footprint.y), footprint)
+		colliders.append(bounds)
+		var indexed := bounds.grow(72.0)
+		var first := Vector2i((indexed.position / COLLISION_CELL).floor())
+		var last := Vector2i((indexed.end / COLLISION_CELL).floor())
+		for y in range(first.y, last.y + 1):
+			for x in range(first.x, last.x + 1):
+				var bucket := Vector2i(x, y)
+				if not _collision_cells.has(bucket):
+					_collision_cells[bucket] = []
+				_collision_cells[bucket].append(bounds)
 	if key.begins_with("farm_") or key in FLAT_PROPS:
 		decorations.append(record)
 	else:
 		props.append(record)
+
+
+func footprint_landmark(key: String) -> bool:
+	return key not in ["cliff", "cliff_turn", "wave", "coast_boulder", "coast_rocks", "coast_wall", "seawall_long", "seawall_corner", "driftwood", "boat", "lighthouse"]
 
 
 func _terrain_tile(cell: Vector2i) -> int:
@@ -248,32 +270,37 @@ func align(camera: Vector2, viewport: Vector2, zoom: float, shown: bool) -> void
 		tiles.scale = Vector2.ONE * zoom
 		tiles.position = viewport * 0.5 - (camera + Vector2.ONE * CELL * 0.5) * zoom
 		_edge_material.set_shader_parameter("viewport_size", viewport)
-		_edge_material.set_shader_parameter("map_center", viewport * 0.5 - camera * zoom)
+		_edge_material.set_shader_parameter("map_center", viewport * 0.5 - (camera + ORIGIN_SHIFT) * zoom)
 		_edge_material.set_shader_parameter("zoom", zoom)
 
 
 func walkable(point: Vector2, margin: float = 0.0) -> bool:
-	if absf(point.x) + margin >= LIMIT.x or absf(point.y) + margin >= LIMIT.y:
+	if absf(point.x + ORIGIN_SHIFT.x) + margin >= LIMIT.x or absf(point.y + ORIGIN_SHIFT.y) + margin >= LIMIT.y:
 		return false
-	for offset in [Vector2(-margin, -margin), Vector2(margin, -margin), Vector2(-margin, margin), Vector2(margin, margin)]:
-		if _water(Vector2i(((point + offset) / CELL).round())):
+	if point.x + margin > -CELL * 2 and absf(point.y) + margin >= CELL * 9.0:
+		var east := roundi((point.x + margin) / CELL)
+		var north := roundi((point.y - margin) / CELL)
+		var south := roundi((point.y + margin) / CELL)
+		if _water(Vector2i(east, north)) or _water(Vector2i(east, south)):
 			return false
-	for footprint in colliders:
+	var bucket := Vector2i((point / COLLISION_CELL).floor())
+	var footprints: Array = _collision_cells.get(bucket, []) if margin <= 72.0 else colliders
+	for footprint in footprints:
 		if footprint.grow(margin).has_point(point):
 			return false
 	return true
 
 
 func nearest_land(point: Vector2, margin: float) -> Vector2:
-	var candidate := point.clamp(-LIMIT + Vector2.ONE * (margin + 2.0), LIMIT - Vector2.ONE * (margin + 2.0))
+	var candidate := point.clamp(-LIMIT - ORIGIN_SHIFT + Vector2.ONE * (margin + 2.0), LIMIT - ORIGIN_SHIFT - Vector2.ONE * (margin + 2.0))
 	if walkable(candidate, margin):
 		return candidate
 	var cell := Vector2i((candidate / CELL).round())
 	var distance := INF
 	var best := Vector2.ZERO
 	# Starts and legacy saves can lie outside the new map.
-	for y in range(-HALF, HALF + 1):
-		for x in range(-HALF, HALF + 1):
+	for y in range(-HALF, HALF):
+		for x in range(-HALF, HALF):
 			var next := Vector2(Vector2i(x, y) * CELL)
 			var cost := Vector2(cell * CELL).distance_squared_to(next)
 			if cost < distance and walkable(next, margin):

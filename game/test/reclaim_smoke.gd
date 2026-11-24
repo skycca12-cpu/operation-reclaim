@@ -28,7 +28,7 @@ func _run() -> void:
 	_check(game.get("screen") == "intro" and game.get("difficulty_index") == 4, "difficulty choice opens the prologue")
 	_check(Data.CHARACTERS.size() == 4, "four selectable operators in data")
 	_check(Data.ENEMIES.size() == 5, "five enemy families in data")
-	_check(Data.TURRETS.size() == 6, "six offensive turret families in data")
+	_check(Data.TURRETS.size() == 7, "seven turret families including anti-air")
 	_check(Data.augment_catalog().size() == 52, "30 common and 22 hero augments in data")
 	game.set("player_index", 1)
 	game.set("difficulty_index", 1)
@@ -120,13 +120,13 @@ func _run() -> void:
 	_check(game.get("player_pos").x > trap_center.x + 37.0, "player can walk out of a legacy overlapping structure")
 	structures.pop_back()
 	_test_combat_zoom_and_augments(game)
-	for i in range(5):
-		structures.append({"kind": "heavy", "cell": Vector2i(i, 0), "hp": 100.0, "max_hp": 100.0, "level": 1, "cool": 0.0})
+	for i in range(9):
+		structures.append({"kind": "heavy", "cell": Vector2i(i % 8, i / 8), "hp": 100.0, "max_hp": 100.0, "level": 1, "cool": 0.0})
 	game.set("money", 500)
 	game.set("player_index", 1)
-	_check(String(game.call("_validate_placement", "rocket", Vector2i(0, 6))).contains("한도"), "ordinary operator cap is six total turrets")
+	_check(String(game.call("_validate_placement", "rocket", Vector2i(0, 6))).contains("한도"), "ordinary operator cap is ten total turrets")
 	game.set("player_index", 3)
-	_check(String(game.call("_validate_placement", "rocket", Vector2i(0, 6))) == "", "Han Yujin can place up to eight turrets")
+	_check(String(game.call("_validate_placement", "rocket", Vector2i(0, 6))) == "", "Han Yujin can place above ten turrets")
 	game.set("player_index", 1)
 	game.set("player_pos", Vector2(200, 150))
 	var enemies: Array = game.get("enemies")
@@ -249,9 +249,63 @@ func _run() -> void:
 	_test_enemy_wall_cover(resumed)
 	_test_jeju_battlefield(resumed)
 	_test_repair_drone(resumed)
+	_test_integrated_progression(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_integrated_progression(game: Control) -> void:
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	var roster = preload("res://scripts/reclaim/special_enemies.gd")
+	var sizes := [2.0, 2.5, 3.0, 3.0, 2.0, 2.5, 2.5, 3.0, 2.5, 2.0, 3.0, 2.0, 2.0, 0.5, 2.5, 2.0, 2.0, 3.0, 2.5, 3.0]
+	for index in range(20):
+		var id := "S%02d" % (index + 1)
+		var special: Dictionary = game.call("_make_enemy", id, Vector2(600, 450), false)
+		_check(special.special and special.art_scale == sizes[index] and roster.TYPES.has(id),
+			"special enemy %s uses its configured silhouette and state" % id)
+	var enemies: Array = game.get("enemies")
+	var milestones := [20, 40, 60, 80, 100]
+	game.set("augments_taken", 100)
+	for wave: int in milestones:
+		game.set("stage", wave - 1)
+		game.set("stage_elapsed", 22.0)
+		game.call("_update_spawn", 0.0)
+		var boss_id := "boss%d" % wave
+		var indices: Array = enemies.filter(func(enemy): return enemy.kind == boss_id)
+		_check(indices.size() == 1, "wave %d spawns its boss exactly once" % wave)
+		if indices.size() == 1:
+			game.call("_damage_enemy", enemies.find(indices[0]), 1e8, "test")
+	_check(game.get("augment_queue") == 10, "five boss kills queue ten choices")
+	_check(game.get("screen") != "result", "the final boss alone does not win before the wave is complete")
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	var structures: Array = game.get("structures")
+	structures.append({"kind": "clinic", "cell": Vector2i(1, 1), "hp": 520.0, "max_hp": 520.0, "level": 11})
+	structures.append({"kind": "supply", "cell": Vector2i(1, 3), "hp": 580.0, "max_hp": 580.0, "level": 4})
+	game.set("player_hp", 0.0)
+	game.call("_update_progress", 0.0)
+	_check(is_equal_approx(float(game.get("treatment_remaining")), 120.0), "a +10 clinic treats for 120 seconds")
+	game.call("_start_expedition")
+	var expedition: float = game.get("expedition_remaining")
+	game.call("_update_facilities", 1.0)
+	_check(expedition > 0.0 and game.get("expedition_remaining") < expedition, "expedition continues during treatment")
+	game.call("_update_facilities", 120.0)
+	_check(game.get("treatment_remaining") == 0.0 and game.get("player_hp") == game.get("player_max_hp"),
+		"treatment restores full HP and returns control")
+	game.set("player_xp", 1e8)
+	game.call("_check_level_up")
+	_check(game.get("augments_taken") == 100 and game.get("augment_queue") == 100, "XP queues 100 choices without discarding them")
+	game.call("_show_screen", "play")
+	var double_speed := InputEventKey.new()
+	double_speed.physical_keycode = KEY_F6
+	double_speed.keycode = KEY_F6
+	double_speed.pressed = true
+	root.push_input(double_speed, true)
+	var start: float = game.get("run_seconds")
+	game.call("_process", 0.05)
+	_check(is_equal_approx(float(game.get("run_seconds")) - start, 0.10), "F6 doubles the simulation clock")
 
 
 func _test_repair_drone(game: Control) -> void:
@@ -287,11 +341,11 @@ func _test_repair_drone(game: Control) -> void:
 func _test_jeju_battlefield(game: Control) -> void:
 	var map: RefCounted = game.get("jeju_map")
 	var terrain: TileMapLayer = map.get("tiles")
-	_check(terrain.get_used_cells().size() == 45 * 45 and terrain.get_used_rect().size == Vector2i(45, 45),
-		"Jeju has exactly 45 by 45 terrain cells")
+	_check(terrain.get_used_cells().size() == 60 * 60 and terrain.get_used_rect().size == Vector2i(60, 60),
+		"Jeju has exactly 60 by 60 terrain cells")
 	_check(not map.call("walkable", Vector2(790, 768), 13.0), "southeast sea and cliffs block passage")
-	_check(not map.call("walkable", Vector2(512, -530), 0.0), "the gas station has a ground footprint")
-	_check(map.call("walkable", Vector2(512, -589), 0.0), "the gas station roof projection is walkable")
+	_check(not map.call("walkable", Vector2(660, -680), 0.0), "the gas station has a ground footprint")
+	_check(map.call("walkable", Vector2(625, -720), 0.0), "the gas station roof projection is walkable")
 	game.set("player_pos", Vector2(535, 730))
 	game.call("_move_player", Vector2(280, 0))
 	_check(game.get("player_pos").x < 790.0, "a long movement cannot skip over the coast boundary")
@@ -316,11 +370,11 @@ func _test_jeju_battlefield(game: Control) -> void:
 		game.set("spawn_timer", 0.0)
 		game.call("_update_spawn", 0.0)
 	var enemies: Array = game.get("enemies")
-	_check(enemies.size() == 320 and enemies.all(func(enemy): return map.call("walkable", enemy.pos, 24.0)),
-		"a late wave reaches the existing 320-enemy cap with all enemies on land")
+	_check(enemies.size() == 1900 and enemies.all(func(enemy): return map.call("walkable", enemy.pos, 24.0)),
+		"a late wave reaches the stage 95 1900-enemy target with all enemies on land")
 	for step in range(20):
 		game.call("_update_enemies", 0.05)
-	_check(enemies.all(func(enemy): return map.call("walkable", enemy.pos, 0.0)),
+	_check(enemies.all(func(enemy): return enemy.get("air", false) or enemy.get("underground", false) or map.call("walkable", enemy.pos, 0.0)),
 		"late-wave enemies stay on land while approaching the base")
 	for hero in range(Data.CHARACTERS.size()):
 		game.call("_choose_character", hero)
@@ -383,52 +437,39 @@ func _test_enemy_wall_cover(game: Control) -> void:
 
 
 func _test_character_augments(game: Control) -> void:
+	const Catalog = preload("res://scripts/reclaim/augment_catalog.gd")
+	var catalog := Catalog.cards()
+	var owners := {}
+	for card in catalog:
+		owners[card.hero] = int(owners.get(card.hero, 0)) + 1
+	_check(catalog.size() == 500 and owners == {"": 300, "tae": 50, "si": 50, "harin": 50, "yujin": 50},
+		"all 500 records and character distributions load")
 	game.set("player_index", 3)
 	game.call("_reset_run")
 	var options: Array = game.call("_eligible_augments")
-	_check(options.any(func(card): return card.get("hero") == "yujin") and not options.any(func(card): return card.get("hero") == "harin"),
-		"Yujin receives her own exclusive options without Harin cards")
-	for card in options:
-		if card.id == Data.YUJIN_REACH_AUGMENT:
-			var reach: float = game.call("_weapon_range", Data.CHARACTERS[3])
-			card.stars = 1
-			game.call("_choose_augment", card)
-			var upgraded: float = game.call("_weapon_range", Data.CHARACTERS[3])
-			_check(is_equal_approx(upgraded, reach + 12.0) and is_equal_approx(game.get("player_mod_range"), 1.0),
-				"Yujin extends the chainsaw without changing the turret range multiplier")
-			break
+	_check(options.any(func(card): return card.hero == "yujin") and not options.any(func(card): return card.hero == "harin" or card.key == "magazine"),
+		"Yujin sees her exclusive cards and excludes magazine upgrades")
 	game.set("player_index", 2)
 	game.call("_reset_run")
 	options = game.call("_eligible_augments")
-	var index := -1
-	for i in range(options.size()):
-		if options[i].id == Data.HARIN_MAGAZINE_AUGMENT:
-			index = i
-			break
-	_check(index >= 0 and not options.any(func(card): return card.get("hero") == "yujin"), "Harin can find the exclusive magazine")
-	if index < 0:
-		return
-	var magazine: Dictionary = options[index].duplicate()
-	magazine.stars = 1
-	magazine.rarity = "일반"
-	for stack in range(1, 6):
-		var preview: String = game.call("_augment_effect_text", magazine)
-		_check(preview.contains("중첩 %d/5" % stack), "magazine displays its upcoming stack")
+	_check(not options.any(func(card): return card.id == "A022"), "a specialization needs its prerequisite")
+	var magazine: Dictionary = catalog[20]
+	for stack in range(1, 11):
 		game.call("_choose_augment", magazine)
-		_check(game.call("_magazine_capacity") == 30 + stack * 5, "each magazine stack grants exactly five rounds")
+		_check(game.call("_magazine_capacity") == 30 + stack * 5, "each magazine stack applies the CSV's five rounds")
 	game.call("_choose_augment", magazine)
 	options = game.call("_eligible_augments")
-	_check(game.call("_magazine_capacity") == 55 and not options.any(func(card): return card.id == Data.HARIN_MAGAZINE_AUGMENT),
-		"magazine caps at five stacks and disappears from future offers")
+	_check(game.call("_magazine_capacity") == 80 and not options.has(magazine) and options.has(catalog[21]),
+		"the cap excludes the original card and the prerequisite unlocks specialization")
 	game.set("manual_attack", true)
 	game.set("manual_trigger", false)
 	game.set("player_magazine", 0)
 	game.set("player_reload_timer", 0.1)
 	game.call("_update_player_attack", 0.2)
-	_check(game.get("player_magazine") == 55, "reloading fills the upgraded magazine")
+	_check(game.get("player_magazine") == 80, "reloading fills the upgraded magazine")
 	game.call("_save_all")
 	game.call("_load_saved_run")
-	_check(game.call("_magazine_capacity") == 55 and game.get("player_magazine") == 55, "save and continue preserve the upgraded magazine")
+	_check(game.call("_magazine_capacity") == 80 and game.get("player_magazine") == 80, "CSV magazine survives continue")
 
 
 func _test_spawn_multiplier(game: Control) -> void:
@@ -447,7 +488,7 @@ func _test_spawn_multiplier(game: Control) -> void:
 	for i in range(70):
 		game.set("spawn_timer", 0.0)
 		game.call("_update_spawn", 0.0)
-	_check(active.size() == 320, "larger wave batches respect the active enemy cap")
+	_check(active.size() == 50, "early wave batches respect the active enemy target")
 
 
 func _test_yujin(game: Control) -> void:
@@ -612,7 +653,9 @@ func _test_combat_zoom_and_augments(game: Control) -> void:
 	var reroll: Button = game.get("augment_reroll_button")
 	_check(reroll.flat and reroll.size_flags_horizontal == Control.SIZE_SHRINK_CENTER, "reroll is compact instead of stretching")
 	game.call("_reroll_augments")
-	_check(reroll.disabled and row.get_child_count() == 3, "reroll is available exactly once and leaves three cards")
+	_check(not reroll.disabled, "a second free reroll remains")
+	game.call("_reroll_augments")
+	_check(reroll.disabled and row.get_child_count() == 3, "two rerolls leave three cards")
 	game.call("_show_screen", "play")
 
 
