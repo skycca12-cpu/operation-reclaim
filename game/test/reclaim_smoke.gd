@@ -507,9 +507,11 @@ func _test_harin_muzzle(game: Control) -> void:
 	var visual: RefCounted = game.get("_harin_visual")
 	var shots: Array = game.get("player_projectiles").shots
 	var player: Vector2 = game.get("player_pos")
-	_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(0, 21.5)),
+	_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(0, 9.0)),
 		"Harin's downward projectile starts at the on-screen barrel at 2x zoom")
-	_check(visual.call("_front_shot_frame") == 1, "Harin starts on the flash frame at discharge")
+	_check(visual.call("_front_shot_frame") == 1, "Harin starts on the compressed recoil frame at discharge")
+	visual.call("update", 0.07, Vector2.ZERO, 100.0, true)
+	_check(visual.call("_front_shot_frame") == 2, "Harin advances to the return pose")
 	game.set("camera_zoom", 1.0)
 
 
@@ -530,6 +532,13 @@ func _test_yujin(game: Control) -> void:
 	_check(float(visual.get("_attack_left")) > 0.0, "the real melee attack starts Yujin's cutting animation")
 	visual.call("update", 1.0)
 	_check(is_zero_approx(float(visual.get("_attack_left"))), "Yujin returns to idle after cutting ends")
+	visual.call("update", 0.10, Vector2(0, 245))
+	_check(visual.call("_vertical_walk_cell", false) == Vector2i(1, 0)
+		and visual.call("_vertical_walk_cell", true) == Vector2i(1, 1),
+		"Yujin selects distinct front and back walking rows")
+	visual.call("update", 0.18, Vector2(0, 245))
+	_check(visual.call("_vertical_walk_cell", false) == Vector2i(3, 0),
+		"Yujin's walking stride advances to the opposite boot pose")
 
 
 func _test_operator_hud(game: Control) -> void:

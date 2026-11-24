@@ -1,5 +1,8 @@
 extends RefCounted
 
+const VERTICAL_WALK := preload("res://assets/characters/yujin/vertical_walk.png")
+const VERTICAL_FRAME := Vector2(112, 112)
+const VERTICAL_FOOT_ANCHOR := Vector2(56, 94)
 const FRONT_ATTACK = preload("res://assets/characters/yujin/yujin_front_attack.png")
 const FRONT_FRAME_SIZE := Vector2(112, 132)
 const FRONT_FOOT_ANCHOR := Vector2(56, 92)
@@ -78,6 +81,12 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	canvas.draw_set_transform(position + Vector2(0.0, FOOT_OFFSET - 2.0), 0.0, Vector2(1.0, 0.35))
 	canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
 	canvas.draw_set_transform(Vector2.ZERO)
+	if not side and running and not attacking:
+		var frame := _vertical_walk_cell(back)
+		var target := (position + Vector2(0.0, FOOT_OFFSET)).round() - VERTICAL_FOOT_ANCHOR
+		canvas.draw_texture_rect_region(VERTICAL_WALK, Rect2(target, VERTICAL_FRAME),
+			Rect2(Vector2(frame) * VERTICAL_FRAME, VERTICAL_FRAME))
+		return
 	if not side and not back:
 		var front_frame := _front_cut_frame(progress) if attacking else 0
 		var target := center.round() - FRONT_FOOT_ANCHOR
@@ -95,6 +104,10 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 	var anchor_x := size.x * 0.33 if side else size.x * 0.5
 	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false)
 	canvas.draw_set_transform(Vector2.ZERO)
+
+
+func _vertical_walk_cell(back: bool) -> Vector2i:
+	return Vector2i(int(_walk_distance / 22.0) % 4, 1 if back else 0)
 
 
 func _front_cut_frame(progress: float) -> int:

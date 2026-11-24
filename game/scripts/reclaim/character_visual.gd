@@ -1,14 +1,14 @@
 extends RefCounted
 
 const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.png")
-const FRONT_ATTACK = preload("res://assets/reclaim/characters/harin_front_attack.png")
-const FRONT_FRAME_SIZE := Vector2(112, 132)
-const FRONT_FRAME_ORIGIN := Vector2(-56, -52)
+const FRONT_ATTACK = preload("res://assets/reclaim/characters/harin_front_recoil.png")
+const FRONT_FRAME_SIZE := Vector2(112, 112)
+const FRONT_FRAME_ORIGIN := Vector2(-56, -54)
 const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
 const STRIDE_STEP := 23.0
 const FLASH_HOLD := 0.078
-const MUZZLES := [Vector2(0, 43), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
+const MUZZLES := [Vector2(0, 18), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
 const ATTACK_HOLD := 0.16
 const HURT_HOLD := 0.22
 
@@ -43,8 +43,8 @@ func muzzle_offset(facing: Vector2) -> Vector2:
 
 
 func _front_shot_frame() -> int:
-	# Frame zero is the ready pose. The trigger starts on the first flash.
-	return 1 + clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 5.0), 0, 4)
+	# Frame zero is the ready pose. Firing starts with the compressed recoil pose.
+	return 1 + clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 3.0), 0, 2)
 
 
 func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, dashing: bool, drone_level: int, reload_progress: float) -> void:
@@ -75,18 +75,20 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, da
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin + lower_offset, lower), Rect2(Vector2(run_frame, row) * CELL_SIZE + lower_offset, lower), tint)
 	else:
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin, Vector2.ONE * DRAW_SIZE), source, tint)
-	if not front_shot and attack_timer > ATTACK_HOLD - FLASH_HOLD:
+	var flash_duration := ATTACK_HOLD / 3.0 if front_shot else FLASH_HOLD
+	if shooting and attack_timer > ATTACK_HOLD - flash_duration:
 		var barrel: Vector2 = MUZZLES[row]
-		_draw_flash(canvas, center + barrel, Vector2(signf(barrel.x), 0))
+		var flash_direction := Vector2.DOWN if front_shot else Vector2(signf(barrel.x), 0)
+		_draw_flash(canvas, center + barrel, flash_direction, flash_duration)
 	if dashing:
 		canvas.draw_line(center - facing.normalized() * 27.0, center - facing.normalized() * 11.0, Color("#9dd9e6", 0.7), 2.0)
 	if drone_level > 0:
 		_draw_support_drone(canvas, center, drone_level)
 
 
-func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2) -> void:
+func _draw_flash(canvas: CanvasItem, muzzle: Vector2, direction: Vector2, duration: float) -> void:
 	var normal := direction.orthogonal()
-	var age := (ATTACK_HOLD - attack_timer) / FLASH_HOLD
+	var age := (ATTACK_HOLD - attack_timer) / duration
 	var length := lerpf(30.0, 9.0, age)
 	canvas.draw_colored_polygon(PackedVector2Array([
 		muzzle - direction * 3.0, muzzle + direction * 5.0 + normal * 7.0,
