@@ -1,16 +1,11 @@
 extends Control
-## Four-operator selection. Card portraits are the approved full-body sheet
-## figures (cropped + background removed only, no redesign).
+## Four-operator selection with full-body portraits.
 
 signal chosen(index: int)
 signal back_pressed
 
 const FlowUI = preload("res://scripts/reclaim/flow/flow_ui.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
-## Which operators already have a finished in-game sprite (others still use
-## temporary shapes during combat – shown on the card, not hidden).
-const INGAME_SPRITE_READY := {"harin": true, "yujin": true}
-
 var selected := 2
 var _cards: Array[Button] = []
 var _portraits: Array[TextureRect] = []
@@ -88,8 +83,6 @@ func _make_card(i: int) -> Button:
 	box.add_child(FlowUI.make_label(String(c.weapon), 14, FlowUI.TEXT, HORIZONTAL_ALIGNMENT_CENTER))
 	var stats := FlowUI.make_label("HP %d  ·  이동 %d" % [int(c.hp), int(c.speed)], 13, FlowUI.MUTED, HORIZONTAL_ALIGNMENT_CENTER)
 	box.add_child(stats)
-	var ready := INGAME_SPRITE_READY.has(String(c.id))
-	box.add_child(FlowUI.make_label("인게임 스프라이트 적용" if ready else "인게임: 임시 도형 (스프라이트 제작 예정)", 11, Color("#8fd19e") if ready else Color("#d99a6c"), HORIZONTAL_ALIGNMENT_CENTER))
 	return card
 
 

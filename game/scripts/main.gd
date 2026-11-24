@@ -8,6 +8,7 @@ const FieldWarning = preload("res://scripts/reclaim/field_warning.gd")
 const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const YujinVisual = preload("res://scripts/reclaim/yujin_visual.gd")
+const InfantryVisual = preload("res://scripts/reclaim/infantry_visual.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const REPAIR_DRONE_ART = preload("res://assets/reclaim/jeju/structures/repair_drone.png")
 const FacilityEffects = preload("res://scripts/reclaim/flow/heli_art.gd")
@@ -182,6 +183,7 @@ var saved_run: Dictionary = {}
 var _random := RandomNumberGenerator.new()
 var _yujin_visual = YujinVisual.new()
 var _harin_visual = HarinVisual.new()
+var _infantry_visual := InfantryVisual.new()
 var player_motion := Vector2.ZERO
 var boot_screen: Control
 var flow_menu: Control
@@ -267,6 +269,7 @@ func _process(delta: float) -> void:
 		_update_player(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
 	_yujin_visual.update(delta, player_motion)
+	_infantry_visual.update(delta, player_motion)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	_update_spawn(delta)
 	_update_enemies(delta)
@@ -936,6 +939,7 @@ func _update_landing(delta: float) -> void:
 	if player_motion.length() > 1.0:
 		player_facing = player_motion.normalized()
 	_yujin_visual.update(delta, player_motion)
+	_infantry_visual.update(delta, player_motion)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	hq_build_ratio = maxf(0.0, landing.hq_ratio())
 	if landing.done:
@@ -975,6 +979,7 @@ func _reset_run() -> void:
 	clinic_shield = 0.0
 	_yujin_visual.reset()
 	_harin_visual = HarinVisual.new()
+	_infantry_visual = InfantryVisual.new()
 	difficulty = Data.DIFFICULTIES[difficulty_index].duplicate(true)
 	stage = 1
 	stage_elapsed = 0.0
@@ -1723,15 +1728,18 @@ func _attack_player() -> void:
 			var toward := target_pos - player_pos
 			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > cos(deg_to_rad(minf(85.0, 45.0 * _csv_factor("saw_angle"))))):
 				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
-				if effects.size() < 40: effects.append({"a": player_pos + direction * 26, "b": target_pos, "time": 0.09, "color": Color("#f1a34f")})
 		return
 	player_magazine -= 1
 	if player_magazine == 0:
 		player_reload_timer = float(hero.reload) / _csv_factor("reload")
 	var muzzle := player_pos
+	var tracer_offset := Vector2.ZERO
 	if kind == "harin":
 		_harin_visual.trigger_attack(player_facing)
 		muzzle += _harin_visual.muzzle_offset(player_facing) / _view_zoom()
+	else:
+		_infantry_visual.attack(player_facing)
+		tracer_offset = _infantry_visual.muzzle(kind, player_facing) / _view_zoom()
 	if sound_on:
 		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
 	player_attack_timer = interval
@@ -1742,7 +1750,7 @@ func _attack_player() -> void:
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 * _csv_reduction("pellet_focus") if kind == "tae" else 0.0)
-		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")))
+		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")), tracer_offset)
 
 
 func _update_spawn(delta: float) -> void:
@@ -2328,7 +2336,7 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 		amount *= 0.4
 		enemy.guard = maxf(0.0, float(enemy.guard) - 0.28)
 	enemy.hp = float(enemy.hp) - amount
-	if amount > 0.0 and shake_on and effects.size() < 80 and _zombie_on_screen(_world_to_screen(enemy.pos)):
+	if amount > 0.0 and (shake_on or source == "chainsaw") and effects.size() < 80 and _zombie_on_screen(_world_to_screen(enemy.pos)):
 		var point: Vector2 = enemy.pos
 		var angle := player_pos.angle_to_point(point)
 		effects.append({"a": point, "b": point, "time": HIT_SPARK_TIME, "hit_angle": angle,
@@ -2782,9 +2790,7 @@ func _rebuild_augment_cards() -> void:
 	for card in augment_options:
 		var display := card.duplicate()
 		display.description = _augment_effect_text(card)
-		if String(card.get("hero", "")) != "":
-			display.name = "%s · %s" % [Data.CHARACTERS[player_index].name, card.name]
-		row.add_child(OpsUI.augment_card(display, _choose_augment.bind(card), 189.0, 158.0, true))
+		row.add_child(OpsUI.augment_card(display, _choose_augment.bind(card), 189.0, 164.0, true))
 	augment_reroll_button.disabled = augment_reroll_used >= 2
 	augment_reroll_button.text = "무료 리롤 %d회 남음" % (2 - augment_reroll_used)
 
@@ -3250,8 +3256,10 @@ func _draw_world() -> void:
 	for shot in player_projectiles.shots:
 		var traveled: float = shot.traveled
 		var tail_length := minf(12.0, traveled)
-		var tip := _world_to_screen(shot.pos)
-		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length)
+		var offset: Vector2 = shot.tracer_offset
+		var tip := _world_to_screen(shot.pos + offset * maxf(0.0, 1.0 - traveled / 82.0))
+		var tail_offset := offset * maxf(0.0, 1.0 - (traveled - tail_length) / 82.0)
+		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length + tail_offset)
 		draw_line(tail, tip, shot.color, 2.0)
 	if repair_drone_level > 0:
 		_draw_repair_drone()
@@ -3512,17 +3520,8 @@ func _draw_player(p: Vector2) -> void:
 	elif Data.CHARACTERS[player_index].id == "yujin":
 		_yujin_visual.draw(self, p, dir, player_motion, dash_timer > 0.0)
 	else:
-		var color: Color = Data.CHARACTERS[player_index].color
-		if dash_timer > 0.0:
-			draw_circle(p, 24.0, Color(PALETTE.blue, 0.23))
-		draw_circle(p + Vector2(0, 8), 17, Color(0, 0, 0, 0.32))
-		draw_circle(p, 15, color)
-		draw_circle(p + Vector2(0, -8), 8, Color("#d7c3a8"))
-		draw_arc(p + Vector2(0, -10), 9.0, PI, TAU, 16, Color("#465348"), 4.0)
-		draw_line(p + dir * 8.0, p + dir * 28.0, Color("#303530"), 5.0)
-		draw_line(p + dir * 11.0, p + dir * 28.0, Color(PALETTE.gold), 2.0)
-		if Data.CHARACTERS[player_index].id == "tae":
-			draw_arc(p - dir * 8.0, 18, -1.2, 1.2, 18, Color("#ccd4be"), 4.0)
+		_infantry_visual.draw(self, p, String(Data.CHARACTERS[player_index].id), dir, player_motion,
+			dash_timer > 0.0, player_reload_timer > 0.0)
 	if screen == "play" and manual_attack and not build_mode:
 		var color := Color(PALETTE.gold, 0.55)
 		var aim_length := p.distance_to(aim_screen)

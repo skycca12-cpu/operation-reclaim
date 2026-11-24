@@ -8,11 +8,11 @@ const BUCKET := 128.0
 var shots: Array[Dictionary] = []
 
 
-func fire(origin: Vector2, direction: Vector2, distance: float, damage: float, hits: int, color: Color, speed_factor := 1.0, ricochets := 0) -> void:
+func fire(origin: Vector2, direction: Vector2, distance: float, damage: float, hits: int, color: Color, speed_factor := 1.0, ricochets := 0, tracer_offset := Vector2.ZERO) -> void:
 	shots.append({
 		"pos": origin, "direction": direction, "remaining": distance,
 		"damage": damage, "hits": hits, "ricochets": maxi(0, ricochets), "color": color, "hit_ids": {},
-		"traveled": 0.0, "speed": SPEED * speed_factor,
+		"traveled": 0.0, "speed": SPEED * speed_factor, "tracer_offset": tracer_offset,
 	})
 
 

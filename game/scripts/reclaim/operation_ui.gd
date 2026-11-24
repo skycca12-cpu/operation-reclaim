@@ -1,5 +1,9 @@
 extends RefCounted
 
+const FlowUI = preload("res://scripts/reclaim/flow/flow_ui.gd")
+const OPERATORS := ["tae", "si", "harin", "yujin"]
+const RARITY_ORDER := ["일반", "고급", "희귀", "영웅", "전설", "신화"]
+
 const GOLD := Color("#dfc17b")
 const INK := Color("#191b1b")
 const RARITY := {
@@ -19,6 +23,32 @@ const ICONS := {
 	"motion": ["0011100","0000110","0011110","0011000","0001100","0100111","1111110"],
 	"support": ["0111110","0100010","1101011","1111111","1000001","1010101","0111110"],
 }
+
+
+class CardFrame extends Control:
+	var accent: Color
+	var rank: int
+
+	func _draw() -> void:
+		var inset := 3.0
+		var corner := 5.0 + float(rank)
+		var right := size.x - inset
+		var bottom := size.y - inset
+		var edges := PackedVector2Array([
+			Vector2(inset, corner), Vector2(corner, inset), Vector2(right - corner, inset),
+			Vector2(right, corner), Vector2(right, bottom - corner), Vector2(right - corner, bottom),
+			Vector2(corner, bottom), Vector2(inset, bottom - corner), Vector2(inset, corner),
+		])
+		draw_polyline(edges, Color(accent, 0.42), 1.0)
+		for mark in range(rank + 1):
+			var x := size.x * 0.5 + float(mark) * 5.0 - float(rank) * 2.5
+			draw_rect(Rect2(x - 1.5, 2, 3, 3), accent)
+		if rank >= 3:
+			draw_line(Vector2(8, bottom), Vector2(24, bottom), accent, 2.0)
+			draw_line(Vector2(right - 19, bottom), Vector2(right - 3, bottom), accent, 2.0)
+		if rank >= 4:
+			draw_line(Vector2(inset, bottom * 0.33), Vector2(inset, bottom * 0.57), accent, 2.0)
+			draw_line(Vector2(right, bottom * 0.33), Vector2(right, bottom * 0.57), accent, 2.0)
 
 
 class GridIcon extends Control:
@@ -101,14 +131,19 @@ static func augment_card(card: Dictionary, callback: Callable, width: float, hei
 	var rarity := String(card.get("rarity", ""))
 	var stars := clampi(int(card.get("stars", 0)), 0, 6)
 	var accent: Color = RARITY.get(rarity, Color("#a6a7ab"))
+	var rank := maxi(0, RARITY_ORDER.find(rarity))
 	for state in ["normal", "pressed", "hover"]:
-		var style := plate(accent, INK.lerp(accent, 0.13 if state == "normal" else 0.24))
-		style.set_border_width_all(2 if stars >= 4 else 1)
-		if stars >= 3:
-			style.border_width_top = 2 + (1 if stars == 5 else 0)
+		var style := plate(accent, Color("#11121b").lerp(accent, 0.07 if state == "normal" else 0.17))
+		style.set_border_width_all(3 if rank >= 4 else 2 if rank >= 2 else 1)
 		result.add_theme_stylebox_override(state, style)
 	result.pressed.connect(callback)
 	result.tooltip_text = String(card.get("description", ""))
+	var frame := CardFrame.new()
+	frame.rank = rank
+	frame.accent = accent
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	result.add_child(frame)
 	var box := VBoxContainer.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -118,12 +153,15 @@ static func augment_card(card: Dictionary, callback: Callable, width: float, hei
 	box.offset_bottom = -7
 	box.add_theme_constant_override("separation", 2)
 	result.add_child(box)
-	var kind := String(card.get("effect", ""))
+	var kind := String(card.get("key", card.get("effect", "")))
 	var keys := {"damage": "offense", "rate": "rate", "reload": "rate", "pierce": "offense", "projectile": "offense",
 		"range": "range", "armor": "defense", "health": "health", "building_hp": "defense", "speed": "motion",
-		"build": "build", "turret_damage": "offense", "turret_rate": "rate"}
+		"build": "build", "turret_damage": "offense", "turret_rate": "rate", "hp": "health",
+		"magazine": "offense", "move": "motion", "regen": "health", "crit": "range", "evade": "motion",
+		"projectile_speed": "rate", "ricochet": "offense", "freeze_strength": "defense", "burn_damage": "offense",
+		"saw_angle": "range", "dash_distance": "motion", "facility_hp": "build", "wall_hp": "defense"}
 	var icon_key := String(keys.get(kind, "support"))
-	var glyph := icon(icon_key, accent.lightened(0.40), 28.0)
+	var glyph := icon(icon_key, accent.lightened(0.42), 42.0 if show_description else 28.0)
 	glyph.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(glyph)
 	var rating := label("★".repeat(stars), 14, Color("#ffce54"))
@@ -142,4 +180,21 @@ static func augment_card(card: Dictionary, callback: Callable, width: float, hei
 		description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		box.add_child(description)
+	var owner := OPERATORS.find(String(card.get("hero", "")))
+	if owner >= 0:
+		var source: Texture2D = FlowUI.PORTRAITS[owner]
+		var face := AtlasTexture.new()
+		face.atlas = source
+		face.region = Rect2(source.get_width() * 0.26, 0, source.get_width() * 0.48, source.get_height() * 0.31)
+		var badge := TextureRect.new()
+		badge.texture = face
+		badge.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		badge.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+		badge.offset_left = -34.0
+		badge.offset_right = -6.0
+		badge.offset_top = 5.0
+		badge.offset_bottom = 33.0
+		result.add_child(badge)
 	return result

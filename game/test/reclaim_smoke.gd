@@ -154,9 +154,12 @@ func _run() -> void:
 	enemies.clear()
 	game.set("player_index", 3)
 	_spawn_test_zombie(game, player_pos + Vector2(70, 0), 1.0)
-	effects_before = effects.filter(func(effect): return not effect.has("hit_angle")).size()
+	effects_before = effects.size()
 	game.call("_attack_player")
-	_check(enemies.is_empty() and effects.filter(func(effect): return not effect.has("hit_angle")).size() == effects_before + 1 and effects.back().b == player_pos + Vector2(70, 0), "lethal chainsaw hit draws its effect to the removed zombie")
+	var contact := player_pos + Vector2(70, 0)
+	_check(enemies.is_empty() and effects.size() == effects_before + 1 and effects.back().has("hit_angle")
+		and effects.back().a == contact and effects.back().b == contact,
+		"lethal chainsaw hit emits a spark at the removed zombie's position")
 
 	game.set("player_index", 2)
 	game.set("player_attack_timer", 1.0)
@@ -243,6 +246,8 @@ func _run() -> void:
 	# Allow the 350 ms Continue cue to finish before freeing the scene.
 	resumed.set_process(false)
 	await create_timer(0.45).timeout
+	_test_harin_muzzle(resumed)
+	_test_infantry_visuals(resumed)
 	_test_yujin(resumed)
 	_test_spawn_multiplier(resumed)
 	_test_character_augments(resumed)
@@ -525,6 +530,20 @@ func _test_harin_muzzle(game: Control) -> void:
 	game.set("camera_zoom", 1.0)
 
 
+func _test_infantry_visuals(game: Control) -> void:
+	for hero in [0, 1]:
+		game.set("player_index", hero)
+		game.call("_reset_run")
+		game.set("player_facing", Vector2.UP)
+		game.call("_attack_player")
+		var visual: RefCounted = game.get("_infantry_visual")
+		var shots: Array = game.get("player_projectiles").shots
+		_check(visual.get("_shot_facing") == Vector2.UP and float(visual.get("_shot_time")) > 0.0,
+			"infantry firing selects its authored north pose")
+		_check(shots.size() == (5 if hero == 0 else 1) and Vector2(shots[0].tracer_offset).y < 0.0,
+			"infantry keeps its shotgun or rifle behavior with an upright muzzle effect")
+
+
 func _test_yujin(game: Control) -> void:
 	game.set("player_index", 3)
 	game.call("_reset_run")
@@ -539,6 +558,11 @@ func _test_yujin(game: Control) -> void:
 	var visual: RefCounted = game.get("_yujin_visual")
 	_check(float(enemies[0].hp) < front_hp and is_equal_approx(float(enemies[1].hp), back_hp),
 		"Yujin's chainsaw preserves forward-only melee damage")
+	var hits: Array = game.get("effects")
+	_check(game.get("player_projectiles").shots.is_empty()
+		and hits.any(func(effect): return effect.has("hit_angle"))
+		and hits.all(func(effect): return effect.a == effect.b),
+		"Yujin's cut produces local hit sparks without bullets or tracer lines")
 	_check(float(visual.get("_attack_left")) > 0.0, "the real melee attack starts Yujin's cutting animation")
 	game.set("player_facing", Vector2.UP)
 	game.call("_attack_player")
