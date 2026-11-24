@@ -18,14 +18,14 @@ const PrologueScreen = preload("res://scripts/reclaim/flow/prologue_screen.gd")
 const LandingSequence = preload("res://scripts/reclaim/flow/landing_sequence.gd")
 const FlowSfx = preload("res://scripts/reclaim/flow/flow_sfx.gd")
 ## Landing zone and first player position for the opening landing cut.
-const LANDING_ZONE := Vector2(300.0, -10.0)
+const LANDING_ZONE := Vector2(235.0, -10.0)
 const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
 const CELL := 48.0
 const PLAYER_RADIUS := 13.0
 const ENEMY_SHOT_RADIUS := 7.0
-const GRID_SIZE := 9
-const GRID_MIN := -1
+const GRID_SIZE := 11
+const GRID_MIN := -2
 const GRID_MAX := GRID_MIN + GRID_SIZE - 1
 const BUILD_ENTRANCES := [Vector2i(3, GRID_MIN), Vector2i(3, GRID_MAX), Vector2i(GRID_MIN, 3), Vector2i(GRID_MAX, 3)]
 const MAX_CAMERA_ZOOM := 2.4
@@ -39,7 +39,6 @@ const RESERVED_KEYS := [KEY_TAB, KEY_C, KEY_B, KEY_G, KEY_U, KEY_W, KEY_A, KEY_S
 const MAX_ENEMIES := 320
 const WAVE_SPAWN_MULTIPLIER := 5
 const WAVE_SECONDS := 22.0
-const MAP_LIMIT := Vector2(2200.0, 1600.0)
 const BASE_CELL := Vector2i(3, 3)
 const PALETTE := {
 	"bg": Color("#121719"), "ground": Color("#202826"), "road": Color("#303733"), "line": Color("#72796a"),
@@ -47,6 +46,7 @@ const PALETTE := {
 	"gold": Color("#d0a873"), "green": Color("#8db296"), "red": Color("#df7664"), "blue": Color("#78b7c2"), "white": Color("#ffffff")
 }
 
+var jeju_map := JejuMapArt.new()
 var screen := "boot"
 var player_index := 0
 var difficulty_index := 1
@@ -209,6 +209,7 @@ func _ready() -> void:
 	flow_sfx = FlowSfx.new()
 	add_child(flow_sfx)
 	flow_sfx.enabled = sound_on
+	jeju_map.setup(self)
 	_build_ui()
 	_show_screen("boot")
 	print("[reclaim-boot] 수도 탈환작전 · 한국어 메뉴 준비")
@@ -346,7 +347,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _draw() -> void:
-	if screen in ["play", "pause", "augment", "result", "landing", "info"] or (screen == "settings" and settings_from_pause):
+	var world_visible := screen in ["play", "pause", "augment", "result", "landing", "info"] or (screen == "settings" and settings_from_pause)
+	jeju_map.align(player_pos, size, _view_zoom(), world_visible)
+	if world_visible:
 		_draw_world()
 	else:
 		_draw_menu_backdrop()
@@ -488,6 +491,9 @@ func _build_intro_screen() -> void:
 	flow_prologue.sfx = flow_sfx
 	intro_screen.add_child(flow_prologue)
 	flow_prologue.finished.connect(_launch_run)
+	flow_prologue.skipped.connect(func():
+		_start_new_run()
+		skip_landing())
 func _build_settings_screen() -> void:
 	var box := _center_box(settings_screen)
 	_add_heading(box, "설정 · 조작", "WASD 이동은 고정 · 회피와 일시정지 키는 재지정 가능")
@@ -864,6 +870,7 @@ func _start_new_run() -> void:
 	var hq: Dictionary = structures[0]
 	hq_build_ratio = 0.0
 	landing.setup(LANDING_ZONE, PLAYER_START, _entry_world_center(hq), flow_sfx)
+	landing.operator_line = PrologueScreen.HERO_LINES[player_index]
 	player_pos = landing.player_world()
 	_show_screen("landing")
 func _update_landing(delta: float) -> void:
@@ -1002,7 +1009,7 @@ func _load_saved_run() -> void:
 	manual_attack = bool(state.get("manual_attack", false))
 	manual_trigger = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
-	player_pos = Vector2(float(pp[0]), float(pp[1]))
+	player_pos = jeju_map.nearest_land(Vector2(float(pp[0]), float(pp[1])), PLAYER_RADIUS)
 	structures.clear()
 	for entry in state.get("structures", []):
 		structures.append({"kind": String(entry.get("kind", "wall")), "cell": Vector2i(int(entry.get("x", 0)), int(entry.get("y", 0))), "hp": float(entry.get("hp", 100.0)), "max_hp": float(entry.get("max_hp", 100.0)), "level": int(entry.get("level", 1)), "cool": 0.0, "built": true})
@@ -1019,7 +1026,8 @@ func _load_saved_run() -> void:
 		if warned_enemies.has(String(kind)):
 			field_warning.enqueue(String(kind))
 	for entry in state.get("enemies", []):
-		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), Vector2(float(entry.get("x", 0.0)), float(entry.get("y", 0.0))), bool(entry.get("boss", false)))
+		var saved_pos := Vector2(float(entry.get("x", 0.0)), float(entry.get("y", 0.0)))
+		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), jeju_map.nearest_land(saved_pos, ZombieVisual.RADIUS), bool(entry.get("boss", false)))
 		enemy.hp = float(entry.get("hp", enemy.max_hp))
 		enemy.cool = float(entry.get("cool", 0.5))
 		var saved_variant := int(entry.get("variant", -1))
@@ -1195,7 +1203,7 @@ func _refresh_build_panel() -> void:
 	for child in build_content.get_children():
 		if child != build_status_label:
 			child.queue_free()
-	var title := _make_label("실시간 건설", 21, PALETTE.gold)
+	var title := _make_label("실시간 건설 · 11×11", 21, PALETTE.gold)
 	build_content.add_child(title)
 	var tabrow := HBoxContainer.new()
 	tabrow.add_theme_constant_override("separation", 5)
@@ -1462,10 +1470,16 @@ func _try_dash() -> void:
 
 
 func _move_player(motion: Vector2) -> void:
-	var candidate_x := player_pos + Vector2(motion.x, 0)
-	if _blocking_structure(candidate_x, PLAYER_RADIUS, true) < 0: player_pos.x = candidate_x.x
-	var candidate_y := player_pos + Vector2(0, motion.y)
-	if _blocking_structure(candidate_y, PLAYER_RADIUS, true) < 0: player_pos.y = candidate_y.y
+	# Step across the footprint checks so a long dash cannot cross a cliff.
+	var steps := maxi(1, ceili(maxf(absf(motion.x), absf(motion.y)) / 16.0))
+	var step := motion / float(steps)
+	for i in range(steps):
+		var candidate_x := player_pos + Vector2(step.x, 0.0)
+		if jeju_map.walkable(candidate_x, PLAYER_RADIUS) and _blocking_structure(candidate_x, PLAYER_RADIUS, true) < 0:
+			player_pos.x = candidate_x.x
+		var candidate_y := player_pos + Vector2(0.0, step.y)
+		if jeju_map.walkable(candidate_y, PLAYER_RADIUS) and _blocking_structure(candidate_y, PLAYER_RADIUS, true) < 0:
+			player_pos.y = candidate_y.y
 
 
 func _structure_overlap_depth(point: Vector2, center: Vector2, width: int, radius: float) -> float:
@@ -1505,8 +1519,6 @@ func _update_player(delta: float) -> void:
 	else:
 		_move_player(direction * speed * delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
-	player_pos.x = clampf(player_pos.x, -MAP_LIMIT.x, MAP_LIMIT.x)
-	player_pos.y = clampf(player_pos.y, -MAP_LIMIT.y, MAP_LIMIT.y)
 	player_motion = (player_pos - previous_position) / maxf(delta, 0.001)
 	_update_player_attack(delta)
 	if player_drone_level > 0:
@@ -1611,10 +1623,19 @@ func _update_spawn(delta: float) -> void:
 			var kind := _choose_enemy_kind()
 			var angle := _random.randf_range(0.0, TAU)
 			var distance := _random.randf_range(470.0, 740.0)
-			var pos := player_pos + Vector2(cos(angle), sin(angle)) * distance
-			pos.x = clampf(pos.x, -MAP_LIMIT.x + 90, MAP_LIMIT.x - 90)
-			pos.y = clampf(pos.y, -MAP_LIMIT.y + 90, MAP_LIMIT.y - 90)
+			var pos := _land_spawn(angle, distance)
 			_spawn_enemy(kind, pos, false)
+
+
+func _land_spawn(angle: float, distance: float) -> Vector2:
+	# Try neighbouring directions before falling back to nearby land.
+	var limit := JejuMapArt.LIMIT - Vector2.ONE * 32.0
+	for attempt in range(8):
+		var direction := Vector2.from_angle(angle + float(attempt) * TAU / 8.0)
+		var candidate := (player_pos + direction * distance).clamp(-limit, limit)
+		if candidate.distance_squared_to(player_pos) >= 300.0 * 300.0 and jeju_map.walkable(candidate, 24.0):
+			return candidate
+	return jeju_map.nearest_land(player_pos + Vector2.from_angle(angle) * distance, 24.0)
 
 
 func _choose_enemy_kind() -> String:
@@ -1669,7 +1690,7 @@ func _spawn_boss(at_stage: int) -> void:
 	var old_stage := stage
 	stage = at_stage
 	var angle := _random.randf_range(0, TAU)
-	var spawn_at := player_pos + Vector2(cos(angle), sin(angle)) * 650.0
+	var spawn_at := _land_spawn(angle, 650.0)
 	var kind := "boss40" if at_stage == 40 else "boss80" if at_stage == 80 else "boss100"
 	_spawn_enemy(kind, spawn_at, true)
 	stage = old_stage
@@ -1822,8 +1843,20 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 			enemy.cool = 0.65 if enemy.boss else 1.0
 		return
 	var speed := float(enemy.speed) * (0.48 if float(enemy.slow) > 0.0 else 1.0)
-	var proposed: Vector2 = enemy.pos + toward.normalized() * speed * delta
-	var blocker := _blocking_structure(proposed, 24.0 if enemy.boss else body_radius)
+	var movement := toward.normalized() * speed * delta
+	var radius := 24.0 if enemy.boss else body_radius
+	var proposed: Vector2 = enemy.pos + movement
+	if not jeju_map.walkable(proposed, radius):
+		var followed := float(enemy.get("terrain_side", 1.0 if int(enemy.spawn_id) % 2 == 0 else -1.0))
+		for angle in [0.72 * followed, 1.42 * followed, -0.72 * followed, -1.42 * followed]:
+			var alternate: Vector2 = enemy.pos + movement.rotated(angle)
+			if jeju_map.walkable(alternate, radius):
+				proposed = alternate
+				enemy.terrain_side = signf(angle)
+				break
+	if not jeju_map.walkable(proposed, radius):
+		return
+	var blocker := _blocking_structure(proposed, radius)
 	if blocker < 0:
 		enemy.pos = proposed
 	else:
@@ -1912,7 +1945,7 @@ func _update_boss_pattern(e: Dictionary, delta: float) -> void:
 	elif current_stage == 100:
 		for n in range(3):
 			var a := _random.randf_range(0, TAU)
-			_spawn_enemy("normal", e.pos + Vector2(cos(a), sin(a)) * 90.0, false)
+			_spawn_enemy("normal", jeju_map.nearest_land(e.pos + Vector2.from_angle(a) * 90.0, ZombieVisual.RADIUS), false)
 		_show_toast("군체 지배자 · 추가 개체 소환")
 
 
@@ -1995,9 +2028,9 @@ func _update_zombie_corpses(now: float) -> void:
 		zombie_corpses.pop_front()
 
 
-func _zombie_on_screen(point: Vector2) -> bool:
+func _zombie_on_screen(point: Vector2, padding := 48.0) -> bool:
 	var visible_size := size / _view_zoom()
-	return Rect2((size - visible_size) * 0.5, visible_size).grow(48.0).has_point(point)
+	return Rect2((size - visible_size) * 0.5, visible_size).grow(padding).has_point(point)
 
 
 func _explode_damage_center(center: Vector2, radius: float, damage: float) -> void:
@@ -2595,21 +2628,16 @@ func _draw_menu_backdrop() -> void:
 
 func _draw_world() -> void:
 	var view := Rect2(Vector2.ZERO, size)
-	draw_rect(view, Color("#1c2421"))
 	var zoom := _view_zoom()
 	var camera := Transform2D(0.0, Vector2.ONE * zoom, 0.0, size * 0.5 * (1.0 - zoom))
 	draw_set_transform_matrix(camera)
-	_draw_city_tiles()
-	_draw_base_zone()
+	var camera_offset := _world_to_screen(Vector2.ZERO)
+	for prop in jeju_map.decorations:
+		if _zombie_on_screen(prop.feet + camera_offset, 190.0):
+			JejuMapArt.draw_prop(self, prop, camera_offset)
 	if build_open or build_mode:
 		_draw_build_grid()
-	for entry in structures:
-		if float(entry.hp) > 0.0: _draw_structure(entry)
-	for corpse in zombie_corpses:
-		var center := _world_to_screen(corpse.pos)
-		if _zombie_on_screen(center):
-			ZombieVisual.draw_dead(self, corpse, center, run_seconds)
-	for enemy in enemies: _draw_enemy(enemy, camera)
+	_draw_world_depth(camera, camera_offset)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
 		var traveled: float = shot.traveled
@@ -2620,8 +2648,6 @@ func _draw_world() -> void:
 		tail += offset * maxf(0.0, 1.0 - (traveled - tail_length) / 96.0)
 		draw_line(tail, tip, shot.color, 2.0)
 	for effect in effects: _draw_effect(effect)
-	if screen != "landing" or landing.player_visible():
-		_draw_player()
 	if screen == "landing":
 		landing.draw(self, _world_to_screen)
 		landing.draw_overlay(self, size)
@@ -2633,16 +2659,30 @@ func _draw_world() -> void:
 		draw_rect(view, Color(0.025, 0.035, 0.035, 0.16 if screen == "augment" else 0.42))
 
 
-func _draw_city_tiles() -> void:
-	JejuMapArt.draw(self, player_pos, size)
-
-
-func _draw_base_zone() -> void:
-	var center := _world_to_screen(Vector2.ZERO)
-	draw_circle(center, 255, Color(0.08, 0.12, 0.10, 0.16))
-	draw_arc(center, 170.0, 0.0, TAU, 64, Color(PALETTE.gold, 0.15), 1.2)
-	# A subtle field-light square marks the construction zone even when its grid is hidden.
-	draw_rect(Rect2(center - Vector2.ONE * CELL * GRID_SIZE * 0.5, Vector2.ONE * CELL * GRID_SIZE), Color(0.5, 0.6, 0.45, 0.025), false, 1.0)
+func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
+	var layers: Array[Array] = []
+	for prop in jeju_map.props:
+		if _zombie_on_screen(prop.feet + camera_offset, 260.0):
+			layers.append([prop.feet.y, 0, prop])
+	for entry in structures:
+		if float(entry.hp) > 0.0:
+			layers.append([_entry_world_center(entry).y + CELL * 0.5, 1, entry])
+	for corpse in zombie_corpses:
+		if _zombie_on_screen(_world_to_screen(corpse.pos)):
+			layers.append([corpse.pos.y + 40.0, 2, corpse])
+	for enemy in enemies:
+		if _zombie_on_screen(_world_to_screen(enemy.pos), 100.0):
+			layers.append([enemy.pos.y + 40.0, 3, enemy])
+	if screen != "landing" or landing.player_visible():
+		layers.append([player_pos.y + 40.0, 4, {}])
+	layers.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	for item in layers:
+		match item[1]:
+			0: JejuMapArt.draw_prop(self, item[2], camera_offset)
+			1: _draw_structure(item[2])
+			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds)
+			3: _draw_enemy(item[2], camera)
+			4: _draw_player()
 
 
 func _draw_build_grid() -> void:
@@ -2677,15 +2717,11 @@ func _draw_structure(entry: Dictionary) -> void:
 	var center := _world_to_screen(_entry_world_center(entry))
 	var width := 2 if kind == "hq" or _is_building(kind) else 1
 	var bounds := Rect2(center - Vector2(CELL * float(width) * 0.5, CELL * 0.5), Vector2(CELL * float(width), CELL))
-	if kind == "hq" and hq_build_ratio < 1.0:
-		LandingSequence.draw_tent_build(self, bounds, center, hq_build_ratio if landing.hq_ratio() >= 0.0 else -1.0)
-		return
 	if kind == "hq":
-		# Only the initial military tent and HQ are drawn; no default allies or defenses.
-		draw_rect(bounds.grow(-5), Color("#6b7058"))
-		draw_colored_polygon(PackedVector2Array([Vector2(bounds.position.x - 2, bounds.position.y + 4), Vector2(center.x, bounds.position.y - 12), Vector2(bounds.end.x + 2, bounds.position.y + 4)]), Color("#8f7456"))
-		draw_line(Vector2(center.x, bounds.position.y - 11), Vector2(center.x, bounds.position.y + 20), Color("#d0bd8e"), 2.0)
-		draw_rect(Rect2(center.x - 7, bounds.position.y + 9, 14, 16), Color("#353a31"))
+		if hq_build_ratio <= 0.0:
+			return
+		var tent_size := JejuMapArt.HQ.get_size() * (112.0 / JejuMapArt.HQ.get_width())
+		draw_texture_rect(JejuMapArt.HQ, Rect2(center + Vector2(-tent_size.x * 0.5, 24.0 - tent_size.y), tent_size), false, Color(1, 1, 1, hq_build_ratio))
 		draw_string(ThemeDB.fallback_font, center + Vector2(-34, 40), "지휘본부", HORIZONTAL_ALIGNMENT_LEFT, 90, 11, PALETTE.text)
 	elif kind == "wall":
 		draw_rect(bounds.grow(-7), Color("#9a8667"))

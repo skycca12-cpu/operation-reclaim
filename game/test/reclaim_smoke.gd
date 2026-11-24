@@ -53,17 +53,17 @@ func _run() -> void:
 	Input.parse_input_event(ev_up)
 	await process_frame
 	_check((game.get("player_pos") as Vector2).x > before_x + 1.0, "holding D moves the player (WASD regression)")
-	_check(String(game.call("_validate_placement", "wall", Vector2i(3, -1))) != "", "north entrance remains permanently open")
+	_check(String(game.call("_validate_placement", "wall", Vector2i(3, -2))) != "", "north entrance remains permanently open")
 	_check(String(game.call("_validate_placement", "wall", Vector2i(3, 2))) != "", "a wall cannot block the north escape route")
-	_check(String(game.call("_validate_placement", "clinic", Vector2i(7, 4))) != "", "two-cell building stays within the nine-by-nine area")
-	_check(String(game.call("_validate_placement", "basic", Vector2i(7, 7))) == "", "outer expansion ring accepts a one-cell turret")
+	_check(String(game.call("_validate_placement", "clinic", Vector2i(8, 4))) != "", "two-cell building stays within the eleven-by-eleven area")
+	_check(String(game.call("_validate_placement", "basic", Vector2i(8, 8))) == "", "outer expansion ring accepts a one-cell turret")
 	var build_key := InputEventKey.new()
 	build_key.physical_keycode = KEY_1
 	build_key.keycode = KEY_1
 	build_key.pressed = true
 	root.push_input(build_key.duplicate(), true)
 	_check(game.get("selected_build") == "basic", "1 selects a turret with the construction panel closed")
-	game.call("_try_place_at", game.call("_cell_world", Vector2i(7, 7)))
+	game.call("_try_place_at", game.call("_cell_world", Vector2i(8, 8)))
 	structures = game.get("structures")
 	_check(structures.size() == 2 and structures[1].kind == "basic", "player-built turret is installed")
 	_check(String(game.call("_validate_placement", "clinic", Vector2i(1, 1))) == "", "first unique facility can be installed")
@@ -74,7 +74,7 @@ func _run() -> void:
 	game.call("_try_place_at", game.call("_cell_world", Vector2i(1, 1)))
 	var supply_before: int = game.get("money")
 	game.set("money", 200)
-	game.call("_select_entity_at", game.call("_cell_world", Vector2i(7, 7)))
+	game.call("_select_entity_at", game.call("_cell_world", Vector2i(8, 8)))
 	build_key.physical_keycode = KEY_U
 	build_key.keycode = KEY_U
 	root.push_input(build_key.duplicate(), true)
@@ -229,9 +229,62 @@ func _run() -> void:
 	_test_spawn_multiplier(resumed)
 	_test_character_augments(resumed)
 	_test_enemy_wall_cover(resumed)
+	_test_jeju_battlefield(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_jeju_battlefield(game: Control) -> void:
+	var map: RefCounted = game.get("jeju_map")
+	var terrain: TileMapLayer = map.get("tiles")
+	_check(terrain.get_used_cells().size() == 35 * 35 and terrain.get_used_rect().size == Vector2i(35, 35),
+		"Jeju has exactly 35 by 35 terrain cells")
+	_check(not map.call("walkable", Vector2(790, 768), 13.0), "southeast sea and cliffs block passage")
+	_check(not map.call("walkable", Vector2(512, -530), 0.0), "the gas station has a ground footprint")
+	_check(map.call("walkable", Vector2(512, -589), 0.0), "the gas station roof projection is walkable")
+	game.set("player_pos", Vector2(535, 730))
+	game.call("_move_player", Vector2(280, 0))
+	_check(game.get("player_pos").x < 790.0, "a long movement cannot skip over the coast boundary")
+	game.set("player_pos", Vector2.ZERO)
+	for i in range(8):
+		var position: Vector2 = game.call("_land_spawn", float(i) * TAU / 8.0, 600.0)
+		_check(map.call("walkable", position, 24.0), "spawn sector %d resolves to walkable land" % i)
+	# Check continuous lanes from the plaza toward all four map edges.
+	for direction in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+		for distance in range(24, 721, 24):
+			_check(map.call("walkable", direction * distance, 21.0), "cardinal approach %s stays open" % direction)
+	game.call("_reset_run")
+	game.set("stage", 95)
+	for i in range(70):
+		game.set("spawn_timer", 0.0)
+		game.call("_update_spawn", 0.0)
+	var enemies: Array = game.get("enemies")
+	_check(enemies.size() == 320 and enemies.all(func(enemy): return map.call("walkable", enemy.pos, 24.0)),
+		"a late wave reaches the existing 320-enemy cap with all enemies on land")
+	for step in range(20):
+		game.call("_update_enemies", 0.05)
+	_check(enemies.all(func(enemy): return map.call("walkable", enemy.pos, 0.0)),
+		"late-wave enemies stay on land while approaching the base")
+	for hero in range(Data.CHARACTERS.size()):
+		game.call("_choose_character", hero)
+		game.call("_choose_difficulty", 1)
+		var intro: Control = game.get("flow_prologue")
+		intro.call("_process", 4.0)
+		intro.call("_process", 4.0)
+		_check(game.get("screen") == "landing", "each operator reaches the real-map landing")
+		game.call("_update_landing", 3.5)
+		var landing: RefCounted = game.get("landing")
+		_check(landing.call("player_visible") and landing.call("heli_visible"), "each operator disembarks before departure")
+		game.call("_update_landing", 3.5)
+		var structures: Array = game.get("structures")
+		_check(game.get("screen") == "play" and game.get("player_index") == hero and structures.size() == 1,
+			"natural landing hands control to each selected operator with HQ only")
+		game.call("_choose_character", hero)
+		game.call("_choose_difficulty", 1)
+		intro.call("skip")
+		_check(game.get("screen") == "play" and landing.call("heli_visible") == false and game.get("hq_build_ratio") == 1.0,
+			"skipping leaves every operator in the same playable state")
 
 
 func _test_enemy_wall_cover(game: Control) -> void:
