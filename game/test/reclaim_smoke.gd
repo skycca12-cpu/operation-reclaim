@@ -28,7 +28,7 @@ func _run() -> void:
 	_check(game.get("screen") == "intro" and game.get("difficulty_index") == 4, "difficulty choice opens the prologue")
 	_check(Data.CHARACTERS.size() == 4, "four selectable operators in data")
 	_check(Data.ENEMIES.size() == 5, "five enemy families in data")
-	_check(Data.TURRETS.size() == 7, "seven turret families in data")
+	_check(Data.TURRETS.size() == 6, "six offensive turret families in data")
 	_check(Data.augment_catalog().size() == 52, "30 common and 22 hero augments in data")
 	game.set("player_index", 1)
 	game.set("difficulty_index", 1)
@@ -248,9 +248,40 @@ func _run() -> void:
 	_test_character_augments(resumed)
 	_test_enemy_wall_cover(resumed)
 	_test_jeju_battlefield(resumed)
+	_test_repair_drone(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_repair_drone(game: Control) -> void:
+	game.call("_reset_run")
+	game.set("money", 200)
+	game.call("_select_build", "repair")
+	var structures: Array = game.get("structures")
+	_check(game.get("repair_drone_level") == 1 and structures.size() == 1 and not game.get("build_mode"),
+		"repair drone installs immediately without occupying a construction cell")
+	var wall := {"kind": "wall", "cell": Vector2i(7, 7), "hp": 20.0, "max_hp": 180.0, "level": 1}
+	structures.append(wall)
+	var start: Vector2 = game.get("repair_drone_pos")
+	game.call("_update_repair_drone", 0.1)
+	_check(start != game.get("repair_drone_pos") and wall.hp == 20.0, "drone begins moving before repairing")
+	for i in range(35):
+		game.call("_update_repair_drone", 0.1)
+	_check(wall.hp > 20.0, "drone repairs the wall once it arrives")
+	game.call("_upgrade_repair_drone")
+	game.call("_save_all")
+	game.call("_load_saved_run")
+	_check(game.get("repair_drone_level") == 2, "repair drone upgrade survives save and reload")
+	var legacy: Dictionary = game.get("saved_run")
+	legacy.erase("repair_drone_level")
+	legacy.structures.append({"kind": "repair", "x": 6, "y": 6, "hp": 90.0, "max_hp": 180.0, "level": 4})
+	game.call("_load_saved_run")
+	_check(game.get("repair_drone_level") == 4 and not structures.any(func(item): return item.kind == "repair"),
+		"legacy repair towers become drones and free their building cell")
+	game.call("_damage_structure", 1, 999.0)
+	var effects: Array = game.get("effects")
+	_check(effects.any(func(effect): return effect.has("debris")), "a destroyed wall emits debris")
 
 
 func _test_jeju_battlefield(game: Control) -> void:

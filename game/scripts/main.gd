@@ -9,10 +9,15 @@ const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const YujinVisual = preload("res://scripts/reclaim/yujin_visual.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
+const REPAIR_DRONE_ART = preload("res://assets/reclaim/jeju/structures/repair_drone.png")
+const FacilityEffects = preload("res://scripts/reclaim/flow/heli_art.gd")
+const DAMAGE_MARK := 0.75
+const DAMAGE_SMOKE := 0.45
+const DAMAGE_FIRE := 0.25
 const BASE_ART = preload("res://assets/reclaim/jeju/structures/base.png")
 const TURRET_ART = preload("res://assets/reclaim/jeju/structures/turrets.png")
 const STRUCTURE_FRAME := Vector2(112, 104)
-const TURRET_ROWS := {"basic": 0, "heavy": 1, "rocket": 2, "electric": 3, "flame": 4, "freeze": 5, "repair": 6}
+const TURRET_ROWS := {"basic": 0, "heavy": 1, "rocket": 2, "electric": 3, "flame": 4, "freeze": 5}
 const FACILITY_COLUMNS := {"clinic": 0, "supply": 1, "workshop": 2, "research": 3, "outpost": 4}
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
@@ -82,6 +87,9 @@ var money := 150
 var medals := 0
 var boss_kills := 0
 var difficulty: Dictionary = {}
+var repair_drone_level := 0
+var repair_drone_pos := Vector2.ZERO
+var repair_drone_cooldown := 0.0
 var structures: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
 var warned_enemies: Dictionary = {}
@@ -238,6 +246,7 @@ func _process(delta: float) -> void:
 	_update_spawn(delta)
 	_update_enemies(delta)
 	_update_turrets(delta)
+	_update_repair_drone(delta)
 	_update_projectiles(delta)
 	_update_effects(delta)
 	_update_zombie_corpses(run_seconds + delta)
@@ -650,7 +659,7 @@ func _build_game_hud() -> void:
 	build_status_label.custom_minimum_size.y = 16
 	build_status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	build_content.add_child(build_status_label)
-	var hint := _make_label("건설 [B]   포탑 [1–7]   방벽 [8]   시설 [F1–F5]   강화 [U]   우클릭 취소", 12, PALETTE.muted, true)
+	var hint := _make_label("건설 [B]   포탑 [1–6]   수리 드론 [7]   방벽 [8]   시설 [F1–F5]   강화 [U]   우클릭 취소", 12, PALETTE.muted, true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	hint.offset_top = -31
 	hint.offset_bottom = -8
@@ -924,6 +933,9 @@ func _reset_run() -> void:
 	augment_reroll_used = false
 	picked_augment_ids.clear()
 	acquired_augments.clear()
+	repair_drone_level = 0
+	repair_drone_pos = Vector2.ZERO
+	repair_drone_cooldown = 0.0
 	structures.clear()
 	enemies.clear()
 	zombie_corpses.clear()
@@ -1017,11 +1029,18 @@ func _load_saved_run() -> void:
 	manual_trigger = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
 	player_pos = jeju_map.nearest_land(Vector2(float(pp[0]), float(pp[1])), PLAYER_RADIUS)
+	repair_drone_level = clampi(int(state.get("repair_drone_level", 0)), 0, 5)
+	repair_drone_cooldown = 0.0
 	structures.clear()
 	for entry in state.get("structures", []):
+		if entry.get("kind") == "repair":
+			if float(entry.get("hp", 0.0)) > 0.0:
+				repair_drone_level = maxi(repair_drone_level, clampi(int(entry.get("level", 1)), 1, 5))
+			continue
 		structures.append({"kind": String(entry.get("kind", "wall")), "cell": Vector2i(int(entry.get("x", 0)), int(entry.get("y", 0))), "hp": float(entry.get("hp", 100.0)), "max_hp": float(entry.get("max_hp", 100.0)), "level": int(entry.get("level", 1)), "cool": 0.0, "built": true})
 	if structures.is_empty():
 		structures.append({"kind": "hq", "cell": BASE_CELL, "hp": 1200.0, "max_hp": 1200.0, "level": 1, "cool": 0.0, "built": true})
+	repair_drone_pos = _hq_position()
 	enemies.clear()
 	zombie_corpses.clear()
 	field_warning.clear()
@@ -1243,6 +1262,17 @@ func _refresh_build_panel() -> void:
 		var items := Data.TURRETS if build_tab == "turret" else Data.BUILDINGS
 		for item in items:
 			_add_build_option(list, item, item.get("color", PALETTE.green))
+		if build_tab == "building":
+			if repair_drone_level == 0:
+				_add_build_option(list, Data.REPAIR_DRONE, Data.REPAIR_DRONE.color)
+				list.move_child(list.get_child(-1), 0)
+			else:
+				var label := "수리 드론 Lv.%d · 강화 %d" % [repair_drone_level, _repair_drone_upgrade_cost()] if repair_drone_level < 5 else "수리 드론 Lv.5 · 최대 강화"
+				var upgrade := _build_menu_button(label, _upgrade_repair_drone, Data.REPAIR_DRONE.color)
+				upgrade.disabled = repair_drone_level >= 5
+				list.add_child(upgrade)
+				list.move_child(upgrade, 0)
+
 	build_content.move_child(build_status_label, build_content.get_child_count() - 1)
 	_fit_build_panel.call_deferred()
 
@@ -1281,6 +1311,9 @@ func _select_build_tab(tab: String) -> void:
 
 
 func _select_build(kind: String) -> void:
+	if kind == "repair":
+		_install_repair_drone()
+		return
 	selected_build = kind
 	build_mode = true
 	selected_entity = -1
@@ -1296,6 +1329,7 @@ func _effective_cost(base: int) -> int:
 
 
 func _build_definition(kind: String) -> Dictionary:
+	if kind == "repair": return Data.REPAIR_DRONE
 	for item in Data.TURRETS:
 		if String(item.id) == kind: return item
 	for item in Data.BUILDINGS:
@@ -2082,6 +2116,59 @@ func _explode_damage_center(center: Vector2, radius: float, damage: float) -> vo
 			_damage_enemy(i, damage, "blast")
 
 
+func _install_repair_drone() -> void:
+	if repair_drone_level > 0:
+		_show_toast("수리 드론이 이미 배치되어 있습니다.")
+		return
+	var price := _effective_cost(int(Data.REPAIR_DRONE.cost))
+	if money < price:
+		_show_toast("수리 드론 배치에 보급품 %d개가 필요합니다." % price)
+		return
+	_cancel_build()
+	money -= price
+	repair_drone_level = 1
+	repair_drone_pos = _hq_position()
+	repair_drone_cooldown = 0.0
+	_show_toast("수리 드론 배치 · 기지 자동 순찰")
+	if build_open: _refresh_build_panel()
+	_save_all()
+
+
+func _repair_drone_upgrade_cost() -> int:
+	return 30 + repair_drone_level * 24
+
+
+func _upgrade_repair_drone() -> void:
+	if repair_drone_level <= 0 or repair_drone_level >= 5:
+		return
+	var price := _repair_drone_upgrade_cost()
+	if money < price:
+		_show_toast("수리 드론 강화에 보급품 %d개가 필요합니다." % price)
+		return
+	money -= price
+	repair_drone_level += 1
+	_show_toast("수리 드론 레벨 %d 강화" % repair_drone_level)
+	if build_open: _refresh_build_panel()
+	_save_all()
+
+
+func _update_repair_drone(delta: float) -> void:
+	if repair_drone_level <= 0:
+		return
+	repair_drone_cooldown = maxf(0.0, repair_drone_cooldown - delta)
+	var target := _nearest_structure(repair_drone_pos, INF, true)
+	var destination := _hq_position() + Vector2.from_angle(run_seconds * 0.6) * 105.0
+	if target >= 0:
+		destination = _entry_world_center(structures[target])
+	repair_drone_pos = repair_drone_pos.move_toward(destination, 150.0 * delta)
+	if target >= 0 and repair_drone_cooldown <= 0.0 and repair_drone_pos.distance_to(destination) <= 29.0:
+		var facility := structures[target]
+		facility.hp = minf(float(facility.max_hp), float(facility.hp) + 24.0 * repair_drone_level)
+		repair_drone_cooldown = 1.0
+		if effects.size() < 80:
+			effects.append({"a": repair_drone_pos + Vector2(0, -30), "b": destination, "time": 0.22, "color": PALETTE.green})
+
+
 func _update_turrets(delta: float) -> void:
 	for index in range(structures.size()):
 		var s: Dictionary = structures[index]
@@ -2090,14 +2177,6 @@ func _update_turrets(delta: float) -> void:
 		if not _is_turret(kind) and kind != "outpost" and kind != "hq": continue
 		s.cool = maxf(0.0, float(s.get("cool", 0.0)) - delta)
 		var pos := _entry_world_center(s)
-		if kind == "repair":
-			if float(s.cool) <= 0.0:
-				var repair_target := _nearest_structure(pos, 310.0, true)
-				if repair_target >= 0:
-					structures[repair_target].hp = minf(float(structures[repair_target].max_hp), float(structures[repair_target].hp) + 24.0 * float(s.level))
-					s.cool = 1.0
-					effects.append({"a": pos, "b": _entry_world_center(structures[repair_target]), "time": 0.22, "color": PALETTE.green})
-			continue
 		if kind == "hq": continue
 		var def := _build_definition(kind)
 		var turret_range := float(def.get("range", 330.0)) * player_mod_range
@@ -2476,17 +2555,27 @@ func _hq_position() -> Vector2:
 func _damage_hq(amount: float) -> void:
 	var i := _hq_index()
 	if i < 0: return
-	structures[i].hp = maxf(0.0, float(structures[i].hp) - amount)
-	if float(structures[i].hp) <= 0.0:
+	var previous_hp := float(structures[i].hp)
+	structures[i].hp = maxf(0.0, previous_hp - amount)
+	if previous_hp > 0.0 and float(structures[i].hp) <= 0.0:
+		_emit_structure_debris(structures[i])
 		_show_toast("지휘본부가 파괴되었습니다!")
 
 
 func _damage_structure(index: int, amount: float) -> void:
 	if index < 0 or index >= structures.size(): return
-	structures[index].hp = maxf(0.0, float(structures[index].hp) - amount)
-	if float(structures[index].hp) <= 0.0:
+	var previous_hp := float(structures[index].hp)
+	structures[index].hp = maxf(0.0, previous_hp - amount)
+	if previous_hp > 0.0 and float(structures[index].hp) <= 0.0:
+		_emit_structure_debris(structures[index])
 		_show_toast("%s 파괴 · 슬롯 반환" % String(_build_definition(String(structures[index].kind)).get("name", structures[index].kind)))
 		if String(structures[index].kind) == "hq": _finish_run(false)
+
+
+func _emit_structure_debris(structure: Dictionary) -> void:
+	if effects.size() < 80:
+		var broken := _entry_world_center(structure)
+		effects.append({"a": broken, "b": broken, "time": 0.32, "debris": true})
 
 
 func _finish_run(won: bool) -> void:
@@ -2564,6 +2653,7 @@ func _save_all() -> void:
 		saved_run["acquired_augments"] = acquired_augments
 		saved_run["warned_enemies"] = warned_enemies.keys()
 		saved_run["pending_enemy_warnings"] = field_warning.pending_warnings()
+		saved_run["repair_drone_level"] = repair_drone_level
 		saved_run["magazine"] = player_magazine
 		saved_run["reload_remaining"] = player_reload_timer
 		saved_run["manual_attack"] = manual_attack
@@ -2696,6 +2786,8 @@ func _draw_world() -> void:
 		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length)
 		tail += offset * maxf(0.0, 1.0 - (traveled - tail_length) / 96.0)
 		draw_line(tail, tip, shot.color, 2.0)
+	if repair_drone_level > 0:
+		_draw_repair_drone()
 	for effect in effects: _draw_effect(effect)
 	if screen == "landing":
 		landing.draw(self, _world_to_screen)
@@ -2765,37 +2857,48 @@ func _draw_placement_preview() -> void:
 		draw_rect(Rect2(p - Vector2(CELL * 0.5, CELL * 0.5), Vector2(CELL, CELL)), color, false, 2.0)
 
 
+func _draw_repair_drone() -> void:
+	var center := _world_to_screen(repair_drone_pos)
+	var height := -29.0 + sin(run_seconds * 7.0) * 3.0
+	var extent := REPAIR_DRONE_ART.get_size() * (35.0 / REPAIR_DRONE_ART.get_width())
+	draw_circle(center, 11.0, Color("#14151850"))
+	draw_texture_rect(REPAIR_DRONE_ART, Rect2(center + Vector2(0, height) - extent * 0.5, extent), false)
+	draw_circle(center + Vector2(0, height + 7.0), 2.0, Data.REPAIR_DRONE.color)
+
+
 func _draw_structure(entry: Dictionary, camera: Transform2D) -> void:
 	var kind := String(entry.kind)
 	var center := _world_to_screen(_entry_world_center(entry))
 	var width := 2 if kind == "hq" or _is_building(kind) else 1
 	var bounds := Rect2(center - Vector2(CELL * float(width) * 0.5, CELL * 0.5), Vector2(CELL * float(width), CELL))
+	var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
+	var condition := Color.WHITE if ratio > DAMAGE_MARK else Color("#d3c0b5") if ratio > DAMAGE_FIRE else Color("#aa847a")
 	var level := clampi(int(entry.get("level", 1)), 1, 5)
 	var bar_height := 31.0
 	if kind == "hq":
 		if hq_build_ratio <= 0.0:
 			return
 		_draw_structure_sprite(BASE_ART, level - 1, 0, center + Vector2(0, 23), 120.0,
-			Color(1, 1, 1, hq_build_ratio))
+			Color(condition, hq_build_ratio))
 		bar_height = 77.0
 		draw_string(ThemeDB.fallback_font, center + Vector2(-34, 40), "지휘본부", HORIZONTAL_ALIGNMENT_LEFT, 90, 11, PALETTE.text)
 	elif kind == "wall":
-		_draw_structure_sprite(BASE_ART, level - 1, 1, center + Vector2(0, 18), 49.0)
+		_draw_structure_sprite(BASE_ART, level - 1, 1, center + Vector2(0, 18), 49.0, condition)
 	elif TURRET_ROWS.has(kind):
 		var target := _nearest_enemy(_entry_world_center(entry), 370.0)
 		var look_left: bool = enemies[target].pos.x < _entry_world_center(entry).x if target >= 0 else player_facing.x < 0.0
 		var flip := Vector2(-1, 1) if look_left else Vector2.ONE
 		draw_set_transform_matrix(camera * Transform2D(0.0, flip, 0.0, center))
-		_draw_structure_sprite(TURRET_ART, level - 1, TURRET_ROWS[kind], Vector2(0, 16), 69.0)
+		_draw_structure_sprite(TURRET_ART, level - 1, TURRET_ROWS[kind], Vector2(0, 16), 69.0, condition)
 		draw_set_transform_matrix(camera)
 		for pip in range(level):
 			draw_rect(Rect2(center.x - 12 + pip * 5, center.y + 19, 3, 2), PALETTE.gold)
 	elif FACILITY_COLUMNS.has(kind):
 		var def := _build_definition(kind)
 		bar_height = 60.0
-		_draw_structure_sprite(BASE_ART, FACILITY_COLUMNS[kind], 2, center + Vector2(0, 20), 104.0)
+		_draw_structure_sprite(BASE_ART, FACILITY_COLUMNS[kind], 2, center + Vector2(0, 20), 104.0, condition)
 		draw_string(ThemeDB.fallback_font, center + Vector2(-21, 34), String(def.get("short", "시설")), HORIZONTAL_ALIGNMENT_LEFT, 60, 10, PALETTE.text)
-	var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
+	_draw_structure_damage(center, ratio, width, kind == "wall")
 	var bar_width := 28.0 if kind == "wall" else 40.0 * float(width)
 	var bar := Rect2(center.x - bar_width * 0.5, center.y - bar_height, bar_width, 3)
 	draw_rect(bar, Color(0, 0, 0, 0.7))
@@ -2803,6 +2906,21 @@ func _draw_structure(entry: Dictionary, camera: Transform2D) -> void:
 	draw_rect(bar, PALETTE.green if ratio > 0.35 else PALETTE.red)
 	if selected_entity >= 0 and selected_entity < structures.size() and structures[selected_entity] == entry:
 		draw_rect(bounds.grow(3), PALETTE.blue, false, 2.0)
+
+
+func _draw_structure_damage(center: Vector2, ratio: float, width: int, wall: bool) -> void:
+	if ratio > DAMAGE_MARK:
+		return
+	var offset := Vector2(13.0 if width == 1 else 23.0, 4.0 if wall else -8.0)
+	var scar := center + offset
+	draw_polyline(PackedVector2Array([scar + Vector2(-8, -9), scar + Vector2(-4, -4),
+		scar + Vector2(-7, 0), scar + Vector2(1, 7)]), Color("#251d20c8"), 1.5)
+	if ratio <= DAMAGE_SMOKE:
+		var phase := run_seconds + fposmod(center.x * 0.012 + center.y * 0.02, 0.8)
+		var extent := Vector2.ONE * (56.0 if wall else 83.0)
+		FacilityEffects.draw_clip(self, "smoke", phase, scar + Vector2(0, -3), extent, 0.6)
+		if ratio <= DAMAGE_FIRE:
+			FacilityEffects.draw_clip(self, "fire", phase + 0.1, scar + Vector2(0, 5), extent * 0.8, 0.88)
 
 
 func _draw_structure_sprite(texture: Texture2D, column: int, row: int, feet: Vector2, width: float, tint := Color.WHITE) -> void:
@@ -2868,7 +2986,13 @@ func _draw_effect(effect: Dictionary) -> void:
 	var b := _world_to_screen(effect.b)
 	var alpha := clampf(float(effect.time) / 0.25, 0.0, 1.0)
 	var c: Color = effect.get("color", PALETTE.gold)
-	if effect.has("hit_angle"):
+	if effect.has("debris"):
+		var progress := 1.0 - clampf(float(effect.time) / 0.32, 0.0, 1.0)
+		for i in range(7):
+			var rubble := a + Vector2.from_angle(float(i) * TAU / 7.0) * (7.0 + 29.0 * progress)
+			rubble.y -= sin(progress * PI) * 13.0
+			draw_rect(Rect2(rubble.round(), Vector2(5, 4)), Color(0.50, 0.41, 0.36, 1.0 - progress))
+	elif effect.has("hit_angle"):
 		var strength := clampf(float(effect.time) / HIT_SPARK_TIME, 0.0, 1.0)
 		var age := 1.0 - strength
 		for spread in [-0.9, -0.3, 0.22, 0.78]:

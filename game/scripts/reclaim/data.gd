@@ -35,9 +35,11 @@ const TURRETS: Array[Dictionary] = [
 	{"id": "rocket", "name": "로켓 포탑", "short": "로켓", "cost": 58, "damage": 118.0, "rate": 2.30, "range": 440.0, "color": Color("#d87c60"), "role": "범위 폭발"},
 	{"id": "electric", "name": "전기 포탑", "short": "전기", "cost": 50, "damage": 42.0, "rate": 1.15, "range": 335.0, "color": Color("#71c8d1"), "role": "연쇄"},
 	{"id": "flame", "name": "화염 포탑", "short": "화염", "cost": 46, "damage": 11.0, "rate": 0.16, "range": 215.0, "color": Color("#ef9154"), "role": "지속 광역"},
-	{"id": "freeze", "name": "냉각 포탑", "short": "냉각", "cost": 44, "damage": 9.0, "rate": 0.82, "range": 305.0, "color": Color("#9cdbe1"), "role": "감속"},
-	{"id": "repair", "name": "수리 포탑", "short": "수리", "cost": 55, "damage": 0.0, "rate": 1.25, "range": 300.0, "color": Color("#7ed99a"), "role": "건물·방벽 회복"}
+	{"id": "freeze", "name": "냉각 포탑", "short": "냉각", "cost": 44, "damage": 9.0, "rate": 0.82, "range": 305.0, "color": Color("#9cdbe1"), "role": "감속"}
 ]
+
+const REPAIR_DRONE := {"id": "repair", "name": "수리 드론", "cost": 55,
+	"color": Color("#7ed99a"), "role": "칸을 차지하지 않고 기지 내 손상 시설 자동 수리"}
 
 const BUILDINGS: Array[Dictionary] = [
 	{"id": "clinic", "name": "의료소", "short": "의료", "cost": 76, "hp": 520.0, "role": "근처 생존자 회복"},
