@@ -1,6 +1,8 @@
 extends Control
 
 const PlayerProjectiles = preload("res://scripts/reclaim/player_projectiles.gd")
+const FieldWarning = preload("res://scripts/reclaim/field_warning.gd")
+const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
@@ -16,6 +18,7 @@ const LANDING_ZONE := Vector2(300.0, -10.0)
 const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
 const CELL := 48.0
+const PLAYER_RADIUS := 13.0
 const GRID_SIZE := 7
 const MAX_ENEMIES := 320
 const WAVE_SECONDS := 22.0
@@ -36,6 +39,7 @@ var player_hp := 100.0
 var player_max_hp := 100.0
 var player_facing := Vector2.RIGHT
 var aim_screen := Vector2.ZERO
+var camera_zoom := 1.0
 var manual_attack := false
 var manual_trigger := false
 var dash_direction := Vector2.RIGHT
@@ -58,7 +62,10 @@ var boss_kills := 0
 var difficulty: Dictionary = {}
 var structures: Array[Dictionary] = []
 var enemies: Array[Dictionary] = []
+var warned_enemies: Dictionary = {}
+var field_warning: PanelContainer
 var enemy_pool: Array[Dictionary] = []
+var zombie_corpses: Array[Dictionary] = []
 var enemy_shots: Array[Dictionary] = []
 var effects: Array[Dictionary] = []
 var selected_build := ""
@@ -99,6 +106,12 @@ var player_drone_level := 0
 var supply_income := 0
 var research_bonus := 0
 var sound_on := true
+var bgm_volume := 100
+var effects_volume := 100
+var audio_save_timer: Timer
+var zombie_sound_at := 0.0
+var zombie_ambient_at := 0.0
+var impact_sound_at := 0.0
 var shake_on := true
 var dash_key := KEY_SHIFT
 var pause_key := KEY_ESCAPE
@@ -122,6 +135,8 @@ var character_screen: Control
 var difficulty_screen: Control
 var intro_screen: Control
 var settings_screen: Control
+var settings_from_pause := false
+var settings_back_button: Button
 var perk_screen: Control
 var game_ui: Control
 var pause_screen: Control
@@ -158,6 +173,12 @@ func _ready() -> void:
 	set_process(true)
 	set_process_unhandled_input(true)
 	_load_data()
+	AudioDirector.set_game_audio_mix(bgm_volume / 100.0, effects_volume / 100.0, sound_on)
+	audio_save_timer = Timer.new()
+	audio_save_timer.one_shot = true
+	audio_save_timer.wait_time = 0.25
+	audio_save_timer.timeout.connect(_save_all)
+	add_child(audio_save_timer)
 	flow_sfx = FlowSfx.new()
 	add_child(flow_sfx)
 	flow_sfx.enabled = sound_on
@@ -185,8 +206,11 @@ func _process(delta: float) -> void:
 	_update_turrets(delta)
 	_update_projectiles(delta)
 	_update_effects(delta)
+	_update_zombie_corpses(run_seconds + delta)
 	_update_facilities(delta)
 	_update_progress(delta)
+	if screen == "play":
+		field_warning.update(delta, player_index, Data.CHARACTERS[player_index].name)
 	run_seconds += delta
 	save_timer += delta
 	if save_timer >= 12.0:
@@ -237,6 +261,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_toggle_pause()
 			elif screen == "pause":
 				_close_pause()
+			elif screen == "settings":
+				_close_settings()
 			elif screen == "augment":
 				_show_toast("증강을 선택해야 작전이 계속됩니다.")
 			get_viewport().set_input_as_handled()
@@ -249,7 +275,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				_try_dash()
 				get_viewport().set_input_as_handled()
 	if event is InputEventMouseButton and event.pressed and screen == "play":
-		if event.button_index == MOUSE_BUTTON_RIGHT:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			var step := 0.15 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.15
+			camera_zoom = clampf(camera_zoom + step, 1.0, 1.6)
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_cancel_build()
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_LEFT:
@@ -265,7 +295,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _draw() -> void:
-	if screen == "play" or screen == "pause" or screen == "augment" or screen == "result" or screen == "landing":
+	if screen in ["play", "pause", "augment", "result", "landing"] or (screen == "settings" and settings_from_pause):
 		_draw_world()
 	else:
 		_draw_menu_backdrop()
@@ -415,9 +445,45 @@ func _build_settings_screen() -> void:
 	pause_binding_button = _make_button("", _begin_pause_binding, PALETTE.blue, 380)
 	box.add_child(pause_binding_button)
 	box.add_child(_make_button("화면 효과: 켬", _toggle_effects, PALETTE.blue, 380))
-	box.add_child(_make_button("배경음/효과음: 켬", _toggle_sound, PALETTE.blue, 380))
-	box.add_child(_make_button("메뉴로", _show_screen.bind("menu"), PALETTE.gold, 260))
+	box.add_child(_make_button("배경음/효과음: %s" % ("켬" if sound_on else "끔"), _toggle_sound, PALETTE.blue, 380))
+	_add_volume_slider(box, "배경음악", bgm_volume, true)
+	_add_volume_slider(box, "효과음", effects_volume, false)
+	box.add_child(_make_button("조작키 기본값 복원", _reset_key_bindings, PALETTE.blue, 380))
+	settings_back_button = _make_button("메뉴로", _close_settings, PALETTE.gold, 260)
+	box.add_child(settings_back_button)
 	_update_binding_labels()
+
+
+func _add_volume_slider(box: VBoxContainer, title: String, value: int, is_bgm: bool) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var title_label := _make_label(title, 15, PALETTE.text)
+	title_label.custom_minimum_size.x = 80.0
+	row.add_child(title_label)
+	var slider := HSlider.new()
+	slider.name = "BgmVolume" if is_bgm else "EffectsVolume"
+	slider.max_value = 100.0
+	slider.step = 1.0
+	slider.value = value
+	slider.custom_minimum_size = Vector2(190, 26)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(slider)
+	var percent := _make_label("%d%%" % value, 15, PALETTE.gold)
+	percent.custom_minimum_size.x = 45.0
+	percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(percent)
+	slider.value_changed.connect(_set_audio_volume.bind(is_bgm, percent))
+	box.add_child(row)
+
+
+func _set_audio_volume(value: float, is_bgm: bool, percent: Label) -> void:
+	if is_bgm:
+		bgm_volume = roundi(value)
+	else:
+		effects_volume = roundi(value)
+	percent.text = "%d%%" % roundi(value)
+	AudioDirector.set_game_audio_mix(bgm_volume / 100.0, effects_volume / 100.0, sound_on)
+	audio_save_timer.start()
 
 
 func _build_perk_screen() -> void:
@@ -436,6 +502,12 @@ func _build_game_hud() -> void:
 	run_hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	run_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	game_ui.add_child(run_hud)
+	field_warning = FieldWarning.new()
+	run_hud.add_child(field_warning)
+	field_warning.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	field_warning.offset_left = 20.0
+	field_warning.offset_bottom = -43.0
+	field_warning.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	var panel := PanelContainer.new()
 	panel.position = Vector2(18, 16)
 	panel.custom_minimum_size = Vector2(316, 174)
@@ -545,6 +617,7 @@ func _build_pause_screen() -> void:
 	pause_label = _make_label("작전 일시정지", 34, PALETTE.gold, true)
 	box.add_child(pause_label)
 	box.add_child(_make_button("계속", _close_pause, PALETTE.green, 320))
+	box.add_child(_make_button("설정", _show_settings.bind(true), PALETTE.blue, 320))
 	box.add_child(_make_button("현재 작전 저장 후 메뉴", _leave_to_menu, PALETTE.blue, 320))
 	box.add_child(_make_button("새 작전 시작", _return_to_start, PALETTE.red, 320))
 
@@ -564,20 +637,30 @@ func _build_result_screen() -> void:
 
 func _build_augment_screen() -> void:
 	var box := _center_box(augment_screen)
-	box.add_theme_constant_override("separation", 13)
-	augment_title_label = _make_label("현장 증강 선택", 31, PALETTE.gold, true)
+	box.add_theme_constant_override("separation", 6)
+	augment_title_label = _make_label("현장 증강 선택", 18, PALETTE.gold, true)
 	box.add_child(augment_title_label)
-	box.add_child(_make_label("3개 중 1개를 선택합니다. 선택 중에도 전투는 멈추지 않습니다.", 13, PALETTE.muted, true))
+	box.add_child(_make_label("3개 중 1개를 선택합니다. 선택 중에도 전투는 멈추지 않습니다.", 11, PALETTE.muted, true))
 	var row := HBoxContainer.new()
 	row.name = "AugmentCards"
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", 6)
 	box.add_child(row)
-	augment_reroll_button = _make_button("무료 리롤", _reroll_augments, PALETTE.blue, 220)
+	augment_reroll_button = Button.new()
+	augment_reroll_button.text = "무료 리롤 1회"
+	augment_reroll_button.flat = true
+	augment_reroll_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	augment_reroll_button.add_theme_font_size_override("font_size", 12)
+	augment_reroll_button.add_theme_color_override("font_color", PALETTE.blue)
+	augment_reroll_button.pressed.connect(_reroll_augments)
 	box.add_child(augment_reroll_button)
 
 
 func _show_screen(which: String) -> void:
+	if screen == "settings" and which != "settings" and not audio_save_timer.is_stopped():
+		audio_save_timer.stop()
+		_save_all()
+	var was_in_combat := screen in ["play", "augment", "pause"] or (screen == "settings" and settings_from_pause)
 	if which != "play":
 		manual_trigger = false
 	screen = which
@@ -607,6 +690,12 @@ func _show_screen(which: String) -> void:
 	if which == "character": flow_character.on_shown()
 	if which == "settings": _update_binding_labels()
 	if which == "perks": _update_perk_screen()
+	var combat_paused := which == "pause" or (which == "settings" and settings_from_pause)
+	AudioDirector.set_game_paused(combat_paused)
+	if sound_on and which in ["play", "augment"]:
+		AudioDirector.play_music("music.gameplay")
+	elif was_in_combat and not combat_paused:
+		AudioDirector.stop_music()
 	_refresh_hud()
 	queue_redraw()
 
@@ -629,9 +718,11 @@ func _choose_difficulty(index: int) -> void:
 func _finish_boot() -> void:
 	_show_screen("menu")
 func _on_menu_start() -> void:
+	AudioDirector.unlock_audio()
 	_ui_sound(true)
 	_show_character_select()
 func _on_menu_continue() -> void:
+	AudioDirector.unlock_audio()
 	_ui_sound(true)
 	_resume_run()
 func _quit_game() -> void:
@@ -689,6 +780,9 @@ func _reset_run() -> void:
 	stage = 1
 	stage_elapsed = 0.0
 	run_seconds = 0.0
+	zombie_sound_at = 0.0
+	zombie_ambient_at = 0.0
+	impact_sound_at = 0.0
 	money = 150
 	kills = 0
 	boss_kills = 0
@@ -700,6 +794,9 @@ func _reset_run() -> void:
 	picked_augment_ids.clear()
 	structures.clear()
 	enemies.clear()
+	zombie_corpses.clear()
+	field_warning.clear()
+	warned_enemies.clear()
 	enemy_pool.clear()
 	enemy_shots.clear()
 	player_projectiles.shots.clear()
@@ -801,11 +898,24 @@ func _load_saved_run() -> void:
 	if structures.is_empty():
 		structures.append({"kind": "hq", "cell": BASE_CELL, "hp": 1200.0, "max_hp": 1200.0, "level": 1, "cool": 0.0, "built": true})
 	enemies.clear()
+	zombie_corpses.clear()
+	field_warning.clear()
+	warned_enemies.clear()
+	for kind in state.get("warned_enemies", []):
+		if FieldWarning.WARNINGS.has(String(kind)):
+			warned_enemies[String(kind)] = true
+	for kind in state.get("pending_enemy_warnings", []):
+		if warned_enemies.has(String(kind)):
+			field_warning.enqueue(String(kind))
 	for entry in state.get("enemies", []):
 		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), Vector2(float(entry.get("x", 0.0)), float(entry.get("y", 0.0))), bool(entry.get("boss", false)))
 		enemy.hp = float(entry.get("hp", enemy.max_hp))
 		enemy.cool = float(entry.get("cool", 0.5))
+		var saved_variant := int(entry.get("variant", -1))
+		if enemy.has("variant") and saved_variant >= 0 and saved_variant < ZombieVisual.SHEETS.size():
+			enemy.variant = saved_variant
 		enemies.append(enemy)
+		_warn_enemy_once(enemy.kind)
 	boss_40_spawned = stage >= 40
 	boss_80_spawned = stage >= 80
 	boss_100_spawned = stage >= 100
@@ -845,8 +955,24 @@ func _retry_run() -> void:
 	_start_new_run()
 
 
-func _show_settings() -> void:
+func _show_settings(from_pause := false) -> void:
+	settings_from_pause = from_pause
+	settings_back_button.text = "일시정지로" if from_pause else "메뉴로"
 	_show_screen("settings")
+
+
+func _close_settings() -> void:
+	awaiting_binding = ""
+	_show_screen("pause" if settings_from_pause else "menu")
+	settings_from_pause = false
+
+
+func _reset_key_bindings() -> void:
+	awaiting_binding = ""
+	dash_key = KEY_SHIFT
+	pause_key = KEY_ESCAPE
+	_update_binding_labels()
+	_save_all()
 
 
 func _show_perks() -> void:
@@ -879,7 +1005,12 @@ func _toggle_effects() -> void:
 
 func _toggle_sound() -> void:
 	sound_on = not sound_on
+	AudioDirector.set_game_audio_mix(bgm_volume / 100.0, effects_volume / 100.0, sound_on)
 	if flow_sfx != null: flow_sfx.enabled = sound_on
+	if not sound_on:
+		AudioDirector.stop_music(0.0)
+	elif settings_from_pause:
+		AudioDirector.play_music("music.gameplay")
 	var button := _button_by_text(settings_screen, "배경음/효과음")
 	if button: button.text = "배경음/효과음: %s" % ("켬" if sound_on else "끔")
 	_save_all()
@@ -1051,6 +1182,9 @@ func _validate_placement(kind: String, cell: Vector2i) -> String:
 			for dx in range(width):
 				if used == Vector2i(cell.x + dx, cell.y): occupied_count += 1
 	if occupied_count > 0: return "이미 다른 시설이 점유한 칸입니다."
+	var center := _cell_world(cell) + Vector2(CELL * 0.5 * float(width - 1), 0.0)
+	var overlap_depth := _structure_overlap_depth(player_pos, center, width, PLAYER_RADIUS)
+	if overlap_depth >= 0.0: return "대원이 서 있는 곳에는 배치할 수 없습니다."
 	if kind != "wall" and kind != "hq":
 		for entry in structures:
 			if String(entry.kind) == kind and float(entry.hp) > 0.0:
@@ -1212,19 +1346,28 @@ func _try_dash() -> void:
 
 func _move_player(motion: Vector2) -> void:
 	var candidate_x := player_pos + Vector2(motion.x, 0)
-	if _blocking_structure(candidate_x, 13.0) < 0: player_pos.x = candidate_x.x
+	if _blocking_structure(candidate_x, PLAYER_RADIUS, true) < 0: player_pos.x = candidate_x.x
 	var candidate_y := player_pos + Vector2(0, motion.y)
-	if _blocking_structure(candidate_y, 13.0) < 0: player_pos.y = candidate_y.y
+	if _blocking_structure(candidate_y, PLAYER_RADIUS, true) < 0: player_pos.y = candidate_y.y
 
 
-func _blocking_structure(point: Vector2, radius: float) -> int:
+func _structure_overlap_depth(point: Vector2, center: Vector2, width: int, radius: float) -> float:
+	var difference := (point - center).abs()
+	return minf(CELL * 0.5 * width + radius - difference.x, CELL * 0.5 + radius - difference.y)
+
+
+func _blocking_structure(point: Vector2, radius: float, allow_player_escape := false) -> int:
 	for i in range(structures.size()):
 		var s: Dictionary = structures[i]
 		if float(s.get("hp", 0.0)) <= 0.0: continue
 		var kind := String(s.get("kind", ""))
-		var half_width := CELL if kind == "hq" or _is_building(kind) else CELL * 0.5
+		var width := 2 if kind == "hq" or _is_building(kind) else 1
 		var center := _entry_world_center(s)
-		if absf(point.x - center.x) <= half_width + radius and absf(point.y - center.y) <= CELL * 0.5 + radius: return i
+		var depth := _structure_overlap_depth(point, center, width, radius)
+		if depth < 0.0: continue
+		if allow_player_escape and depth < _structure_overlap_depth(player_pos, center, width, radius):
+			continue
+		return i
 	return -1
 
 
@@ -1306,6 +1449,8 @@ func _attack_player() -> void:
 		player_reload_timer = float(hero.reload)
 	if kind == "harin":
 		_harin_visual.trigger_attack()
+	if sound_on:
+		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
 	player_attack_timer = maxf(0.05, reload)
 	var direction := player_facing.normalized()
 	var max_range := float(hero.range) * player_mod_range
@@ -1348,7 +1493,7 @@ func _update_spawn(delta: float) -> void:
 			var pos := player_pos + Vector2(cos(angle), sin(angle)) * distance
 			pos.x = clampf(pos.x, -MAP_LIMIT.x + 90, MAP_LIMIT.x - 90)
 			pos.y = clampf(pos.y, -MAP_LIMIT.y + 90, MAP_LIMIT.y - 90)
-			enemies.append(_make_enemy(kind, pos, false))
+			_spawn_enemy(kind, pos, false)
 
 
 func _choose_enemy_kind() -> String:
@@ -1369,6 +1514,17 @@ func _choose_enemy_kind() -> String:
 	return choices.back()
 
 
+func _spawn_enemy(kind: String, pos: Vector2, is_boss: bool) -> void:
+	enemies.append(_make_enemy(kind, pos, is_boss))
+	_warn_enemy_once(kind)
+
+
+func _warn_enemy_once(kind: String) -> void:
+	if not warned_enemies.has(kind) and FieldWarning.WARNINGS.has(kind):
+		warned_enemies[kind] = true
+		field_warning.enqueue(kind)
+
+
 func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
 	var data: Dictionary = Data.BOSSES[100] if is_boss and stage >= 100 else Data.BOSSES[80] if is_boss and stage >= 80 else Data.BOSSES[40] if is_boss else Data.ENEMIES.get(kind, Data.ENEMIES.normal)
 	var hp := float(data.hp) * float(difficulty.get("hp", 1.0))
@@ -1378,6 +1534,13 @@ func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
 	enemy.merge({"kind": kind, "name": String(data.name), "pos": pos, "hp": hp, "max_hp": hp, "speed": float(data.speed) * (1.0 + float(stage) * 0.0012), "attack": float(data.attack) * float(difficulty.get("attack", 1.0)), "color": data.color, "ranged": bool(data.get("ranged", is_boss)), "boss": is_boss, "cool": 1.0, "charge": 0.0, "target": "player", "slow": 0.0, "pattern_timer": 3.0, "reward": 8 if is_boss else 2 if kind == "normal" or kind == "runner" else 4}, true)
 	enemy_spawn_id += 1
 	enemy.spawn_id = enemy_spawn_id
+	if kind == "normal" and not is_boss:
+		enemy.variant = _random.randi_range(0, ZombieVisual.SHEETS.size() - 1)
+		enemy.row = 0
+		enemy.moving = false
+		enemy.walk_distance = 0.0
+		enemy.hit_until = 0.0
+		enemy.attack_until = 0.0
 	return enemy
 
 
@@ -1387,7 +1550,7 @@ func _spawn_boss(at_stage: int) -> void:
 	var angle := _random.randf_range(0, TAU)
 	var spawn_at := player_pos + Vector2(cos(angle), sin(angle)) * 650.0
 	var kind := "boss40" if at_stage == 40 else "boss80" if at_stage == 80 else "boss100"
-	enemies.append(_make_enemy(kind, spawn_at, true))
+	_spawn_enemy(kind, spawn_at, true)
 	stage = old_stage
 	_show_toast("보스 출현 · %s" % String(Data.BOSSES[at_stage].name))
 
@@ -1400,15 +1563,23 @@ func _count_live_bosses() -> int:
 
 
 func _update_enemies(delta: float) -> void:
+	var hq_index := _hq_index()
+	var hq_pos := _entry_world_center(structures[hq_index]) if hq_index >= 0 else Vector2.ZERO
+	var walls: Array[int] = []
+	for index in range(structures.size()):
+		if structures[index].kind == "wall" and float(structures[index].hp) > 0.0:
+			walls.append(index)
 	for i in range(enemies.size() - 1, -1, -1):
 		var e: Dictionary = enemies[i]
+		var previous_pos: Vector2 = e.pos
+		var animated := e.has("variant")
+		var body_radius := ZombieVisual.RADIUS if animated else 11.0
 		e.cool = maxf(0.0, float(e.cool) - delta)
 		e.slow = maxf(0.0, float(e.slow) - delta)
 		if bool(e.boss): _update_boss_pattern(e, delta)
 		if String(e.kind) == "bomber":
 			var d_player: float = e.pos.distance_to(player_pos)
-			var hq := _hq_position()
-			var d_hq: float = e.pos.distance_to(hq)
+			var d_hq: float = e.pos.distance_to(hq_pos)
 			if float(e.charge) > 0.0:
 				e.charge -= delta
 				if e.charge <= 0.0:
@@ -1420,12 +1591,20 @@ func _update_enemies(delta: float) -> void:
 				e.target = "player" if d_player < d_hq else "hq"
 			continue
 		var d_to_player: float = e.pos.distance_to(player_pos)
-		var hq_pos := _hq_position()
 		var d_to_hq: float = e.pos.distance_to(hq_pos)
 		var target_player: bool = d_to_player < d_to_hq and d_to_player < 440.0
 		e.target = "player" if target_player else "hq"
 		var target_pos: Vector2 = player_pos if target_player else hq_pos
+		var target_structure := -1 if target_player else hq_index
+		if not bool(e.ranged):
+			var wall := _priority_wall(e.pos, walls)
+			if wall >= 0:
+				target_structure = wall
+				e.target = "wall"
+				target_pos = _entry_world_center(structures[wall])
 		var dist: float = e.pos.distance_to(target_pos)
+		if animated and dist > 0.01:
+			e.row = ZombieVisual.facing_row(target_pos - e.pos)
 		if bool(e.ranged) and dist < 390.0:
 			if float(e.charge) > 0.0:
 				e.charge -= delta
@@ -1437,29 +1616,77 @@ func _update_enemies(delta: float) -> void:
 				e.warn_pos = target_pos
 				e.cool = 2.6
 		else:
-			if dist > 30.0:
-				var move_speed := float(e.speed) * (0.48 if float(e.slow) > 0.0 else 1.0)
-				var move_dir: Vector2 = (target_pos - e.pos).normalized()
-				var proposed: Vector2 = e.pos + move_dir * move_speed * delta
-				var blocker := _blocking_structure(proposed, 11.0 if not bool(e.boss) else 24.0)
-				if blocker < 0:
-					e.pos = proposed
-				elif String(structures[blocker].kind) != "hq" and float(e.cool) <= 0.0:
-					_damage_structure(blocker, float(e.attack))
-					e.cool = 1.15
-				else:
-					var flank_a: Vector2 = e.pos + move_dir.rotated(0.92) * move_speed * delta
-					var flank_b: Vector2 = e.pos + move_dir.rotated(-0.92) * move_speed * delta
-					if _blocking_structure(flank_a, 11.0) < 0: e.pos = flank_a
-					elif _blocking_structure(flank_b, 11.0) < 0: e.pos = flank_b
-			elif float(e.cool) <= 0.0:
-				if target_player:
-					_player_take_damage(float(e.attack), "적의 근접 공격")
-				else:
-					_damage_hq(float(e.attack))
-				e.cool = 1.0 if not bool(e.boss) else 0.65
-		if e.pos.distance_to(player_pos) < 22.0 and float(e.charge) <= 0.0 and not bool(e.ranged):
+			_update_melee_enemy(e, target_pos, target_structure, body_radius, delta)
+		if e.target == "player" and e.pos.distance_to(player_pos) < 22.0 and float(e.charge) <= 0.0 and not bool(e.ranged):
 			e.pos += (e.pos - player_pos).normalized() * 6.0
+		if animated:
+			var traveled := previous_pos.distance_to(e.pos)
+			e.moving = traveled > 0.001
+			e.walk_distance += traveled
+	_play_zombie_ambient()
+
+
+func _priority_wall(point: Vector2, walls: Array[int]) -> int:
+	var nearest := -1
+	var best_distance := 150.0 * 150.0
+	for index in walls:
+		var wall := structures[index]
+		if float(wall.hp) <= 0.0:
+			continue
+		var distance := point.distance_squared_to(_entry_world_center(wall))
+		if distance < best_distance:
+			best_distance = distance
+			nearest = index
+	return nearest
+
+
+func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: int, body_radius: float, delta: float) -> void:
+	var toward: Vector2 = target - enemy.pos
+	if target_structure >= 0:
+		var kind := String(structures[target_structure].kind)
+		var width := 2 if kind == "hq" or _is_building(kind) else 1
+		if _structure_overlap_depth(enemy.pos, target, width, body_radius + 5.0) >= 0.0:
+			_strike_structure(enemy, target_structure)
+			return
+	elif toward.length_squared() <= 30.0 * 30.0:
+		if float(enemy.cool) <= 0.0:
+			_player_take_damage(float(enemy.attack), "적의 근접 공격")
+			if enemy.has("variant"): _animate_zombie_attack(enemy, toward)
+			enemy.cool = 0.65 if enemy.boss else 1.0
+		return
+	var speed := float(enemy.speed) * (0.48 if float(enemy.slow) > 0.0 else 1.0)
+	var proposed: Vector2 = enemy.pos + toward.normalized() * speed * delta
+	var blocker := _blocking_structure(proposed, 24.0 if enemy.boss else body_radius)
+	if blocker < 0:
+		enemy.pos = proposed
+	else:
+		_strike_structure(enemy, blocker)
+
+
+func _strike_structure(enemy: Dictionary, index: int) -> void:
+	if float(enemy.cool) > 0.0:
+		return
+	var toward: Vector2 = _entry_world_center(structures[index]) - enemy.pos
+	_damage_structure(index, float(enemy.attack))
+	if enemy.has("variant"): _animate_zombie_attack(enemy, toward)
+	enemy.cool = 1.15
+
+
+func _play_zombie_ambient() -> void:
+	if not sound_on or run_seconds < zombie_ambient_at:
+		return
+	var nearby := _nearest_enemy(player_pos, 225.0)
+	zombie_ambient_at = run_seconds + (0.35 if nearby < 0 else 1.8)
+	if nearby >= 0:
+		var pitch := 0.86 + float(int(enemies[nearby].spawn_id) % 7) * 0.045
+		AudioDirector.play_cue("enemy.ambient", pitch)
+
+
+func _animate_zombie_attack(enemy: Dictionary, toward: Vector2) -> void:
+	ZombieVisual.start_attack(enemy, toward, run_seconds)
+	if sound_on and run_seconds >= zombie_sound_at and player_pos.distance_squared_to(enemy.pos) < 400.0 * 400.0:
+		zombie_sound_at = run_seconds + 0.24
+		AudioDirector.play_cue("enemy.attack", 0.88 + float(int(enemy.spawn_id) % 7) * 0.035)
 
 
 func _update_boss_pattern(e: Dictionary, delta: float) -> void:
@@ -1478,7 +1705,7 @@ func _update_boss_pattern(e: Dictionary, delta: float) -> void:
 	elif current_stage == 100:
 		for n in range(3):
 			var a := _random.randf_range(0, TAU)
-			enemies.append(_make_enemy("normal", e.pos + Vector2(cos(a), sin(a)) * 90.0, false))
+			_spawn_enemy("normal", e.pos + Vector2(cos(a), sin(a)) * 90.0, false)
 		_show_toast("군체 지배자 · 추가 개체 소환")
 
 
@@ -1509,6 +1736,9 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 		amount *= 0.4
 		enemy.guard = maxf(0.0, float(enemy.guard) - 0.28)
 	enemy.hp = float(enemy.hp) - amount
+	if amount > 0.0 and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
+		impact_sound_at = run_seconds + 0.10
+		AudioDirector.play_cue("enemy.impact", 1.18)
 	if float(enemy.hp) <= 0.0:
 		var reward := int(round(float(enemy.reward) * player_mod_salvage))
 		money += reward
@@ -1525,13 +1755,28 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 			medals += 1
 		_remove_enemy(index)
 		_check_level_up()
+	elif enemy.has("variant"):
+		enemy.hit_until = run_seconds + ZombieVisual.HIT_TIME
 
 
 func _remove_enemy(index: int) -> void:
 	if index < 0 or index >= enemies.size(): return
 	var dead: Dictionary = enemies[index]
 	enemies.remove_at(index)
+	if dead.has("variant") and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_ENEMIES:
+		zombie_corpses.append({"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds})
 	if enemy_pool.size() < MAX_ENEMIES: enemy_pool.append(dead)
+
+
+func _update_zombie_corpses(now: float) -> void:
+	# Corpses are inserted chronologically and carry no gameplay state.
+	while not zombie_corpses.is_empty() and now - float(zombie_corpses.front().start) >= ZombieVisual.DEATH_TIME:
+		zombie_corpses.pop_front()
+
+
+func _zombie_on_screen(point: Vector2) -> bool:
+	var visible_size := size / _view_zoom()
+	return Rect2((size - visible_size) * 0.5, visible_size).grow(48.0).has_point(point)
 
 
 func _explode_damage_center(center: Vector2, radius: float, damage: float) -> void:
@@ -1704,11 +1949,23 @@ func _rebuild_augment_cards() -> void:
 	if augment_screen == null: return
 	var row := augment_screen.find_child("AugmentCards", true, false) as HBoxContainer
 	if row == null: return
-	for child in row.get_children(): child.queue_free()
+	for child in row.get_children():
+		row.remove_child(child)
+		child.queue_free()
 	for card in augment_options:
 		var rarity_color := PALETTE.muted if card.rarity == "일반" else PALETTE.green if card.rarity == "고급" else PALETTE.blue if card.rarity == "희귀" else Color("#bd8de0") if card.rarity == "영웅" else PALETTE.gold
-		var b := _make_button("%s  ·  %s\n%s\n%s" % [String(card.rarity), "★".repeat(int(card.stars)), String(card.name), String(card.description)], _choose_augment.bind(card), rarity_color, 236)
-		b.custom_minimum_size.y = 112
+		var b := _make_button("%s  ·  %s\n%s\n%s" % [String(card.rarity), "★".repeat(int(card.stars)), String(card.name), String(card.description)], _choose_augment.bind(card), rarity_color, 189)
+		b.add_theme_font_size_override("font_size", 16)
+		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		b.custom_minimum_size.y = 120
+		for state in ["normal", "hover", "pressed", "focus"]:
+			var style := b.get_theme_stylebox(state) as StyleBoxFlat
+			style.content_margin_left = 6.0
+			style.content_margin_right = 6.0
+			style.content_margin_top = 5.0
+			style.content_margin_bottom = 5.0
+			if state != "focus":
+				style.bg_color = Color(PALETTE.panel.lerp(rarity_color, 0.11 if state == "normal" else 0.22), 0.96)
 		row.add_child(b)
 	augment_reroll_button.disabled = augment_reroll_used
 	augment_reroll_button.text = "무료 리롤 사용됨" if augment_reroll_used else "무료 리롤 1회"
@@ -1763,6 +2020,9 @@ func _player_take_damage(amount: float, cause: String) -> void:
 	if dash_timer > 0.0: return
 	var reduction := 0.12 if Data.CHARACTERS[player_index].id == "tae" else 0.0
 	player_hp -= amount * maxf(0.25, player_mod_armor - reduction)
+	if sound_on and run_seconds >= impact_sound_at:
+		impact_sound_at = run_seconds + 0.10
+		AudioDirector.play_cue("enemy.impact", 0.80)
 	_show_toast("%s · -%d" % [cause, int(amount)])
 
 
@@ -1850,17 +2110,21 @@ func _save_all() -> void:
 			structure_rows.append({"kind": String(s.kind), "x": cell.x, "y": cell.y, "hp": float(s.hp), "max_hp": float(s.max_hp), "level": int(s.level)})
 		var enemy_rows: Array[Dictionary] = []
 		for e in enemies:
-			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss)})
+			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1))})
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
 		var boss_flags: Array[int] = []
 		if boss_40_spawned: boss_flags.append(40)
 		if boss_80_spawned: boss_flags.append(80)
 		if boss_100_spawned: boss_flags.append(100)
 		saved_run["boss_flags"] = boss_flags
+		saved_run["warned_enemies"] = warned_enemies.keys()
+		saved_run["pending_enemy_warnings"] = field_warning.pending_warnings()
 		saved_run["magazine"] = player_magazine
 		saved_run["reload_remaining"] = player_reload_timer
 		saved_run["manual_attack"] = manual_attack
 		output["saved_run"] = saved_run
+	output["bgm_volume"] = bgm_volume
+	output["effects_volume"] = effects_volume
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file != null:
 		file.store_string(JSON.stringify(output))
@@ -1882,6 +2146,8 @@ func _load_data() -> void:
 	if dash_key == KEY_TAB: dash_key = KEY_SHIFT
 	if pause_key == KEY_TAB: pause_key = KEY_ESCAPE
 	sound_on = bool(data.get("sound_on", true))
+	bgm_volume = clampi(int(data.get("bgm_volume", 100)), 0, 100)
+	effects_volume = clampi(int(data.get("effects_volume", 100)), 0, 100)
 	shake_on = bool(data.get("shake_on", true))
 	saved_run = data.get("saved_run", {})
 	if not (saved_run is Dictionary): saved_run = {}
@@ -1917,8 +2183,12 @@ func _world_to_screen(point: Vector2) -> Vector2:
 	return point - player_pos + size * 0.5
 
 
+func _view_zoom() -> float:
+	return 1.0 if screen == "landing" else camera_zoom
+
+
 func _screen_to_world(point: Vector2) -> Vector2:
-	return player_pos + point - size * 0.5
+	return player_pos + (point - size * 0.5) / _view_zoom()
 
 
 func _draw_menu_backdrop() -> void:
@@ -1947,13 +2217,20 @@ func _draw_menu_backdrop() -> void:
 func _draw_world() -> void:
 	var view := Rect2(Vector2.ZERO, size)
 	draw_rect(view, Color("#1c2421"))
+	var zoom := _view_zoom()
+	var camera := Transform2D(0.0, Vector2.ONE * zoom, 0.0, size * 0.5 * (1.0 - zoom))
+	draw_set_transform_matrix(camera)
 	_draw_city_tiles()
 	_draw_base_zone()
 	if build_open:
 		_draw_build_grid()
 	for entry in structures:
 		if float(entry.hp) > 0.0: _draw_structure(entry)
-	for enemy in enemies: _draw_enemy(enemy)
+	for corpse in zombie_corpses:
+		var center := _world_to_screen(corpse.pos)
+		if _zombie_on_screen(center):
+			ZombieVisual.draw_dead(self, corpse, center, run_seconds)
+	for enemy in enemies: _draw_enemy(enemy, camera)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
 		var tip := _world_to_screen(shot.pos)
@@ -1965,8 +2242,11 @@ func _draw_world() -> void:
 		landing.draw(self, _world_to_screen)
 		landing.draw_overlay(self, size)
 	if build_mode: _draw_placement_preview()
-	if screen == "pause" or screen == "augment" or screen == "result":
-		draw_rect(view, Color(0.025, 0.035, 0.035, 0.42))
+	draw_set_transform(Vector2.ZERO)
+	if screen == "play" and manual_attack and not build_mode:
+		_draw_cross(aim_screen, 7, Color(PALETTE.gold, 0.55))
+	if screen in ["pause", "augment", "result"] or (screen == "settings" and settings_from_pause):
+		draw_rect(view, Color(0.025, 0.035, 0.035, 0.16 if screen == "augment" else 0.42))
 
 
 func _draw_city_tiles() -> void:
@@ -2056,10 +2336,18 @@ func _draw_structure(entry: Dictionary) -> void:
 		draw_rect(bounds.grow(3), PALETTE.blue, false, 2.0)
 
 
-func _draw_enemy(enemy: Dictionary) -> void:
+func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 	var p := _world_to_screen(enemy.pos)
 	var boss := bool(enemy.get("boss", false))
 	var radius := PlayerProjectiles.enemy_radius(enemy)
+	if enemy.has("variant"):
+		if not _zombie_on_screen(p): return
+		ZombieVisual.draw_alive(self, enemy, p, run_seconds, camera)
+		if float(enemy.hp) < float(enemy.max_hp):
+			var ratio := clampf(float(enemy.hp) / float(enemy.max_hp), 0.0, 1.0)
+			draw_rect(Rect2(p.x - 12, p.y - 33, 24, 3), Color(0, 0, 0, 0.65))
+			draw_rect(Rect2(p.x - 12, p.y - 33, 24 * ratio, 3), PALETTE.green)
+		return
 	if String(enemy.kind) == "bomber" and float(enemy.get("charge", 0)) > 0.0:
 		var pulse := 56.0 - 28.0 * maxf(0.0, float(enemy.charge)) / 0.72
 		draw_arc(p, pulse, 0, TAU, 44, Color(PALETTE.red, 0.92), 3.0)
@@ -2134,10 +2422,9 @@ func _draw_player() -> void:
 			draw_arc(p, 51, dir.angle() - 0.8, dir.angle() + 0.8, 24, Color("#eea354", 0.26), 2.0)
 	if screen == "play" and manual_attack and not build_mode:
 		var color := Color(PALETTE.gold, 0.55)
-		var aim_length := p.distance_to(aim_screen)
+		var aim_length := p.distance_to(_world_to_screen(_screen_to_world(aim_screen)))
 		if aim_length > 24.0:
 			draw_line(p + dir * 20.0, p + dir * minf(aim_length - 5.0, 92.0), color, 1.0)
-		_draw_cross(aim_screen, 7, color)
 
 
 func _draw_cross(center: Vector2, radius: float, color: Color) -> void:

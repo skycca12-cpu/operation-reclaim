@@ -211,8 +211,11 @@ func _test_audio_architecture() -> void:
 	_check(int(capacity.ui) == 2, "UI polyphony must be bounded at two voices")
 	for bus_name: String in ["Master", "Music", "SFX", "UI"]:
 		_check(AudioServer.get_bus_index(bus_name) >= 0, "missing audio bus: " + bus_name)
+	var combat_cues := ["music.gameplay", "player.action", "enemy.attack", "enemy.impact", "enemy.ambient"]
 	for cue: String in cue_ids:
-		_check(not bool(_audio.call("play_music" if cue.begins_with("music.") else "play_cue", cue)), "unassigned cue must be silent: " + cue)
+		var played := bool(_audio.call("play_music" if cue.begins_with("music.") else "play_cue", cue))
+		_check(played == combat_cues.has(cue), "only the configured combat cues should play: " + cue)
+	_audio.call("stop_music", 0.0)
 	_check(not bool(_audio.call("register_cue", "ui.confirm", "")), "empty audio path must be safe")
 	_check(not bool(_audio.call("register_cue", "ui.confirm", "res://assets/template/audio/missing.ogg")), "missing SFX file must be safe")
 	_check(not bool(_audio.call("register_cue", "music.title", "res://assets/template/audio/missing.ogg")), "missing BGM file must be safe")
@@ -226,7 +229,7 @@ func _test_audio_architecture() -> void:
 	_check(bool(_audio.call("play_cue", "ui.confirm")), "registered cue must play")
 	_check(bool(_audio.call("register_stream", "music.title", fixture)), "optional BGM must register")
 	_check(bool(_audio.call("play_music", "music.title")), "registered BGM must play")
-	_check(not bool(_audio.call("play_music", "music.gameplay")), "missing music route must stop previous music")
+	_check(not bool(_audio.call("play_music", "missing.music")), "missing music route must stop previous music")
 	_check(str(_audio.get("_music_cue")).is_empty(), "silent music route must clear the active route")
 	for player in _audio.get("_music_players"):
 		_check(player.stream == null and not player.playing, "missing BGM must release old streams")

@@ -113,33 +113,33 @@
       "used": true
     },
     "assets/reclaim/portraits/harin_full.png": {
-      "path": "/manus-storage/game/sha256/4a7ccfe093de1d15a1965510735957fa1a10932fbd0574073ee3357860343c26.png",
-      "sha256": "sha256:4a7ccfe093de1d15a1965510735957fa1a10932fbd0574073ee3357860343c26",
-      "size": 362614,
+      "path": "assets/reclaim/portraits/harin_full.png",
+      "sha256": "sha256:d8567bb7b0b7c406471fa8a5c5739af55276fbde7d1f3b736a9cd6edc6e88fb3",
+      "size": 328940,
       "assetType": "image",
       "groupId": "portraits",
       "used": true
     },
     "assets/reclaim/portraits/si_full.png": {
-      "path": "/manus-storage/game/sha256/c3c3a5c563168fec30af36bc436c50b686c2171f3b88a3ae8abeb2bbb786f262.png",
-      "sha256": "sha256:c3c3a5c563168fec30af36bc436c50b686c2171f3b88a3ae8abeb2bbb786f262",
-      "size": 745789,
+      "path": "assets/reclaim/portraits/si_full.png",
+      "sha256": "sha256:710774a0e0fb41742437106ed734aca21c0a8fb2b0abc17315a66ea078f8dded",
+      "size": 246242,
       "assetType": "image",
       "groupId": "portraits",
       "used": true
     },
     "assets/reclaim/portraits/tae_full.png": {
-      "path": "/manus-storage/game/sha256/c7dfff9fc00867c640096f7d57cab282ee3e867089ad9dcc3d9165f34db69a9f.png",
-      "sha256": "sha256:c7dfff9fc00867c640096f7d57cab282ee3e867089ad9dcc3d9165f34db69a9f",
-      "size": 552980,
+      "path": "assets/reclaim/portraits/tae_full.png",
+      "sha256": "sha256:a626928e8933dc6199b3e780d08f12be9e19ae778613a545b5999610560998b6",
+      "size": 288785,
       "assetType": "image",
       "groupId": "portraits",
       "used": true
     },
     "assets/reclaim/portraits/yujin_full.png": {
-      "path": "/manus-storage/game/sha256/adec33f5223ca27d2dcf578e63b0e8c0350eb4d9b45b292acc3ed0f18a85b9e2.png",
-      "sha256": "sha256:adec33f5223ca27d2dcf578e63b0e8c0350eb4d9b45b292acc3ed0f18a85b9e2",
-      "size": 380151,
+      "path": "assets/reclaim/portraits/yujin_full.png",
+      "sha256": "sha256:f2b94755ac150064c22a2f586226c6f5f663904c4e18b91bb4581bb0b325dad7",
+      "size": 360924,
       "assetType": "image",
       "groupId": "portraits",
       "used": true

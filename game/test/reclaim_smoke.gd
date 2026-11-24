@@ -1,5 +1,6 @@
 extends SceneTree
 
+const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 var failures: Array[String] = []
 
@@ -20,6 +21,7 @@ func _run() -> void:
 	_check(game.get("screen") == "boot", "game opens on the loading screen")
 	game.call("_finish_boot")
 	_check(game.get("screen") == "menu", "loading screen hands over to the main menu")
+	_test_main_menu(game)
 	game.call("_choose_character", 2)
 	_check(game.get("screen") == "difficulty", "character choice opens difficulty selection")
 	game.call("_choose_difficulty", 4)
@@ -66,6 +68,18 @@ func _run() -> void:
 	game.set("player_pos", game.call("_cell_world", Vector2i(2, 3)))
 	game.call("_move_player", Vector2(80, 0))
 	_check((game.get("player_pos") as Vector2).x < 0.0, "player collides with HQ footprint")
+	var trap_cell := Vector2i(1, 4)
+	var trap_center: Vector2 = game.call("_cell_world", trap_cell)
+	game.set("player_pos", trap_center)
+	_check(String(game.call("_validate_placement", "wall", trap_cell)).contains("대원") and
+		String(game.call("_validate_placement", "supply", Vector2i(0, 4))).contains("대원"),
+		"walls and two-cell facilities cannot be placed across the player")
+	structures.append({"kind": "wall", "cell": trap_cell, "hp": 100.0})
+	for step in range(10):
+		game.call("_move_player", Vector2(4, 0))
+	_check(game.get("player_pos").x > trap_center.x + 37.0, "player can walk out of a legacy overlapping structure")
+	structures.pop_back()
+	_test_combat_zoom_and_augments(game)
 	for i in range(5):
 		structures.append({"kind": "heavy", "cell": Vector2i(i, 0), "hp": 100.0, "max_hp": 100.0, "level": 1, "cool": 0.0})
 	game.set("money", 500)
@@ -118,18 +132,29 @@ func _run() -> void:
 	var pursuer := _spawn_test_zombie(game, player_pos + Vector2(120, 0), 100.0)
 	var distance_before: float = pursuer.pos.distance_to(player_pos)
 	game.call("_update_enemies", 0.1)
-	_check(pursuer.target == "player" and pursuer.pos.distance_to(player_pos) < distance_before, "normal zombie targets and approaches the player")
+	_check(pursuer.target == "player" and pursuer.moving and pursuer.pos.distance_to(player_pos) < distance_before, "normal zombie targets and approaches the player")
 	pursuer.pos = player_pos + Vector2(25, 0)
 	pursuer.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
-	_check(game.get("player_hp") < health_before, "normal zombie damages the player in melee range")
+	_check(game.get("player_hp") < health_before and pursuer.attack_until > game.get("run_seconds") and pursuer.attack_direction.is_equal_approx(Vector2.LEFT), "normal zombie damages the player and starts its attack animation")
+	_test_normal_zombies(game, pursuer)
+	enemies.clear()
+	_test_structure_targets(game)
 	enemies.clear()
 	game.set("stage_elapsed", 21.95)
 	game.call("_update_spawn", 0.1)
 	_check(game.get("stage") == 2, "wave stage advances on elapsed time")
+	_test_first_enemy_warning(game)
 	game.call("_toggle_pause")
 	_check(game.get("screen") == "pause", "pause overlay opens")
+	var time_at_pause: float = game.get("run_seconds")
+	game.call("_show_settings", true)
+	_check(game.get("screen") == "settings" and game.get("settings_from_pause"), "settings are available during pause")
+	await process_frame
+	_check(game.get("run_seconds") == time_at_pause, "combat stays paused while adjusting settings")
+	game.call("_close_settings")
+	_check(game.get("screen") == "pause", "closing in-game settings returns to pause")
 	game.call("_close_pause")
 	_check(game.get("screen") == "play", "pause overlay resumes the run")
 	_check(Data.BOSSES.has(40) and Data.BOSSES.has(80) and Data.BOSSES.has(100), "boss data includes stages 40, 80 and 100")
@@ -139,6 +164,9 @@ func _run() -> void:
 	game.set("player_reload_timer", 0.8)
 	var saved_position: Vector2 = game.get("player_pos")
 	var saved_structure_count := structures.size()
+	enemies.clear()
+	var saved_zombie := _spawn_test_zombie(game, saved_position + Vector2(300, 0), 100.0)
+	var saved_variant: int = saved_zombie.variant
 	game.call("_save_all")
 	game.queue_free()
 	await process_frame
@@ -148,6 +176,9 @@ func _run() -> void:
 	_check(resumed.get("screen") == "play" and resumed.get("stage") == 2, "continue restores the saved wave from disk")
 	_check(resumed.get("player_pos").is_equal_approx(saved_position) and resumed.get("structures").size() == saved_structure_count, "continue restores player position and built structures")
 	_check(resumed.get("manual_attack") and resumed.get("player_magazine") == 0 and is_equal_approx(resumed.get("player_reload_timer"), 0.8), "continue preserves manual mode and reload progress")
+	var resumed_enemies: Array = resumed.get("enemies")
+	_check(resumed_enemies.size() == 1 and resumed_enemies[0].variant == saved_variant, "continue restores the saved zombie appearance")
+	_check(resumed.get("warned_enemies").has("boss40"), "continue remembers enemy types already announced")
 	_check(not resumed.get("manual_trigger"), "continue requires a fresh manual trigger press")
 	resumed.call("_update_player_attack", 0.9)
 	_check(resumed.get("player_magazine") == 30 and resumed.get("player_projectiles").shots.is_empty(), "continued reload finishes without an unintended shot")
@@ -160,6 +191,152 @@ func _run() -> void:
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_first_enemy_warning(game: Node) -> void:
+	var panel: PanelContainer = game.get("field_warning")
+	panel.call("clear")
+	var warned: Dictionary = game.get("warned_enemies")
+	warned.clear()
+	game.call("_warn_enemy_once", "normal")
+	game.call("_warn_enemy_once", "normal")
+	game.call("_warn_enemy_once", "boss40")
+	_check((panel.get("_pending") as Array).size() == 2, "spawn warns once per family and queues a boss independently")
+	panel.call("update", 0.0, 2, "서하린")
+	_check(panel.visible and panel.get("_speaker").text == "서하린" and panel.get("_portrait") != null, "warning uses the selected operator portrait and keeps playing")
+	panel.call("update", 5.0, 2, "서하린")
+	_check(panel.get("_line").text.contains("철갑 포식자") and game.get("screen") == "play", "boss warning follows normal warning without pausing combat")
+	panel.call("update", 5.0, 2, "서하린")
+	_check(not panel.visible, "field warning expires automatically")
+
+
+func _test_main_menu(game: Control) -> void:
+	var menu: Control = game.get("flow_menu")
+	if menu == null:
+		_check(false, "main menu controls are available")
+		return
+	var buttons: Dictionary = menu.get("buttons")
+	var start: Button = buttons.start
+	var settings: Button = buttons.settings
+	_check(start.size.is_equal_approx(settings.size), "start and settings use identical button dimensions")
+	var click := InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	click.position = settings.get_global_rect().get_center()
+	root.push_input(click.duplicate(), true)
+	_check(game.get("screen") == "menu" and menu.get("_selected") == "settings", "single click only selects the menu item")
+	click.double_click = true
+	root.push_input(click.duplicate(), true)
+	_check(game.get("screen") == "settings", "double-click opens the selected menu item")
+	game.set("dash_key", KEY_Q)
+	game.set("pause_key", KEY_P)
+	game.set("awaiting_binding", "dash")
+	game.call("_reset_key_bindings")
+	_check(game.get("dash_key") == KEY_SHIFT and game.get("pause_key") == KEY_ESCAPE and game.get("awaiting_binding") == "", "reset restores Shift and Escape and clears pending rebind")
+	game.call("_close_settings")
+	click.position = start.get_global_rect().get_center()
+	click.double_click = false
+	root.push_input(click.duplicate(), true)
+	_check(game.get("screen") == "menu", "first click on start does not launch")
+	click.double_click = true
+	root.push_input(click.duplicate(), true)
+	_check(game.get("screen") == "character", "double-click on start opens character selection")
+
+
+func _test_structure_targets(game: Node) -> void:
+	var enemies: Array = game.get("enemies")
+	var structures: Array = game.get("structures")
+	var wall_cell := Vector2i(5, 4)
+	var wall_pos: Vector2 = game.call("_cell_world", wall_cell)
+	structures.append({"kind": "wall", "cell": wall_cell, "hp": 100.0, "max_hp": 100.0})
+	var wall: Dictionary = structures.back()
+	game.set("player_pos", wall_pos + Vector2(65, 0))
+	var attacker := _spawn_test_zombie(game, wall_pos + Vector2(41, 0), 100.0)
+	attacker.cool = 0.0
+	var health_before: float = game.get("player_hp")
+	game.call("_update_enemies", 0.1)
+	_check(attacker.target == "wall" and wall.hp < 100.0 and game.get("player_hp") == health_before, "a nearby wall takes priority over an in-reach player")
+	var waiting_position: Vector2 = attacker.pos
+	game.call("_update_enemies", 0.1)
+	_check(attacker.pos.is_equal_approx(waiting_position), "zombie remains at a wall during attack cooldown")
+	wall.hp = 0.0
+	attacker.cool = 0.0
+	game.call("_update_enemies", 0.1)
+	_check(attacker.target == "player", "destroyed walls release the target")
+	structures.pop_back()
+	enemies.clear()
+	var hq: Dictionary = structures[0]
+	var hq_center: Vector2 = game.call("_entry_world_center", hq)
+	var hq_attacker := _spawn_test_zombie(game, hq_center + Vector2(63, 0), 100.0)
+	game.set("player_pos", hq_center + Vector2(510, 0))
+	hq_attacker.cool = 0.0
+	var hq_before: float = hq.hp
+	game.call("_update_enemies", 0.1)
+	_check(hq.hp < hq_before, "zombie can damage the full-width HQ from the collision perimeter")
+	enemies.clear()
+	var facility := {"kind": "supply", "cell": Vector2i(5, 5), "hp": 100.0, "max_hp": 100.0}
+	structures.append(facility)
+	var facility_center: Vector2 = game.call("_entry_world_center", facility)
+	var blocked := _spawn_test_zombie(game, facility_center + Vector2(65, 0), 100.0)
+	game.set("player_pos", facility_center - Vector2(70, 0))
+	blocked.cool = 0.0
+	game.call("_update_enemies", 0.1)
+	_check(facility.hp < 100.0, "a facility blocking the pursuit route takes melee damage")
+	structures.pop_back()
+
+
+func _test_combat_zoom_and_augments(game: Control) -> void:
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	wheel.position = game.size * 0.5 + Vector2(30.0, 0.0)
+	for i in range(6):
+		root.push_input(wheel.duplicate(), true)
+	_check(is_equal_approx(game.get("camera_zoom"), 1.6), "mouse wheel zooms the battlefield to its maximum")
+	var camera_point := game.size * 0.5 + Vector2(76.8, 0)
+	var world_point: Vector2 = game.call("_screen_to_world", camera_point)
+	_check(world_point.is_equal_approx(game.get("player_pos") + Vector2(48.0, 0.0)), "zoomed clicks retain one-tile world accuracy")
+	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	for i in range(6):
+		root.push_input(wheel.duplicate(), true)
+	_check(is_equal_approx(game.get("camera_zoom"), 1.0), "mouse wheel returns to the original view")
+	game.call("_offer_augments")
+	var row := (game.get("augment_screen") as Control).find_child("AugmentCards", true, false) as HBoxContainer
+	_check(row.get_child_count() == 3 and row.get_combined_minimum_size().x <= 600.0 and row.get_combined_minimum_size().x >= 560.0, "the three augment cards are enlarged but fit within a compact row")
+	var reroll: Button = game.get("augment_reroll_button")
+	_check(reroll.flat and reroll.size_flags_horizontal == Control.SIZE_SHRINK_CENTER, "reroll is compact instead of stretching")
+	game.call("_reroll_augments")
+	_check(reroll.disabled and row.get_child_count() == 3, "reroll is available exactly once and leaves three cards")
+	game.call("_show_screen", "play")
+
+
+func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
+	var enemies: Array = game.get("enemies")
+	var slot := enemies.find(enemy)
+	var now: float = game.get("run_seconds")
+	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME)
+	var bodies: Array = game.get("zombie_corpses")
+	var deaths_before := bodies.size()
+	var kills_before: int = game.get("kills")
+	var money_before: int = game.get("money")
+	game.call("_damage_enemy", slot, 1.0, "test")
+	_check(enemy.hit_until > now and enemies.has(enemy), "nonlethal damage starts the hit animation")
+	game.call("_damage_enemy", slot, enemy.hp, "test")
+	_check(not enemies.has(enemy) and game.get("kills") == kills_before + 1 and game.get("money") == money_before + 2, "death immediately removes the gameplay enemy and awards once")
+	_check(bodies.size() == deaths_before + 1, "visible death creates one cosmetic corpse")
+	var death_variant: int = bodies.back().variant if not bodies.is_empty() else -1
+	var random: RandomNumberGenerator = game.get("_random")
+	random.seed = 212
+	var variants := {}
+	for i in range(96):
+		var zombie: Dictionary = game.call("_make_enemy", "normal", Vector2(800.0, 0.0), false)
+		variants[zombie.variant] = [zombie.hp, zombie.speed, zombie.attack, zombie.reward]
+	_check(variants.size() == 8 and variants.values().all(func(stats): return stats == variants.values()[0]), "eight random appearances share exactly the same normal zombie stats")
+	_check(not bodies.is_empty() and bodies.back().variant == death_variant, "pool reuse cannot change a corpse visual")
+	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME * 0.5)
+	_check(bodies.size() == deaths_before + 1, "corpse remains during its visible death frames")
+	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME + 0.01)
+	_check(bodies.is_empty(), "corpse is removed at the end of the death animation")
 
 
 func _test_attack_modes(game: Control, origin: Vector2) -> void:
@@ -303,7 +480,7 @@ func _check(condition: bool, context: String) -> void:
 
 func _finish() -> void:
 	if failures.is_empty():
-		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI, timed stages, pause and save/continue")
+		print("[reclaim-tests] PASS: boot, roster, enemies, augments, HQ-only start, construction rules, collision, turret caps, combat modes, 360-degree projectiles, reload, lethal combat, zombie AI and variants, combat zoom, menu and key reset, augments, wall priority, field warnings and save/continue")
 		quit(0)
 	else:
 		for failure in failures: push_error("[reclaim-tests] " + failure)
