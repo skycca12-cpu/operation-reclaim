@@ -66,7 +66,7 @@ func update(delta: float, enemies: Array[Dictionary], damage_enemy: Callable) ->
 			var index := enemies.find(closest)
 			var impact := start + direction * first_contact
 			if index >= 0:
-				damage_enemy.call(index, shot.damage, "player")
+				damage_enemy.call(index, shot.damage, "player", impact - direction * 4.0)
 			if int(shot.ricochets) > 0:
 				var remaining := float(shot.remaining) - first_contact
 				var bounce := _bounce_direction(enemies, impact, hit_ids, remaining)

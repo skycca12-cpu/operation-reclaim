@@ -37,6 +37,7 @@ const FOOT_OFFSET := 40.0
 const CUT_CYCLE := 7.0 / 13.0
 
 var _attack_left := 0.0
+var _attack_pose_left := 0.0
 var _attack_facing := Vector2.DOWN
 var _cut_clock := 0.0
 var _clock := 0.0
@@ -45,6 +46,7 @@ var _walk_distance := 0.0
 
 func update(delta: float, motion := Vector2.ZERO) -> void:
 	_clock += delta
+	_attack_pose_left = maxf(0.0, _attack_pose_left - delta)
 	var speed := motion.length()
 	_walk_distance = _walk_distance + minf(speed, 380.0) * delta if speed > 6.0 else 0.0
 	if _attack_left > 0.0:
@@ -54,6 +56,7 @@ func update(delta: float, motion := Vector2.ZERO) -> void:
 
 func attack(interval: float, facing: Vector2) -> void:
 	_attack_facing = facing
+	_attack_pose_left = minf(0.085, interval * 0.55)
 	if _attack_left <= 0.0:
 		_cut_clock = 0.0
 	_attack_left = maxf(interval + 0.05, CUT_CYCLE - fposmod(_cut_clock, CUT_CYCLE))
@@ -61,15 +64,17 @@ func attack(interval: float, facing: Vector2) -> void:
 
 func reset() -> void:
 	_attack_left = 0.0
+	_attack_pose_left = 0.0
 	_clock = 0.0
 	_walk_distance = 0.0
 	_cut_clock = 0.0
 
 
-func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector2, dashing: bool) -> void:
-	var attacking := _attack_left > 0.0
+func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector2, dashing: bool, echo := 0.0) -> void:
 	var running := motion.length_squared() > 36.0
+	var attacking := echo == 0.0 and _attack_left > 0.0 and (not running or _attack_pose_left > 0.0)
 	facing = _attack_facing if attacking else motion if running else facing
+	var tint := Color(0.33, 0.27, 0.51, echo) if echo > 0.0 else Color.WHITE
 	var progress := fposmod(_cut_clock / CUT_CYCLE, 1.0) if attacking else 0.0
 	var side := absf(facing.x) > absf(facing.y)
 	var back := not side and facing.y < 0.0
@@ -80,23 +85,24 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 	if dashing:
 		canvas.draw_circle(position, 24.0, Color("#739de33b"))
 	canvas.draw_set_transform(position + Vector2(0.0, FOOT_OFFSET - 2.0), 0.0, Vector2(1.0, 0.35))
-	canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
+	if echo == 0.0:
+		canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
 	canvas.draw_set_transform(Vector2.ZERO)
 	if not side and running and not attacking:
 		var frame := _vertical_walk_cell(back)
 		var target := (position + Vector2(0.0, FOOT_OFFSET)).round() - VERTICAL_FOOT_ANCHOR
 		canvas.draw_texture_rect_region(VERTICAL_WALK, Rect2(target, VERTICAL_FRAME),
-			Rect2(Vector2(frame) * VERTICAL_FRAME, VERTICAL_FRAME))
+			Rect2(Vector2(frame) * VERTICAL_FRAME, VERTICAL_FRAME), tint)
 		return
 	if not side and not back:
 		var front_frame := _front_cut_frame(progress) if attacking else 0
 		var target := center.round() - FRONT_FOOT_ANCHOR
-		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(front_frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE))
+		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(front_frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE), tint)
 		return
 	if back and attacking:
 		var north_frame := clampi(int(progress * 4.0), 0, 3)
 		canvas.draw_texture_rect_region(NORTH_ATTACK, Rect2(position.round() + NEW_ORIGIN, NEW_FRAME),
-			Rect2(Vector2(north_frame * NEW_FRAME.x, 0), NEW_FRAME))
+			Rect2(Vector2(north_frame * NEW_FRAME.x, 0), NEW_FRAME), tint)
 		if north_frame == 1 or north_frame == 2:
 			_draw_north_sparks(canvas, position + NORTH_TIPS[north_frame], progress)
 		return
@@ -104,7 +110,7 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 		var flip := Vector2(-1, 1) if facing.x < 0.0 else Vector2.ONE
 		canvas.draw_set_transform(position.round(), 0.0, flip)
 		canvas.draw_texture_rect_region(RUN_ATLAS, Rect2(NEW_ORIGIN, NEW_FRAME),
-			Rect2(Vector2(int(stride) % 4, 3) * NEW_FRAME, NEW_FRAME))
+			Rect2(Vector2(int(stride) % 4, 3) * NEW_FRAME, NEW_FRAME), tint)
 		canvas.draw_set_transform(Vector2.ZERO)
 		return
 	var frames := CUT if attacking else IDLE
@@ -115,7 +121,7 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 	var sprite_scale := Vector2(-1, 1) if side and facing.x < 0.0 else Vector2.ONE
 	canvas.draw_set_transform((center + lean).round(), 0.0, sprite_scale)
 	var anchor_x := size.x * 0.33 if side else size.x * 0.5
-	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false)
+	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false, tint)
 	canvas.draw_set_transform(Vector2.ZERO)
 
 

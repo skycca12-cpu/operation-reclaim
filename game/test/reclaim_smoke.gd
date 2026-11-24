@@ -249,6 +249,8 @@ func _run() -> void:
 	_test_harin_muzzle(resumed)
 	_test_infantry_visuals(resumed)
 	_test_yujin(resumed)
+	_test_zombie_weapon_reactions(resumed)
+	_test_dash_echoes(resumed)
 	_test_spawn_multiplier(resumed)
 	_test_character_augments(resumed)
 	_test_enemy_wall_cover(resumed)
@@ -747,15 +749,59 @@ func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
 	var random: RandomNumberGenerator = game.get("_random")
 	random.seed = 212
 	var variants := {}
-	for i in range(96):
+	for i in range(700):
 		var zombie: Dictionary = game.call("_make_enemy", "normal", Vector2(800.0, 0.0), false)
-		variants[zombie.variant] = [zombie.hp, zombie.speed, zombie.attack, zombie.reward]
-	_check(variants.size() == 8 and variants.values().all(func(stats): return stats == variants.values()[0]), "eight random appearances share exactly the same normal zombie stats")
+		variants[zombie.appearance] = [zombie.hp, zombie.speed, zombie.attack, zombie.reward]
+	_check(variants.size() == 50 and variants.values().all(func(stats): return stats == variants.values()[0]), "all 50 random appearances share exactly the same normal zombie stats")
 	_check(not bodies.is_empty() and bodies.back().variant == death_variant, "pool reuse cannot change a corpse visual")
 	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME * 0.5)
 	_check(bodies.size() == deaths_before + 1, "corpse remains during its visible death frames")
 	game.call("_update_zombie_corpses", now + ZombieVisual.DEATH_TIME + 0.01)
 	_check(bodies.is_empty(), "corpse is removed at the end of the death animation")
+
+
+func _test_dash_echoes(game: Control) -> void:
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.set("player_facing", Vector2.RIGHT)
+	var origin: Vector2 = game.get("player_pos")
+	game.call("_try_dash")
+	for tick in range(7):
+		game.call("_update_player", 1.0 / 60.0)
+		game.set("run_seconds", float(tick + 1) / 60.0)
+	var echoes: Array = game.get("dash_echoes")
+	_check(echoes.size() >= 2 and echoes[0].pos == origin and echoes[1].pos.x > origin.x,
+		"dash records a fading trail at the actual movement positions")
+	game.set("run_seconds", 1.0)
+	game.call("_process", 0.01)
+	_check(echoes.is_empty(), "dash silhouettes expire")
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.set("player_facing", Vector2.RIGHT)
+	game.set("player_pos", Vector2(1426, 0))
+	game.call("_try_dash")
+	game.call("_update_player", 1.0 / 60.0)
+	_check(echoes.is_empty(), "a blocked dash does not leave an echo at the edge")
+
+
+func _test_zombie_weapon_reactions(game: Control) -> void:
+	for item in [["basic", "rifle"], ["heavy", "shotgun"], ["rocket", "explosive"],
+			["electric", "electric"], ["flame", "fire"], ["freeze", "cold"], ["aa", "rifle"]]:
+		game.call("_reset_run")
+		var structures: Array = game.get("structures")
+		structures.append({"kind": item[0], "cell": Vector2i(5, 5), "level": 1,
+			"hp": 200.0, "max_hp": 200.0, "cool": 0.0})
+		var mob: Dictionary = _spawn_test_zombie(game, Vector2(156, 96), 1000.0)
+		mob.air = item[0] == "aa"
+		game.call("_update_turrets", 0.01)
+		_check(mob.hp < 1000.0 and mob.get("hit_style") == item[1] and mob.hit_until > 0.0,
+			"the %s turret selects the %s zombie impact" % item)
+	game.set("player_index", 0)
+	game.call("_reset_run")
+	var target: Dictionary = _spawn_test_zombie(game, Vector2(200, 50), 1000.0)
+	game.call("_damage_enemy", 0, 10.0, "player", Vector2(240, 50))
+	_check(target.hit_style == "shotgun" and Vector2(target.hit_direction).is_equal_approx(Vector2.LEFT),
+		"shotgun reaction faces away from the projectile impact origin")
 
 
 func _test_attack_modes(game: Control, origin: Vector2) -> void:

@@ -57,16 +57,19 @@ func _side_recoil(row: int, phase: int) -> Vector2:
 	return Vector2(float(-4 + 2 * mini(phase, 2)) * (1.0 if row == 1 else -1.0), 0.0)
 
 
-func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2, dashing: bool, drone_level: int, reload_progress: float) -> void:
-	var shooting := attack_timer > 0.0
+func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2, dashing: bool, drone_level: int, reload_progress: float, echo := 0.0) -> void:
 	var running := motion.length_squared() > 36.0
+	var attack_row := _facing_row(shot_facing)
+	var flash_duration := ATTACK_HOLD / 3.0 if attack_row == 0 or attack_row == 2 else ATTACK_HOLD / 4.0
+	var flash := echo == 0.0 and attack_timer > ATTACK_HOLD - flash_duration
+	var shooting := echo == 0.0 and attack_timer > 0.0 and (not running or flash)
 	var display_facing := shot_facing if shooting else facing
-	if running and not shooting and reload_progress < 0.0:
+	if running and not shooting:
 		display_facing = motion
 	var row := _facing_row(display_facing)
 	var run_frame := int(walk_distance / STRIDE_STEP) % 4
 	var phase := clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 4.0), 0, 3) if shooting else 0
-	var tint := Color(1.0, 0.72, 0.72) if hurt_timer > 0.0 else Color.WHITE
+	var tint := Color(0.33, 0.27, 0.51, echo) if echo > 0.0 else Color(1.0, 0.72, 0.72) if hurt_timer > 0.0 else Color.WHITE
 	if shooting and row == 0:
 		var frame := _front_shot_frame()
 		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(center + FRONT_FRAME_ORIGIN, FRONT_FRAME_SIZE),
@@ -75,7 +78,7 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2,
 		var frame := _front_shot_frame()
 		canvas.draw_texture_rect_region(NORTH_ATTACK, Rect2(center + NEW_ORIGIN, NEW_FRAME),
 			Rect2(Vector2(frame * NEW_FRAME.x, 0), NEW_FRAME), tint)
-	elif running and not shooting and reload_progress < 0.0:
+	elif running and not shooting:
 		var run_row := 0 if row == 0 else 1 if row == 2 else 2
 		var flip := Vector2(-1, 1) if row == 3 else Vector2.ONE
 		canvas.draw_set_transform(center.round(), 0.0, flip)
@@ -89,9 +92,7 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2,
 			origin += _side_recoil(row, phase)
 		canvas.draw_texture_rect_region(SHEET, Rect2(origin, Vector2.ONE * DRAW_SIZE),
 			Rect2(Vector2(column, row) * CELL_SIZE, Vector2.ONE * CELL_SIZE), tint)
-	var vertical_shot := row == 0 or row == 2
-	var flash_duration := ATTACK_HOLD / 3.0 if vertical_shot else ATTACK_HOLD / 4.0
-	if shooting and attack_timer > ATTACK_HOLD - flash_duration:
+	if flash:
 		var flash_direction := [Vector2.DOWN, Vector2.RIGHT, Vector2.UP, Vector2.LEFT][row] as Vector2
 		_draw_flash(canvas, center + muzzle_offset(shot_facing), flash_direction, flash_duration)
 	if dashing:

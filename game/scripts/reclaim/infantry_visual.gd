@@ -41,21 +41,24 @@ func _row(facing: Vector2) -> int:
 	return 2 if absf(facing.x) > absf(facing.y) else 1 if facing.y < 0.0 else 0
 
 
-func draw(canvas: CanvasItem, position: Vector2, kind: String, facing: Vector2, motion: Vector2, dashing: bool, reloading: bool) -> void:
-	var firing := _shot_time > 0.0
+func draw(canvas: CanvasItem, position: Vector2, kind: String, facing: Vector2, motion: Vector2, dashing: bool, echo := 0.0) -> void:
 	var moving := motion.length_squared() > 36.0
-	var direction := _shot_facing if firing else motion if moving and not reloading else facing
+	var flash := echo == 0.0 and _shot_time > SHOT_TIME - FLASH_TIME
+	var firing := echo == 0.0 and _shot_time > 0.0 and (not moving or flash)
+	var direction := _shot_facing if firing else motion if moving else facing
 	var row := _row(direction)
-	var column := 3 if firing else 1 + int(_distance / 25.0) % 2 if moving and not reloading else 0
+	var column := 3 if firing else 1 + int(_distance / 25.0) % 2 if moving else 0
 	var flip := Vector2(-1, 1) if row == 2 and direction.x < 0.0 else Vector2.ONE
 	if dashing:
 		canvas.draw_circle(position, 24.0, Color("#739de33b"))
 	canvas.draw_set_transform(position + Vector2(0, 38), 0.0, Vector2(1.0, 0.35))
-	canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
+	if echo == 0.0:
+		canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
 	canvas.draw_set_transform(position.round(), 0.0, flip)
-	canvas.draw_texture_rect_region(SHEETS[kind], Rect2(ORIGIN, FRAME), Rect2(Vector2(column, row) * FRAME, FRAME))
+	canvas.draw_texture_rect_region(SHEETS[kind], Rect2(ORIGIN, FRAME), Rect2(Vector2(column, row) * FRAME, FRAME),
+		Color(0.33, 0.27, 0.51, echo) if echo > 0.0 else Color.WHITE)
 	canvas.draw_set_transform(Vector2.ZERO)
-	if _shot_time > SHOT_TIME - FLASH_TIME:
+	if flash:
 		var beam := Vector2.DOWN if row == 0 else Vector2.UP if row == 1 else Vector2(signf(direction.x), 0)
 		var tip := position + muzzle(kind, direction)
 		var side := beam.orthogonal()

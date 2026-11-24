@@ -1,5 +1,7 @@
 extends RefCounted
 
+const NormalVisual = preload("res://scripts/reclaim/normal_zombie_visual.gd")
+
 const SHEETS: Array[Texture2D] = [
 	preload("res://assets/reclaim/zombies/zombie_01_male.png"),
 	preload("res://assets/reclaim/zombies/zombie_02_female.png"),
@@ -56,6 +58,9 @@ static func start_attack(enemy: Dictionary, toward: Vector2, now: float) -> void
 
 
 static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, camera: Transform2D, tint := Color.WHITE, compact := false) -> void:
+	if enemy.kind == "normal":
+		_draw_normal(canvas, enemy, center, now, tint)
+		return
 	var phase := now + float(int(enemy.spawn_id) % 31) * 0.063
 	if now < float(enemy.attack_until):
 		var progress := 1.0 - (float(enemy.attack_until) - now) / ATTACK_TIME
@@ -72,6 +77,24 @@ static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, n
 		_draw_walk(canvas, enemy, center, camera, tint)
 	else:
 		_draw_frame(canvas, enemy.variant, enemy.row, int(phase * 5.0) % 4, center, tint)
+
+
+static func _draw_normal(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, tint: Color) -> void:
+	var attacking := now < float(enemy.attack_until)
+	var hit_age := now + HIT_TIME - float(enemy.hit_until)
+	if now < float(enemy.hit_until) and (not attacking or hit_age < 0.11):
+		NormalVisual.reaction(canvas, enemy, center, maxf(0.0, hit_age), tint)
+		return
+	if attacking:
+		var attack_row := facing_row(enemy.attack_direction)
+		var progress := clampf(1.0 - (float(enemy.attack_until) - now) / ATTACK_TIME, 0.0, 1.0)
+		var beat := int(progress * 8.0)
+		var column := 0 if beat == 0 or beat >= 7 else 15 + attack_row * 6 + beat - 1
+		NormalVisual.frame(canvas, enemy.appearance, column, center, tint)
+		return
+	var stride := fposmod(float(enemy.walk_distance) / 30.0, 1.0)
+	var column := 2 + int(stride * 4.0) if enemy.moving else int(now * 5.0 + float(enemy.spawn_id)) % 2
+	NormalVisual.frame(canvas, enemy.appearance, column, center, tint, enemy.row == 1)
 
 
 static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, camera: Transform2D, tint: Color) -> void:
@@ -153,7 +176,10 @@ static func _draw_attack_arm(canvas: CanvasItem, body: Transform2D, variant: int
 
 static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:
 	var frame := clampi(int((now - float(corpse.start)) * DEATH_FPS), 0, DEATH_FRAMES - 1)
-	_draw_frame(canvas, corpse.variant, corpse.row, 22 + frame, center)
+	if corpse.has("appearance"):
+		NormalVisual.frame(canvas, corpse.appearance, 6 + frame, center, Color.WHITE, corpse.row == 1)
+	else:
+		_draw_frame(canvas, corpse.variant, corpse.row, 22 + frame, center)
 
 
 static func _draw_frame(canvas: CanvasItem, variant: int, row: int, column: int, center: Vector2, tint := Color.WHITE) -> void:

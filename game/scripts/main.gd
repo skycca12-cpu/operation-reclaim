@@ -79,6 +79,9 @@ var manual_trigger := false
 var dash_direction := Vector2.RIGHT
 var player_projectiles := PlayerProjectiles.new()
 var enemy_spawn_id := 0
+const DASH_ECHO_LIFE := 0.18
+var dash_echoes: Array[Dictionary] = []
+var dash_echo_time := 0.0
 var dash_timer := 0.0
 var dash_cooldown := 0.0
 var player_attack_timer := 0.0
@@ -265,6 +268,8 @@ func _process(delta: float) -> void:
 		_refresh_hud()
 		return
 	delta *= simulation_speed
+	while not dash_echoes.is_empty() and float(dash_echoes[0].until) <= run_seconds:
+		dash_echoes.pop_front()
 	if treatment_remaining <= 0.0:
 		_update_player(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
@@ -1037,6 +1042,8 @@ func _reset_run() -> void:
 	manual_attack = false
 	manual_trigger = false
 	dash_timer = 0.0
+	dash_echoes.clear()
+	dash_echo_time = 0.0
 	dash_cooldown = 0.0
 	player_mod_damage += float(permanent_upgrades.get("damage", 0)) * 0.06
 	player_mod_speed += float(permanent_upgrades.get("speed", 0)) * 0.04
@@ -1615,6 +1622,7 @@ func _try_dash() -> void:
 	if direction.length() < 0.1: direction = player_facing
 	dash_direction = direction.normalized()
 	dash_timer = 0.2
+	dash_echo_time = 0.0
 	dash_cooldown = 1.25 * _csv_reduction("dash_cooldown")
 	last_dash_at = run_seconds
 
@@ -1667,6 +1675,10 @@ func _update_player(delta: float) -> void:
 	if dash_timer > 0.0:
 		dash_timer = maxf(0.0, dash_timer - delta)
 		_move_player(dash_direction * speed * 2.8 * delta * _csv_factor("dash_distance"))
+		dash_echo_time -= delta
+		if dash_echo_time <= 0.0 and previous_position.distance_squared_to(player_pos) > 4.0:
+			dash_echo_time = 0.032
+			dash_echoes.append({"pos": previous_position, "direction": dash_direction, "until": run_seconds + DASH_ECHO_LIFE})
 	else:
 		_move_player(direction * speed * delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
@@ -2307,7 +2319,7 @@ func _resolve_skill_blasts() -> void:
 			effects.append({"a": blast.pos, "b": blast.pos, "time": 0.18, "color": Color("#a1b86b"), "blast": true})
 
 
-func _damage_enemy(index: int, amount: float, source: String) -> void:
+func _damage_enemy(index: int, amount: float, source: String, origin: Variant = null) -> void:
 	if index < 0 or index >= enemies.size(): return
 	var enemy: Dictionary = enemies[index]
 	if enemy.get("underground", false):
@@ -2336,11 +2348,16 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 		amount *= 0.4
 		enemy.guard = maxf(0.0, float(enemy.guard) - 0.28)
 	enemy.hp = float(enemy.hp) - amount
+	var impact_origin: Vector2 = origin if origin is Vector2 else player_pos
+	var hit_style := _zombie_hit_style(source)
+	if amount > 0.0 and source != "status" and enemy.has("variant"):
+		enemy.hit_style = hit_style
+		enemy.hit_direction = impact_origin.direction_to(enemy.pos)
 	if amount > 0.0 and (shake_on or source == "chainsaw") and effects.size() < 80 and _zombie_on_screen(_world_to_screen(enemy.pos)):
 		var point: Vector2 = enemy.pos
-		var angle := player_pos.angle_to_point(point)
+		var angle := impact_origin.angle_to_point(point)
 		effects.append({"a": point, "b": point, "time": HIT_SPARK_TIME, "hit_angle": angle,
-			"color": Color("#ffb34f") if source == "chainsaw" else Color("#9abc75")})
+			"color": ZombieVisual.NormalVisual.IMPACTS[hit_style][0]})
 	if amount > 0.0 and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 1.18)
@@ -2376,8 +2393,29 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 				if enemies.size() >= MAX_ENEMIES: break
 				_spawn_enemy("small", split_at + Vector2.from_angle(piece * TAU / 3.0) * 25.0, false)
 		_check_level_up()
-	elif enemy.has("variant"):
+	elif amount > 0.0 and source != "status" and enemy.has("variant"):
 		enemy.hit_until = run_seconds + ZombieVisual.HIT_TIME
+
+
+func _zombie_hit_style(source: String) -> String:
+	match source:
+		"player":
+			return "shotgun" if Data.CHARACTERS[player_index].id == "tae" else "rifle"
+		"chainsaw":
+			return "saw"
+		"blast", "augment_blast", "rocket":
+			return "explosive"
+		"electric", "chain":
+			return "electric"
+		"flame":
+			return "fire"
+		"freeze":
+			return "cold"
+		"drone":
+			return "drone"
+		"heavy":
+			return "shotgun"
+	return "rifle"
 
 
 func _remove_enemy(index: int) -> void:
@@ -2385,7 +2423,10 @@ func _remove_enemy(index: int) -> void:
 	var dead: Dictionary = enemies[index]
 	enemies.remove_at(index)
 	if dead.has("variant") and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_CORPSES:
-		zombie_corpses.append({"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds})
+		var corpse := {"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds}
+		if dead.kind == "normal":
+			corpse.appearance = dead.appearance
+		zombie_corpses.append(corpse)
 	if enemy_pool.size() < MAX_ENEMIES: enemy_pool.append(dead)
 
 
@@ -2403,7 +2444,7 @@ func _zombie_on_screen(point: Vector2, padding := 48.0) -> bool:
 func _explode_damage_center(center: Vector2, radius: float, damage: float, source := "blast") -> void:
 	for i in range(enemies.size() - 1, -1, -1):
 		if enemies[i].pos.distance_to(center) <= radius:
-			_damage_enemy(i, damage, source)
+			_damage_enemy(i, damage, source, center)
 
 
 func _install_repair_drone() -> void:
@@ -2493,17 +2534,18 @@ func _update_turrets(delta: float) -> void:
 		_mark_csv_trigger("turret")
 		_mark_csv_trigger(kind)
 		if kind == "rocket":
-			_explode_damage_center(target_pos, 82.0 * (_csv_factor("blast_radius") + _csv_bonus("rocket_radius") / 100.0), damage * 0.72 * _csv_factor("blast_damage"))
+			_explode_damage_center(target_pos, 82.0 * (_csv_factor("blast_radius") + _csv_bonus("rocket_radius") / 100.0), damage * 0.72 * _csv_factor("blast_damage"), "rocket")
 			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.22, "color": PALETTE.red, "blast": true})
 		elif kind == "electric":
-			_damage_enemy(target_index, damage, "turret")
+			_damage_enemy(target_index, damage, kind, pos)
 			var struck := target_pos
 			for jump in range(1 + mini(5, int(_csv_bonus("electric_targets")))):
 				var skip_index := target_index if target_index < enemies.size() and enemies[target_index].pos.distance_squared_to(struck) < 0.25 else -1
 				target_index = _nearest_enemy(struck, 94.0 * _csv_factor("electric_range"), skip_index)
 				if target_index < 0: break
+				var chain_origin := struck
 				struck = enemies[target_index].pos
-				_damage_enemy(target_index, damage * pow(0.55, jump + 1), "chain")
+				_damage_enemy(target_index, damage * pow(0.55, jump + 1), "chain", chain_origin)
 			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.16, "color": PALETTE.blue})
 		elif kind == "flame":
 			var direction := pos.direction_to(target_pos)
@@ -2512,10 +2554,10 @@ func _update_turrets(delta: float) -> void:
 				var offset: Vector2 = enemies[i].pos - pos
 				if offset.length_squared() <= turret_range * turret_range and offset.normalized().dot(direction) >= threshold:
 					_apply_status(enemies[i], "burn", 2.0 * _csv_factor("burn_time"), damage * 0.15 * _csv_factor("burn_damage"))
-					_damage_enemy(i, damage, "turret")
+					_damage_enemy(i, damage, kind, pos)
 			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.12, "color": Color("#ef9154")})
 		else:
-			_damage_enemy(target_index, damage, "turret")
+			_damage_enemy(target_index, damage, kind, pos)
 			if kind == "freeze" and target_index < enemies.size() and enemies[target_index].pos.distance_to(target_pos) < 0.5:
 				var cold := enemies[target_index]
 				cold.slow = 2.2 * _csv_factor("freeze_time")
@@ -3435,7 +3477,7 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		var tint := Color.WHITE
 		if enemy.get("special", false) or boss:
 			tint = Color.WHITE.lerp(enemy.color, 0.42)
-		elif int(enemy.get("appearance", 0)) >= 8:
+		elif enemy.kind != "normal" and int(enemy.get("appearance", 0)) >= 8:
 			tint = Color.WHITE.lerp(Color.from_hsv(float(int(enemy.appearance) / 8) / 7.0, 0.35, 0.91), 0.34)
 		if enemy.kind == "S17": tint.a = 0.42
 		ZombieVisual.draw_alive(self, enemy, p, run_seconds, visual_camera, tint, enemies.size() >= 500)
@@ -3511,22 +3553,34 @@ func _draw_effect(effect: Dictionary) -> void:
 
 
 func _draw_player(p: Vector2) -> void:
+	for sample in dash_echoes:
+		var point := size * 0.5 + (_world_to_screen(sample.pos) - size * 0.5) * _view_zoom()
+		var opacity := 0.46 * clampf((float(sample.until) - run_seconds) / DASH_ECHO_LIFE, 0.0, 1.0)
+		if opacity > 0.0:
+			var direction: Vector2 = sample.direction
+			_draw_operator_sprite(point, direction, direction * 225.0, false, opacity)
 	var dir := player_facing.normalized()
-	if Data.CHARACTERS[player_index].id == "harin":
-		var reload_progress := -1.0
-		if player_reload_timer > 0.0:
-			reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
-		_harin_visual.draw(self, p, dir, player_motion, dash_timer > 0.0, player_drone_level + int(_csv_bonus("combat_drone")), reload_progress)
-	elif Data.CHARACTERS[player_index].id == "yujin":
-		_yujin_visual.draw(self, p, dir, player_motion, dash_timer > 0.0)
-	else:
-		_infantry_visual.draw(self, p, String(Data.CHARACTERS[player_index].id), dir, player_motion,
-			dash_timer > 0.0, player_reload_timer > 0.0)
+	_draw_operator_sprite(p, dir, player_motion, dash_timer > 0.0)
 	if screen == "play" and manual_attack and not build_mode:
 		var color := Color(PALETTE.gold, 0.55)
 		var aim_length := p.distance_to(aim_screen)
 		if aim_length > 24.0:
 			draw_line(p + dir * 20.0, p + dir * minf(aim_length - 5.0, 92.0), color, 1.0)
+
+
+func _draw_operator_sprite(p: Vector2, dir: Vector2, motion: Vector2, dashing: bool, echo := 0.0) -> void:
+	var kind: String = Data.CHARACTERS[player_index].id
+	match kind:
+		"harin":
+			var reload_progress := -1.0
+			if player_reload_timer > 0.0 and echo == 0.0:
+				reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
+			var drones := player_drone_level + int(_csv_bonus("combat_drone")) if echo == 0.0 else 0
+			_harin_visual.draw(self, p, dir, motion, dashing, drones, reload_progress, echo)
+		"yujin":
+			_yujin_visual.draw(self, p, dir, motion, dashing, echo)
+		_:
+			_infantry_visual.draw(self, p, kind, dir, motion, dashing, echo)
 
 
 func _draw_cross(center: Vector2, radius: float, color: Color) -> void:
