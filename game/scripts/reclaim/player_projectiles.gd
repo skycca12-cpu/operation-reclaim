@@ -8,10 +8,10 @@ const BUCKET := 128.0
 var shots: Array[Dictionary] = []
 
 
-func fire(origin: Vector2, direction: Vector2, distance: float, damage: float, hits: int, color: Color, muzzle_offset := Vector2.ZERO, speed_factor := 1.0) -> void:
+func fire(origin: Vector2, direction: Vector2, distance: float, damage: float, hits: int, color: Color, muzzle_offset := Vector2.ZERO, speed_factor := 1.0, ricochets := 0) -> void:
 	shots.append({
 		"pos": origin, "direction": direction, "remaining": distance,
-		"damage": damage, "hits": hits, "color": color, "hit_ids": {},
+		"damage": damage, "hits": hits, "ricochets": maxi(0, ricochets), "color": color, "hit_ids": {},
 		"muzzle_offset": muzzle_offset, "traveled": 0.0, "speed": SPEED * speed_factor,
 	})
 
@@ -64,12 +64,37 @@ func update(delta: float, enemies: Array[Dictionary], damage_enemy: Callable) ->
 			hit_ids[closest.spawn_id] = true
 			shot.hits -= 1
 			var index := enemies.find(closest)
-			if index >= 0: damage_enemy.call(index, shot.damage, "player")
+			var impact := start + direction * first_contact
+			if index >= 0:
+				damage_enemy.call(index, shot.damage, "player")
+			if int(shot.ricochets) > 0:
+				var remaining := float(shot.remaining) - first_contact
+				var bounce := _bounce_direction(enemies, impact, hit_ids, remaining)
+				if not bounce.is_zero_approx():
+					shot.ricochets -= 1
+					shot.hits = maxi(1, shot.hits)
+					shot.direction = bounce
+					travel = first_contact
+					break
 		shot.pos = start + direction * travel
 		shot.remaining -= travel
 		shot.traveled += travel
 		if shot.remaining <= 0.0 or shot.hits <= 0:
 			shots.remove_at(i)
+
+
+static func _bounce_direction(enemies: Array[Dictionary], impact: Vector2, hit_ids: Dictionary, remaining: float) -> Vector2:
+	var closest := Vector2.ZERO
+	var limit := remaining * remaining
+	for enemy in enemies:
+		if float(enemy.hp) <= 0.0 or enemy.get("underground", false) or hit_ids.has(enemy.spawn_id):
+			continue
+		var offset: Vector2 = enemy.pos - impact
+		var distance := offset.length_squared()
+		if distance > 0.0 and distance <= limit:
+			limit = distance
+			closest = offset
+	return closest.normalized()
 
 
 static func enemy_radius(enemy: Dictionary) -> float:

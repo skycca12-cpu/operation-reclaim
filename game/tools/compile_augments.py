@@ -12,6 +12,8 @@ group('range','사거리|산탄 사거리|소총 사거리|기본 무기 사거�
 group('projectile_speed','투사체 속도')
 group('magazine','탄창|소총 탄창')
 group('reload','재장전 속도|소총 재장전 속도|기본 무기 재장전 속도')
+group('ricochet','탄환 도탄|산탄 도탄|소총 도탄')
+group('pellet_focus','산탄 집탄')
 group('pierce','탄환 관통|산탄 관통|소총 관통|기본 무기 관통')
 group('pellets','산탄 수|소총 추가 발사')
 group('crit','치명타 확률|소총 치명타 확률|전기톱 치명타 확률')
@@ -135,8 +137,8 @@ for r in rows:
  key=aliases.get(r['효과'],'')
  owner=owners[r['캐릭터']]
  trigger=triggers.get(r['계열'],'attack') if r['발동조건']!='상시' else ''
- # Temporary stat changes must not permanently modify existing HP.
- if trigger and key in {'hp','turret_hp','hq_hp','wall_hp','facility_hp','clinic_hp','combat_drone','magazine','turret_cap'}: key=''
+ # Structure durability and other persistent capacities need their own expiry handling.
+ if trigger and key in {'turret_hp','hq_hp','wall_hp','facility_hp','clinic_hp','combat_drone','magazine','turret_cap'}: key=''
  output.append({'id':r['id'],'hero':owner,'family':r['계열'],'name':r['명칭'],'stars':int(r['희귀도']),'limit':int(r['최대단계']),'effect':r['효과'],'amount':float(r['단계당수치']),'unit':r['단위'],'trigger':trigger,'requires':req[0],'required_count':int(req[1]) if len(req)>1 else 0,'unlock':r['해금조건'],'rule':r['중첩규칙'],'key':key})
 (game / 'config/augments_500.json').write_text('[\n' + ',\n'.join(json.dumps(row, ensure_ascii=False, separators=(',', ':')) for row in output) + '\n]\n', encoding='utf-8')
 print(len(output),sum(bool(x['key']) for x in output),'wired routes')

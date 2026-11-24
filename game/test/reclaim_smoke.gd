@@ -340,30 +340,41 @@ func _test_repair_drone(game: Control) -> void:
 
 func _test_jeju_battlefield(game: Control) -> void:
 	var map: RefCounted = game.get("jeju_map")
-	var terrain: TileMapLayer = map.get("tiles")
-	_check(terrain.get_used_cells().size() == 60 * 60 and terrain.get_used_rect().size == Vector2i(60, 60),
-		"Jeju has exactly 60 by 60 terrain cells")
-	_check(not map.call("walkable", Vector2(790, 768), 13.0), "southeast sea and cliffs block passage")
-	_check(not map.call("walkable", Vector2(660, -680), 0.0), "the gas station has a ground footprint")
-	_check(map.call("walkable", Vector2(625, -720), 0.0), "the gas station roof projection is walkable")
-	game.set("player_pos", Vector2(535, 730))
-	game.call("_move_player", Vector2(280, 0))
-	_check(game.get("player_pos").x < 790.0, "a long movement cannot skip over the coast boundary")
-	game.set("player_pos", Vector2.ZERO)
-	for i in range(8):
-		var position: Vector2 = game.call("_land_spawn", float(i) * TAU / 8.0, 600.0)
-		_check(map.call("walkable", position, 24.0), "spawn sector %d resolves to walkable land" % i)
-	# Check continuous lanes from the plaza toward all four map edges.
-	for direction in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
-		for distance in range(24, 721, 24):
-			_check(map.call("walkable", direction * distance, 21.0), "cardinal approach %s stays open" % direction)
+	var map_script = preload("res://scripts/reclaim/jeju_fixed_map.gd")
+	var bounds: Rect2 = map.get("bounds")
+	_check(bounds.size == Vector2(1536, 1024) * map_script.SCALE, "Jeju V2 keeps the original aspect ratio at a uniform scale")
+	_check(game.call("_hq_position") == map.call("_image_to_world", Vector2(768, 480)), "HQ matches the source anchor")
+	var obstacle: Vector2 = map.call("_image_to_world", Vector2(350, 365))
+	_check(not map.call("walkable", obstacle, 0.0), "source obstacle blocks the ground")
+	_check(not map.call("walkable", bounds.position + Vector2(40, 40), 13.0), "the outer landscape blocks passage")
+	game.set("player_pos", obstacle + Vector2(-120, 0))
+	game.call("_move_player", Vector2(230, 0))
+	_check(game.get("player_pos").x < obstacle.x, "a long movement cannot skip over a V2 obstacle")
+	var spawns: PackedVector2Array = map.get("spawn_points")
+	_check(spawns.size() == 8, "all eight V2 spawn candidates are loaded")
+	for spawn in spawns:
+		var entry: Vector2 = map.call("approach_point", spawn)
+		var hq: Vector2 = game.call("_hq_position")
+		_check(map.call("_segment_clear", spawn, entry, 42.0) and map.call("_segment_clear", entry, hq, 42.0),
+			"V2 spawn %s has a continuous route to HQ" % spawn)
+		game.call("_reset_run")
+		game.set("treatment_remaining", 60.0)
+		game.call("_spawn_enemy", "normal", spawn, false)
+		var mob: Array = game.get("enemies")
+		for step in range(720):
+			game.call("_update_enemies", 0.05)
+		_check(mob.size() == 1 and Vector2(mob[0].pos).distance_to(hq) < 100.0,
+			"a live zombie reaches HQ from %s" % spawn)
+	for zoom in [1.0, 2.4]:
+		var center: Vector2 = map.call("camera_center", bounds.position, Vector2(1280, 720), zoom)
+		_check(center.is_equal_approx(bounds.position + Vector2(640, 360) / zoom), "camera stays inside V2 bounds at %s zoom" % zoom)
 	game.call("_reset_run")
 	game.set("spawn_timer", 0.0)
 	game.call("_update_spawn", 0.0)
 	var first_wave: Array = game.get("enemies")
 	var start: Vector2 = game.get("player_pos")
-	_check(first_wave.size() == 5 and first_wave.all(func(enemy): return start.distance_to(enemy.pos) >= 699.0),
-		"the first wave approaches from at least 700 pixels away")
+	_check(first_wave.size() == 5 and first_wave.all(func(enemy): return spawns.has(enemy.pos) and start.distance_to(enemy.pos) >= 450.0),
+		"the first wave uses authored routes away from the player")
 	game.call("_reset_run")
 	game.set("stage", 95)
 	for i in range(70):

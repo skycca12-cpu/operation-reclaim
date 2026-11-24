@@ -21,7 +21,7 @@ const TURRET_ROWS := {"basic": 0, "heavy": 1, "rocket": 2, "electric": 3, "flame
 const FACILITY_COLUMNS := {"clinic": 0, "supply": 1, "workshop": 2, "research": 3, "outpost": 4}
 const AugmentCatalog = preload("res://scripts/reclaim/augment_catalog.gd")
 const SpecialEnemies = preload("res://scripts/reclaim/special_enemies.gd")
-const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
+const JejuFixedMap = preload("res://scripts/reclaim/jeju_fixed_map.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
 const MainMenuScreen = preload("res://scripts/reclaim/flow/main_menu_screen.gd")
 const CharacterSelectScreen = preload("res://scripts/reclaim/flow/character_select_screen.gd")
@@ -61,7 +61,7 @@ const PALETTE := {
 	"gold": Color("#d0a873"), "green": Color("#8db296"), "red": Color("#df7664"), "blue": Color("#78b7c2"), "white": Color("#ffffff")
 }
 
-var jeju_map := JejuMapArt.new()
+var jeju_map := JejuFixedMap.new()
 var screen := "boot"
 var player_index := 0
 var difficulty_index := 1
@@ -243,7 +243,7 @@ func _ready() -> void:
 	flow_sfx = FlowSfx.new()
 	add_child(flow_sfx)
 	flow_sfx.enabled = sound_on
-	jeju_map.setup(self)
+	jeju_map.setup()
 	_build_ui()
 	_show_screen("boot")
 	print("[reclaim-boot] 수도 탈환작전 · 한국어 메뉴 준비")
@@ -281,6 +281,7 @@ func _process(delta: float) -> void:
 	if screen == "play":
 		field_warning.update(delta, player_index, Data.CHARACTERS[player_index].name)
 	run_seconds += delta
+	player_hp = minf(player_hp, _effective_player_max_hp())
 	save_timer += delta
 	if save_timer >= 12.0:
 		save_timer = 0.0
@@ -391,7 +392,6 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _draw() -> void:
 	var world_visible := screen in ["play", "pause", "augment", "result", "landing", "info"] or (screen == "settings" and settings_from_pause)
-	jeju_map.align(player_pos, size, _view_zoom(), world_visible)
 	if world_visible:
 		_draw_world()
 	else:
@@ -1112,6 +1112,9 @@ func _load_saved_run() -> void:
 		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), jeju_map.nearest_land(saved_pos, ZombieVisual.RADIUS), bool(entry.get("boss", false)))
 		enemy.hp = float(entry.get("hp", enemy.max_hp))
 		enemy.cool = float(entry.get("cool", 0.5))
+		var route: Array = entry.get("approach_point", [])
+		if route.size() == 2:
+			enemy.approach_point = Vector2(float(route[0]), float(route[1]))
 		var saved_variant := int(entry.get("variant", -1))
 		if enemy.has("variant") and saved_variant >= 0 and saved_variant < ZombieVisual.SHEETS.size():
 			enemy.variant = saved_variant
@@ -1432,6 +1435,9 @@ func _cell_is_entrance(cell: Vector2i) -> bool:
 func _validate_placement(kind: String, cell: Vector2i) -> String:
 	var definition := _build_definition(kind)
 	var width := 2 if _is_building(kind) else 1
+	var footprint := Rect2(_cell_world(cell) - Vector2.ONE * CELL * 0.5, Vector2(width * CELL, CELL))
+	if not jeju_map.build_bounds.encloses(footprint):
+		return "건설 구역 밖입니다."
 	if cell.x < GRID_MIN or cell.y < GRID_MIN or cell.x + width - 1 > GRID_MAX or cell.y > GRID_MAX:
 		return "건설 구역 밖입니다."
 	if kind == "wall" and _cell_is_entrance(cell):
@@ -1679,7 +1685,7 @@ func _update_player_attack(delta: float) -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var wants_attack := false
 	if manual_attack:
-		var aim := aim_screen - size * 0.5
+		var aim := _screen_to_world(aim_screen) - player_pos
 		if not aim.is_zero_approx():
 			player_facing = aim.normalized()
 		wants_attack = screen == "play" and manual_trigger and not build_mode
@@ -1704,6 +1710,8 @@ func _update_player_attack(delta: float) -> void:
 func _attack_player() -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var kind := String(hero.id)
+	if kind != "yujin" and player_magazine <= 0:
+		return
 	_mark_csv_trigger("attack")
 	var interval := _weapon_interval(hero, player_mod_rate * (_csv_factor("rate") + _recent_combat_bonus("crit_rate", "kill_rate") / 100.0))
 	if kind == "yujin":
@@ -1717,8 +1725,6 @@ func _attack_player() -> void:
 			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > cos(deg_to_rad(minf(85.0, 45.0 * _csv_factor("saw_angle"))))):
 				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
 				if effects.size() < 40: effects.append({"a": player_pos + direction * 26, "b": target_pos, "time": 0.09, "color": Color("#f1a34f")})
-		return
-	if player_magazine <= 0:
 		return
 	player_magazine -= 1
 	if player_magazine == 0:
@@ -1736,8 +1742,8 @@ func _attack_player() -> void:
 	var damage := _weapon_damage(hero, player_mod_damage) / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
-		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 if kind == "tae" else 0.0)
-		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, muzzle_offset, _csv_factor("projectile_speed"))
+		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 * _csv_reduction("pellet_focus") if kind == "tae" else 0.0)
+		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, muzzle_offset, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")))
 
 
 func _update_spawn(delta: float) -> void:
@@ -1771,15 +1777,8 @@ func _update_spawn(delta: float) -> void:
 			_spawn_enemy(kind, pos, false)
 
 
-func _land_spawn(angle: float, distance: float) -> Vector2:
-	# Try neighbouring directions before falling back to nearby land.
-	var limit := JejuMapArt.LIMIT - Vector2.ONE * 32.0
-	for attempt in range(8):
-		var direction := Vector2.from_angle(angle + float(attempt) * TAU / 8.0)
-		var candidate := (player_pos + direction * distance).clamp(-limit, limit)
-		if candidate.distance_squared_to(player_pos) >= 300.0 * 300.0 and jeju_map.walkable(candidate, 24.0):
-			return candidate
-	return jeju_map.nearest_land(player_pos + Vector2.from_angle(angle) * distance, 24.0)
+func _land_spawn(angle: float, _distance: float) -> Vector2:
+	return jeju_map.spawn_points[jeju_map.spawn_index(angle)]
 
 
 func _choose_enemy_kind() -> String:
@@ -1793,7 +1792,11 @@ func _choose_enemy_kind() -> String:
 
 
 func _spawn_enemy(kind: String, pos: Vector2, is_boss: bool) -> void:
-	enemies.append(_make_enemy(kind, pos, is_boss))
+	var enemy := _make_enemy(kind, pos, is_boss)
+	var approach := jeju_map.approach_point(pos)
+	if approach != JejuFixedMap.HQ_WORLD:
+		enemy.approach_point = approach
+	enemies.append(enemy)
 	_warn_enemy_once(kind)
 
 
@@ -1927,7 +1930,9 @@ func _update_enemies(delta: float) -> void:
 		else:
 			_update_melee_enemy(e, target_pos, target_structure, body_radius, step)
 		if e.target == "player" and e.pos.distance_squared_to(player_pos) < 22.0 * 22.0 and float(e.charge) <= 0.0 and not bool(e.ranged):
-			e.pos += (e.pos - player_pos).normalized() * 6.0
+			var separated: Vector2 = e.pos + (e.pos - player_pos).normalized() * 6.0
+			if e.get("air", false) or jeju_map.walkable(separated, body_radius):
+				e.pos = separated
 		if animated:
 			var traveled := previous_pos.distance_to(e.pos)
 			e.moving = traveled > 0.001
@@ -2092,6 +2097,12 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 			enemy.cool = 0.65 if enemy.boss else 1.0
 		return
 	var speed := float(enemy.speed) * (float(enemy.get("slow_factor", 0.48)) if float(enemy.slow) > 0.0 else 1.0) * (1.55 if rage else 1.0)
+	var route: Vector2 = enemy.get("approach_point", JejuFixedMap.HQ_WORLD)
+	if not enemy.get("air", false) and route != JejuFixedMap.HQ_WORLD:
+		if Vector2(enemy.pos).distance_squared_to(route) > 32.0 * 32.0:
+			toward = route - Vector2(enemy.pos)
+		else:
+			enemy.erase("approach_point")
 	var movement := toward.normalized() * speed * delta
 	var radius := 24.0 if enemy.boss else body_radius
 	var proposed: Vector2 = enemy.pos + movement
@@ -2345,9 +2356,9 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 		var reward := int(round(float(enemy.reward) * player_mod_salvage * reward_scale))
 		if treatment_remaining <= 0.0:
 			if _csv_bonus("kill_heal") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("kill_heal") / 100.0):
-				player_hp = minf(player_max_hp, player_hp + player_max_hp * 0.04 * _csv_factor("heal"))
+				player_hp = minf(_effective_player_max_hp(), player_hp + _effective_player_max_hp() * 0.04 * _csv_factor("heal"))
 			if source == "chainsaw":
-				player_hp = minf(player_max_hp, player_hp + _csv_bonus("saw_kill_heal") / 100.0 * amount)
+				player_hp = minf(_effective_player_max_hp(), player_hp + _csv_bonus("saw_kill_heal") / 100.0 * amount)
 		money += reward
 		kills += 1
 		player_xp += (16.0 if bool(enemy.boss) else 4.0 if enemy.kind != "normal" else 2.6) * player_mod_xp * (_csv_factor("xp") + _csv_bonus("boss_xp" if enemy.boss else "special_xp" if enemy.get("special", false) else "") / 100.0) * (1.0 + float(research_bonus) * 0.05)
@@ -2587,7 +2598,7 @@ func _update_facilities(delta: float) -> void:
 	clinic_shield = maxf(0.0, clinic_shield - delta)
 	var clinic := _living_facility("clinic")
 	if player_hp > 0.0 and treatment_remaining <= 0.0 and _csv_bonus("regen") > 0.0:
-		player_hp = minf(player_max_hp, player_hp + delta * _csv_bonus("regen") * player_max_hp / 100.0)
+		player_hp = minf(_effective_player_max_hp(), player_hp + delta * _csv_bonus("regen") * _effective_player_max_hp() / 100.0)
 	if treatment_remaining > 0.0:
 		if clinic < 0:
 			_finish_run(false)
@@ -2595,12 +2606,12 @@ func _update_facilities(delta: float) -> void:
 		treatment_remaining = maxf(0.0, treatment_remaining - delta)
 		if treatment_remaining == 0.0:
 			player_pos = _hq_position() + Vector2(0, CELL)
-			player_hp = player_max_hp
+			player_hp = _effective_player_max_hp()
 			clinic_shield = _csv_bonus("clinic_invulnerability")
 			_mark_csv_trigger("clinic")
 			_show_toast("치료 완료 · 지휘본부 복귀")
 	elif clinic >= 0 and player_hp > 0.0 and player_pos.distance_to(_entry_world_center(structures[clinic])) <= 245.0:
-		player_hp = minf(player_max_hp, player_hp + delta * 2.8 * _csv_factor("heal") * (_csv_factor("low_heal") if player_hp < player_max_hp * 0.35 else 1.0))
+		player_hp = minf(_effective_player_max_hp(), player_hp + delta * 2.8 * _csv_factor("heal") * (_csv_factor("low_heal") if player_hp < _effective_player_max_hp() * 0.35 else 1.0))
 	if expedition_remaining > 0.0:
 		var depot := _living_facility("supply")
 		if depot < 0:
@@ -2689,6 +2700,11 @@ func _csv_bonus(key: String) -> float:
 
 func _recent_combat_bonus(crit_key: String, kill_key: String) -> float:
 	return (_csv_bonus(crit_key) if run_seconds - last_crit_at < 5.0 else 0.0) + (_csv_bonus(kill_key) if run_seconds - last_kill_at < 5.0 else 0.0)
+
+
+func _effective_player_max_hp() -> float:
+	var temporary := _csv_bonus("hp") - float(csv_passive.get("hp", 0.0))
+	return player_max_hp + float(Data.CHARACTERS[player_index].hp) * temporary / 100.0
 
 
 func _csv_factor(key: String) -> float:
@@ -2801,7 +2817,7 @@ func _choose_csv_augment(card: Dictionary) -> void:
 	acquired_augments[card.id] = entry
 	_rebuild_csv_stats()
 	var hp_keys := {"hq": "hq_hp", "wall": "wall_hp", "clinic": "clinic_hp"}
-	if card.key == "hp":
+	if card.key == "hp" and String(card.trigger).is_empty():
 		var increase := float(Data.CHARACTERS[player_index].hp) * float(card.amount) / 100.0
 		player_max_hp += increase
 		if treatment_remaining <= 0.0: player_hp += increase
@@ -2849,7 +2865,7 @@ func _choose_augment(card: Dictionary) -> void:
 		"range": player_mod_range *= 1.0 + 0.06 * mult
 		"health":
 			player_max_hp += 14.0 * mult
-			player_hp = minf(player_max_hp, player_hp + 35.0)
+			player_hp = minf(_effective_player_max_hp(), player_hp + 35.0)
 		"armor": player_mod_armor *= 0.94
 		"speed": player_mod_speed *= 1.0 + 0.045 * mult
 		"xp": player_mod_xp *= 1.0 + 0.08 * mult
@@ -2904,7 +2920,7 @@ func _build_cost_factor(hero: Dictionary, multiplier: float) -> float:
 func _combat_stats() -> Dictionary:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	return {
-		"hp": player_max_hp,
+		"hp": _effective_player_max_hp(),
 		"magazine": float(_magazine_capacity()),
 		"damage": _weapon_damage(hero, player_mod_damage),
 		"rate": 1.0 / _weapon_interval(hero, player_mod_rate * _csv_factor("rate")),
@@ -2990,7 +3006,7 @@ func _player_take_damage(amount: float, cause: String) -> void:
 	if dash_timer > 0.0 or treatment_remaining > 0.0: return
 	if clinic_shield > 0.0 or (_csv_bonus("evade") > 0.0 and _random.randf() < minf(0.8, _csv_bonus("evade") / 100.0)):
 		return
-	var reduction := _csv_bonus("armor") + (_csv_bonus("low_armor") if player_hp < player_max_hp * 0.35 else 0.0)
+	var reduction := _csv_bonus("armor") + (_csv_bonus("low_armor") if player_hp < _effective_player_max_hp() * 0.35 else 0.0)
 	player_hp -= amount * _incoming_damage_factor(Data.CHARACTERS[player_index], player_mod_armor) * (1.0 - clampf(reduction / 100.0, 0.0, 0.8))
 	if sound_on and run_seconds >= impact_sound_at:
 		impact_sound_at = run_seconds + 0.10
@@ -3064,8 +3080,8 @@ func _refresh_hud() -> void:
 			hud_portrait.texture = _operator_portrait()
 		hud_name.text = String(Data.CHARACTERS[player_index].name)
 		hud_level.text = "Lv.%d  [C]" % player_level
-		hud_health.text = "%d / %d" % [ceili(player_hp), ceili(player_max_hp)]
-		hp_bar.max_value = player_max_hp
+		hud_health.text = "%d / %d" % [ceili(player_hp), ceili(_effective_player_max_hp())]
+		hp_bar.max_value = _effective_player_max_hp()
 		hp_bar.value = player_hp
 		var hq := _hq_index()
 		if hq >= 0:
@@ -3107,7 +3123,8 @@ func _save_all() -> void:
 			structure_rows.append({"kind": String(s.kind), "x": cell.x, "y": cell.y, "hp": float(s.hp), "max_hp": float(s.max_hp), "level": int(s.level)})
 		var enemy_rows: Array[Dictionary] = []
 		for e in enemies:
-			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))})
+			var route: Vector2 = e.get("approach_point", JejuFixedMap.HQ_WORLD)
+			enemy_rows.append({"approach_point": [route.x, route.y], "kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))})
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
 		saved_run["boss_flags"] = boss_spawned.keys()
 		saved_run["final_boss_defeated"] = final_boss_defeated
@@ -3195,7 +3212,7 @@ func _restore_run_modifiers() -> void:
 
 
 func _world_to_screen(point: Vector2) -> Vector2:
-	return point - player_pos + size * 0.5
+	return point - jeju_map.camera_center(player_pos, size, _view_zoom()) + size * 0.5
 
 
 func _view_zoom() -> float:
@@ -3203,7 +3220,7 @@ func _view_zoom() -> float:
 
 
 func _screen_to_world(point: Vector2) -> Vector2:
-	return player_pos + (point - size * 0.5) / _view_zoom()
+	return jeju_map.camera_center(player_pos, size, _view_zoom()) + (point - size * 0.5) / _view_zoom()
 
 
 func _draw_menu_backdrop() -> void:
@@ -3235,22 +3252,14 @@ func _draw_world() -> void:
 	var camera := Transform2D(0.0, Vector2.ONE * zoom, 0.0, size * 0.5 * (1.0 - zoom))
 	draw_set_transform_matrix(camera)
 	var camera_offset := _world_to_screen(Vector2.ZERO)
-	jeju_map.draw_ground_layers(self, camera_offset)
-	for prop in jeju_map.decorations:
-		if _zombie_on_screen(prop.feet + camera_offset, 190.0):
-			JejuMapArt.draw_prop(self, prop, camera_offset)
-	for feet in jeju_map.lamps:
-		var glow := feet + camera_offset + Vector2(11, -11)
-		if _zombie_on_screen(glow, 90.0):
-			for radius in [56.0, 45.0, 34.0, 23.0, 12.0]:
-				draw_circle(glow, radius, Color(1.0, 0.58, 0.19, 0.034), true, -1.0, true)
+	jeju_map.draw_background(self, camera_offset)
 	if build_open or build_mode:
 		_draw_build_grid()
 	for route in tunnel_routes:
 		draw_arc(_world_to_screen(route.exit), 23.0, 0.0, TAU, 18, Color("#a78d6779"), 2.0)
 	for zone in toxin_zones:
 		draw_circle(_world_to_screen(zone.pos), 52.0, Color("#84ae5549"))
-	_draw_world_depth(camera, camera_offset)
+	_draw_world_depth(camera)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
 		var traveled: float = shot.traveled
@@ -3274,11 +3283,8 @@ func _draw_world() -> void:
 		draw_rect(view, Color(0.025, 0.035, 0.035, 0.16 if screen == "augment" else 0.42))
 
 
-func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
+func _draw_world_depth(camera: Transform2D) -> void:
 	var layers: Array[Array] = []
-	for prop in jeju_map.props:
-		if _zombie_on_screen(prop.feet + camera_offset, 260.0):
-			layers.append([prop.feet.y, 0, prop])
 	for entry in structures:
 		if float(entry.hp) > 0.0:
 			layers.append([_entry_world_center(entry).y + CELL * 0.5, 1, entry])
@@ -3293,14 +3299,13 @@ func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
 	layers.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 	for item in layers:
 		match item[1]:
-			0: JejuMapArt.draw_prop(self, item[2], camera_offset)
 			1: _draw_structure(item[2], camera)
 			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds)
 			3: _draw_enemy(item[2], camera)
 			4:
 				# Draw at the camera focus point in screen pixels, then restore the world transform.
 				draw_set_transform(Vector2.ZERO)
-				_draw_player()
+				_draw_player(camera * _world_to_screen(player_pos))
 				draw_set_transform_matrix(camera)
 
 
@@ -3496,8 +3501,7 @@ func _draw_effect(effect: Dictionary) -> void:
 		draw_line(a, b, Color(c, alpha), 2.0)
 
 
-func _draw_player() -> void:
-	var p := _world_to_screen(player_pos)
+func _draw_player(p: Vector2) -> void:
 	var dir := player_facing.normalized()
 	if Data.CHARACTERS[player_index].id == "harin":
 		var reload_progress := -1.0
