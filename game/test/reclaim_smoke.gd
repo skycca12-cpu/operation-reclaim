@@ -29,7 +29,7 @@ func _run() -> void:
 	_check(Data.CHARACTERS.size() == 4, "four selectable operators in data")
 	_check(Data.ENEMIES.size() == 5, "five enemy families in data")
 	_check(Data.TURRETS.size() == 7, "seven turret families in data")
-	_check(Data.augment_catalog().size() == 50, "30 common and 20 hero augments in data")
+	_check(Data.augment_catalog().size() == 52, "30 common and 22 hero augments in data")
 	game.set("player_index", 1)
 	game.set("difficulty_index", 1)
 	game.call("_start_new_run")
@@ -53,17 +53,39 @@ func _run() -> void:
 	Input.parse_input_event(ev_up)
 	await process_frame
 	_check((game.get("player_pos") as Vector2).x > before_x + 1.0, "holding D moves the player (WASD regression)")
-	_check(String(game.call("_validate_placement", "wall", Vector2i(3, 0))) != "", "north entrance remains permanently open")
+	_check(String(game.call("_validate_placement", "wall", Vector2i(3, -2))) != "", "north entrance remains permanently open")
 	_check(String(game.call("_validate_placement", "wall", Vector2i(3, 2))) != "", "a wall cannot block the north escape route")
-	_check(String(game.call("_validate_placement", "clinic", Vector2i(6, 4))) != "", "two-cell building stays within the seven-by-seven area")
-	_check(String(game.call("_validate_placement", "basic", Vector2i(6, 6))) == "", "valid one-cell turret placement is accepted")
-	game.call("_select_build", "basic")
-	game.call("_try_place_at", game.call("_cell_world", Vector2i(6, 6)))
+	_check(String(game.call("_validate_placement", "clinic", Vector2i(8, 4))) != "", "two-cell building stays within the eleven-by-eleven area")
+	_check(String(game.call("_validate_placement", "basic", Vector2i(8, 8))) == "", "outer expansion ring accepts a one-cell turret")
+	var build_key := InputEventKey.new()
+	build_key.physical_keycode = KEY_1
+	build_key.keycode = KEY_1
+	build_key.pressed = true
+	root.push_input(build_key.duplicate(), true)
+	_check(game.get("selected_build") == "basic", "1 selects a turret with the construction panel closed")
+	game.call("_try_place_at", game.call("_cell_world", Vector2i(8, 8)))
 	structures = game.get("structures")
 	_check(structures.size() == 2 and structures[1].kind == "basic", "player-built turret is installed")
 	_check(String(game.call("_validate_placement", "clinic", Vector2i(1, 1))) == "", "first unique facility can be installed")
-	game.call("_select_build", "clinic")
+	build_key.physical_keycode = KEY_F1
+	build_key.keycode = KEY_F1
+	root.push_input(build_key.duplicate(), true)
+	_check(game.get("selected_build") == "clinic", "F1 selects a facility")
 	game.call("_try_place_at", game.call("_cell_world", Vector2i(1, 1)))
+	var supply_before: int = game.get("money")
+	game.set("money", 200)
+	game.call("_select_entity_at", game.call("_cell_world", Vector2i(8, 8)))
+	build_key.physical_keycode = KEY_U
+	build_key.keycode = KEY_U
+	root.push_input(build_key.duplicate(), true)
+	_check(structures[1].level == 2, "U upgrades the selected turret")
+	game.set("money", supply_before)
+	game.call("_close_inspector")
+	build_key.physical_keycode = KEY_8
+	build_key.keycode = KEY_8
+	root.push_input(build_key.duplicate(), true)
+	_check(game.get("selected_build") == "wall", "8 selects a wall")
+	game.call("_cancel_build")
 	_check(String(game.call("_validate_placement", "clinic", Vector2i(1, 4))) != "", "facility types are limited to one each")
 	game.set("player_pos", game.call("_cell_world", Vector2i(2, 3)))
 	game.call("_move_player", Vector2(80, 0))
@@ -114,18 +136,18 @@ func _run() -> void:
 	enemies.clear()
 	game.set("player_index", 3)
 	_spawn_test_zombie(game, player_pos + Vector2(70, 0), 1.0)
-	effects_before = effects.size()
+	effects_before = effects.filter(func(effect): return not effect.has("hit_angle")).size()
 	game.call("_attack_player")
-	_check(enemies.is_empty() and effects.size() == effects_before + 1 and effects.back().b == player_pos + Vector2(70, 0), "lethal chainsaw hit draws its effect to the removed zombie")
+	_check(enemies.is_empty() and effects.filter(func(effect): return not effect.has("hit_angle")).size() == effects_before + 1 and effects.back().b == player_pos + Vector2(70, 0), "lethal chainsaw hit draws its effect to the removed zombie")
 
 	game.set("player_index", 2)
 	game.set("player_attack_timer", 1.0)
 	game.set("player_drone_level", 1)
 	game.set("drone_timer", 0.0)
 	_spawn_test_zombie(game, player_pos + Vector2(120, 0), 1.0)
-	effects_before = effects.size()
+	effects_before = effects.filter(func(effect): return not effect.has("hit_angle")).size()
 	game.call("_update_player", 0.01)
-	_check(enemies.is_empty() and effects.size() == effects_before + 1 and effects.back().b == player_pos + Vector2(120, 0), "lethal drone hit draws its effect to the removed zombie")
+	_check(enemies.is_empty() and effects.filter(func(effect): return not effect.has("hit_angle")).size() == effects_before + 1 and effects.back().b == player_pos + Vector2(120, 0), "lethal drone hit draws its effect to the removed zombie")
 	game.set("player_drone_level", 0)
 	game.set("player_index", 1)
 
@@ -137,7 +159,17 @@ func _run() -> void:
 	pursuer.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
+	_check(game.get("player_hp") == health_before, "the raise phase does not inflict damage")
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(game.get("player_hp") < health_before and pursuer.attack_until > game.get("run_seconds") and pursuer.attack_direction.is_equal_approx(Vector2.LEFT), "normal zombie damages the player and starts its attack animation")
+	var saved_player_pos: Vector2 = game.get("player_pos")
+	pursuer.cool = 0.0
+	game.call("_update_enemies", 0.01)
+	var before_dodge: float = game.get("player_hp")
+	game.set("player_pos", saved_player_pos + Vector2(-80.0, 0.0))
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
+	_check(game.get("player_hp") == before_dodge, "stepping out of reach before impact makes the swing miss")
+	game.set("player_pos", saved_player_pos)
 	_test_normal_zombies(game, pursuer)
 	enemies.clear()
 	_test_structure_targets(game)
@@ -146,6 +178,7 @@ func _run() -> void:
 	game.call("_update_spawn", 0.1)
 	_check(game.get("stage") == 2, "wave stage advances on elapsed time")
 	_test_first_enemy_warning(game)
+	_test_operator_hud(game)
 	game.call("_toggle_pause")
 	_check(game.get("screen") == "pause", "pause overlay opens")
 	var time_at_pause: float = game.get("run_seconds")
@@ -167,6 +200,7 @@ func _run() -> void:
 	enemies.clear()
 	var saved_zombie := _spawn_test_zombie(game, saved_position + Vector2(300, 0), 100.0)
 	var saved_variant: int = saved_zombie.variant
+	var saved_base: Dictionary = game.get("run_base_stats")
 	game.call("_save_all")
 	game.queue_free()
 	await process_frame
@@ -179,6 +213,9 @@ func _run() -> void:
 	var resumed_enemies: Array = resumed.get("enemies")
 	_check(resumed_enemies.size() == 1 and resumed_enemies[0].variant == saved_variant, "continue restores the saved zombie appearance")
 	_check(resumed.get("warned_enemies").has("boss40"), "continue remembers enemy types already announced")
+	var restored_augments: Dictionary = resumed.get("acquired_augments")
+	_check(restored_augments.size() == 1 and restored_augments.values()[0].stars == 5, "continue retains acquired rarity and stars")
+	_check(resumed.get("run_base_stats") == saved_base, "continue retains the stat baseline")
 	_check(not resumed.get("manual_trigger"), "continue requires a fresh manual trigger press")
 	resumed.call("_update_player_attack", 0.9)
 	_check(resumed.get("player_magazine") == 30 and resumed.get("player_projectiles").shots.is_empty(), "continued reload finishes without an unintended shot")
@@ -188,9 +225,225 @@ func _run() -> void:
 	# Allow the 350 ms Continue cue to finish before freeing the scene.
 	resumed.set_process(false)
 	await create_timer(0.45).timeout
+	_test_yujin(resumed)
+	_test_spawn_multiplier(resumed)
+	_test_character_augments(resumed)
+	_test_enemy_wall_cover(resumed)
+	_test_jeju_battlefield(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_jeju_battlefield(game: Control) -> void:
+	var map: RefCounted = game.get("jeju_map")
+	var terrain: TileMapLayer = map.get("tiles")
+	_check(terrain.get_used_cells().size() == 45 * 45 and terrain.get_used_rect().size == Vector2i(45, 45),
+		"Jeju has exactly 45 by 45 terrain cells")
+	_check(not map.call("walkable", Vector2(790, 768), 13.0), "southeast sea and cliffs block passage")
+	_check(not map.call("walkable", Vector2(512, -530), 0.0), "the gas station has a ground footprint")
+	_check(map.call("walkable", Vector2(512, -589), 0.0), "the gas station roof projection is walkable")
+	game.set("player_pos", Vector2(535, 730))
+	game.call("_move_player", Vector2(280, 0))
+	_check(game.get("player_pos").x < 790.0, "a long movement cannot skip over the coast boundary")
+	game.set("player_pos", Vector2.ZERO)
+	for i in range(8):
+		var position: Vector2 = game.call("_land_spawn", float(i) * TAU / 8.0, 600.0)
+		_check(map.call("walkable", position, 24.0), "spawn sector %d resolves to walkable land" % i)
+	# Check continuous lanes from the plaza toward all four map edges.
+	for direction in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+		for distance in range(24, 721, 24):
+			_check(map.call("walkable", direction * distance, 21.0), "cardinal approach %s stays open" % direction)
+	game.call("_reset_run")
+	game.set("spawn_timer", 0.0)
+	game.call("_update_spawn", 0.0)
+	var first_wave: Array = game.get("enemies")
+	var start: Vector2 = game.get("player_pos")
+	_check(first_wave.size() == 5 and first_wave.all(func(enemy): return start.distance_to(enemy.pos) >= 699.0),
+		"the first wave approaches from at least 700 pixels away")
+	game.call("_reset_run")
+	game.set("stage", 95)
+	for i in range(70):
+		game.set("spawn_timer", 0.0)
+		game.call("_update_spawn", 0.0)
+	var enemies: Array = game.get("enemies")
+	_check(enemies.size() == 320 and enemies.all(func(enemy): return map.call("walkable", enemy.pos, 24.0)),
+		"a late wave reaches the existing 320-enemy cap with all enemies on land")
+	for step in range(20):
+		game.call("_update_enemies", 0.05)
+	_check(enemies.all(func(enemy): return map.call("walkable", enemy.pos, 0.0)),
+		"late-wave enemies stay on land while approaching the base")
+	for hero in range(Data.CHARACTERS.size()):
+		game.call("_choose_character", hero)
+		game.call("_choose_difficulty", 1)
+		var intro: Control = game.get("flow_prologue")
+		intro.call("_process", 4.0)
+		intro.call("_process", 4.0)
+		_check(game.get("screen") == "landing", "each operator reaches the real-map landing")
+		game.call("_update_landing", 3.5)
+		var landing: RefCounted = game.get("landing")
+		_check(landing.call("player_visible") and landing.call("heli_visible"), "each operator disembarks before departure")
+		game.call("_update_landing", 3.5)
+		var structures: Array = game.get("structures")
+		_check(game.get("screen") == "play" and game.get("player_index") == hero and structures.size() == 1,
+			"natural landing hands control to each selected operator with HQ only")
+		game.call("_choose_character", hero)
+		game.call("_choose_difficulty", 1)
+		intro.call("skip")
+		_check(game.get("screen") == "play" and landing.call("heli_visible") == false and game.get("hq_build_ratio") == 1.0,
+			"skipping leaves every operator in the same playable state")
+
+
+func _test_enemy_wall_cover(game: Control) -> void:
+	game.call("_reset_run")
+	game.set("player_pos", Vector2(-50, 144))
+	var hp: float = game.get("player_hp")
+	var structures: Array = game.get("structures")
+	var near_wall := {"kind": "wall", "cell": Vector2i(5, 6), "hp": 10.0, "max_hp": 180.0}
+	var far_wall := {"kind": "wall", "cell": Vector2i(4, 6), "hp": 80.0, "max_hp": 180.0}
+	structures.append(far_wall)
+	structures.append(near_wall)
+	var shots: Array = game.get("enemy_shots")
+	var projectile := {"pos": Vector2(250, 144), "velocity": Vector2(-300, 0), "life": 2.2, "damage": 20.0}
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(shots.is_empty() and near_wall.hp == 0.0 and far_wall.hp == 80.0 and game.get("player_hp") == hp,
+		"a fast shot hits the first wall and cannot spill damage behind a destroyed wall")
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(far_wall.hp == 60.0 and game.get("player_hp") == hp, "a second shot hits the next living wall")
+	game.set("player_pos", Vector2(10, 144))
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(far_wall.hp == 40.0 and game.get("player_hp") == hp, "a wall protects a player standing directly behind it")
+	far_wall.hp = 0.0
+	shots.append(projectile.duplicate())
+	game.call("_update_projectiles", 1.0)
+	_check(game.get("player_hp") < hp, "a new shot reaches the player after the walls are gone")
+	hp = game.get("player_hp")
+	near_wall.hp = 80.0
+	game.set("player_pos", Vector2(112, 171))
+	var enemy := {"pos": Vector2(123, 158), "attack": 12.0,
+		"strike_remaining": 0.05, "strike_target": null, "attack_direction": Vector2(-11, 13).normalized()}
+	game.call("_resolve_normal_strike", enemy, 0.1)
+	_check(near_wall.hp == 68.0 and game.get("player_hp") == hp, "a melee strike cannot clip through a wall corner")
+	near_wall.hp = 4.0
+	game.set("player_pos", Vector2(60, 144))
+	game.call("_explode_bomber", {"pos": Vector2(130, 144), "attack": 20.0, "target": "player"})
+	_check(near_wall.hp == 0.0 and game.get("player_hp") == hp, "a bomber blast does not penetrate the wall it destroys")
+
+
+func _test_character_augments(game: Control) -> void:
+	game.set("player_index", 3)
+	game.call("_reset_run")
+	var options: Array = game.call("_eligible_augments")
+	_check(options.any(func(card): return card.get("hero") == "yujin") and not options.any(func(card): return card.get("hero") == "harin"),
+		"Yujin receives her own exclusive options without Harin cards")
+	for card in options:
+		if card.id == Data.YUJIN_REACH_AUGMENT:
+			var reach: float = game.call("_weapon_range", Data.CHARACTERS[3])
+			card.stars = 1
+			game.call("_choose_augment", card)
+			var upgraded: float = game.call("_weapon_range", Data.CHARACTERS[3])
+			_check(is_equal_approx(upgraded, reach + 12.0) and is_equal_approx(game.get("player_mod_range"), 1.0),
+				"Yujin extends the chainsaw without changing the turret range multiplier")
+			break
+	game.set("player_index", 2)
+	game.call("_reset_run")
+	options = game.call("_eligible_augments")
+	var index := -1
+	for i in range(options.size()):
+		if options[i].id == Data.HARIN_MAGAZINE_AUGMENT:
+			index = i
+			break
+	_check(index >= 0 and not options.any(func(card): return card.get("hero") == "yujin"), "Harin can find the exclusive magazine")
+	if index < 0:
+		return
+	var magazine: Dictionary = options[index].duplicate()
+	magazine.stars = 1
+	magazine.rarity = "일반"
+	for stack in range(1, 6):
+		var preview: String = game.call("_augment_effect_text", magazine)
+		_check(preview.contains("중첩 %d/5" % stack), "magazine displays its upcoming stack")
+		game.call("_choose_augment", magazine)
+		_check(game.call("_magazine_capacity") == 30 + stack * 5, "each magazine stack grants exactly five rounds")
+	game.call("_choose_augment", magazine)
+	options = game.call("_eligible_augments")
+	_check(game.call("_magazine_capacity") == 55 and not options.any(func(card): return card.id == Data.HARIN_MAGAZINE_AUGMENT),
+		"magazine caps at five stacks and disappears from future offers")
+	game.set("manual_attack", true)
+	game.set("manual_trigger", false)
+	game.set("player_magazine", 0)
+	game.set("player_reload_timer", 0.1)
+	game.call("_update_player_attack", 0.2)
+	_check(game.get("player_magazine") == 55, "reloading fills the upgraded magazine")
+	game.call("_save_all")
+	game.call("_load_saved_run")
+	_check(game.call("_magazine_capacity") == 55 and game.get("player_magazine") == 55, "save and continue preserve the upgraded magazine")
+
+
+func _test_spawn_multiplier(game: Control) -> void:
+	var previous_interval := INF
+	for index in range(Data.DIFFICULTIES.size()):
+		game.set("difficulty_index", index)
+		game.call("_reset_run")
+		game.set("spawn_timer", 0.0)
+		game.call("_update_spawn", 0.0)
+		var enemies: Array = game.get("enemies")
+		var interval: float = game.get("spawn_timer")
+		_check(enemies.size() == 5, "difficulty %d spawns five enemies per early wave batch" % index)
+		_check(interval < previous_interval, "difficulty %d preserves spawn interval ordering" % index)
+		previous_interval = interval
+	var active: Array = game.get("enemies")
+	for i in range(70):
+		game.set("spawn_timer", 0.0)
+		game.call("_update_spawn", 0.0)
+	_check(active.size() == 320, "larger wave batches respect the active enemy cap")
+
+
+func _test_yujin(game: Control) -> void:
+	game.set("player_index", 3)
+	game.call("_reset_run")
+	game.set("player_facing", Vector2.RIGHT)
+	var origin: Vector2 = game.get("player_pos")
+	game.call("_spawn_enemy", "normal", origin + Vector2(52, 0), false)
+	game.call("_spawn_enemy", "normal", origin - Vector2(52, 0), false)
+	var enemies: Array = game.get("enemies")
+	var front_hp := float(enemies[0].hp)
+	var back_hp := float(enemies[1].hp)
+	game.call("_attack_player")
+	var visual: RefCounted = game.get("_yujin_visual")
+	_check(float(enemies[0].hp) < front_hp and is_equal_approx(float(enemies[1].hp), back_hp),
+		"Yujin's chainsaw preserves forward-only melee damage")
+	_check(float(visual.get("_attack_left")) > 0.0, "the real melee attack starts Yujin's cutting animation")
+	visual.call("update", 1.0)
+	_check(is_zero_approx(float(visual.get("_attack_left"))), "Yujin returns to idle after cutting ends")
+
+
+func _test_operator_hud(game: Control) -> void:
+	var card: Dictionary = Data.augment_catalog()[0].duplicate()
+	card.rarity = "고급"
+	card.stars = 2
+	var original: Dictionary = game.call("_combat_stats")
+	game.call("_choose_augment", card)
+	card.stars = 5
+	game.call("_choose_augment", card)
+	var acquired: Dictionary = game.get("acquired_augments")
+	_check(acquired.size() == 1 and acquired[card.id].stars == 5 and acquired[card.id].count == 2,
+		"repeat acquisition updates the existing card, not a second card")
+	var stats: Dictionary = game.call("_combat_stats")
+	var paid_damage := float(original.damage) * (1.0 + 0.07 * 1.05) * (1.0 + 0.07 * 1.125)
+	_check(is_equal_approx(float(stats.damage), paid_damage), "display damage equals the actual stacked weapon damage")
+	var key := InputEventKey.new()
+	key.physical_keycode = KEY_C
+	key.pressed = true
+	root.push_input(key.duplicate(), true)
+	_check(game.get("screen") == "info" and game.get("operator_info").visible, "C opens operator information")
+	var before: float = game.get("run_seconds")
+	game.call("_process", 0.2)
+	_check(game.get("run_seconds") == before and not game.get("manual_trigger"), "operator information suspends combat and clears manual fire")
+	root.push_input(key.duplicate(), true)
+	_check(game.get("screen") == "play", "C closes operator information")
 
 
 func _test_first_enemy_warning(game: Node) -> void:
@@ -255,6 +508,8 @@ func _test_structure_targets(game: Node) -> void:
 	attacker.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
+	_check(wall.hp == 100.0, "wall is not damaged before the impact pose")
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(attacker.target == "wall" and wall.hp < 100.0 and game.get("player_hp") == health_before, "a nearby wall takes priority over an in-reach player")
 	var waiting_position: Vector2 = attacker.pos
 	game.call("_update_enemies", 0.1)
@@ -272,6 +527,7 @@ func _test_structure_targets(game: Node) -> void:
 	hq_attacker.cool = 0.0
 	var hq_before: float = hq.hp
 	game.call("_update_enemies", 0.1)
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(hq.hp < hq_before, "zombie can damage the full-width HQ from the collision perimeter")
 	enemies.clear()
 	var facility := {"kind": "supply", "cell": Vector2i(5, 5), "hp": 100.0, "max_hp": 100.0}
@@ -281,6 +537,7 @@ func _test_structure_targets(game: Node) -> void:
 	game.set("player_pos", facility_center - Vector2(70, 0))
 	blocked.cool = 0.0
 	game.call("_update_enemies", 0.1)
+	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(facility.hp < 100.0, "a facility blocking the pursuit route takes melee damage")
 	structures.pop_back()
 
@@ -290,14 +547,14 @@ func _test_combat_zoom_and_augments(game: Control) -> void:
 	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
 	wheel.pressed = true
 	wheel.position = game.size * 0.5 + Vector2(30.0, 0.0)
-	for i in range(6):
+	for i in range(12):
 		root.push_input(wheel.duplicate(), true)
-	_check(is_equal_approx(game.get("camera_zoom"), 1.6), "mouse wheel zooms the battlefield to its maximum")
-	var camera_point := game.size * 0.5 + Vector2(76.8, 0)
+	_check(is_equal_approx(game.get("camera_zoom"), 2.4), "mouse wheel zooms the battlefield to its maximum")
+	var camera_point := game.size * 0.5 + Vector2(115.2, 0)
 	var world_point: Vector2 = game.call("_screen_to_world", camera_point)
 	_check(world_point.is_equal_approx(game.get("player_pos") + Vector2(48.0, 0.0)), "zoomed clicks retain one-tile world accuracy")
 	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
-	for i in range(6):
+	for i in range(12):
 		root.push_input(wheel.duplicate(), true)
 	_check(is_equal_approx(game.get("camera_zoom"), 1.0), "mouse wheel returns to the original view")
 	game.call("_offer_augments")
@@ -321,6 +578,8 @@ func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
 	var money_before: int = game.get("money")
 	game.call("_damage_enemy", slot, 1.0, "test")
 	_check(enemy.hit_until > now and enemies.has(enemy), "nonlethal damage starts the hit animation")
+	var hit_effects: Array = game.get("effects")
+	_check(hit_effects.any(func(effect): return effect.has("hit_angle")), "visible hits emit impact sparks")
 	game.call("_damage_enemy", slot, enemy.hp, "test")
 	_check(not enemies.has(enemy) and game.get("kills") == kills_before + 1 and game.get("money") == money_before + 2, "death immediately removes the gameplay enemy and awards once")
 	_check(bodies.size() == deaths_before + 1, "visible death creates one cosmetic corpse")

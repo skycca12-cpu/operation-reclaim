@@ -10,11 +10,33 @@ const SHEETS: Array[Texture2D] = [
 	preload("res://assets/reclaim/zombies/zombie_07_soldier.png"),
 	preload("res://assets/reclaim/zombies/zombie_08_elderly.png"),
 ]
+const ATTACK_PARTS: Texture2D = preload("res://assets/reclaim/zombies/attack_parts.png")
+# Left and right pivots follow each original garment seam.
+const SHOULDERS := [
+	[Vector2(62, 85), Vector2(98, 85)], [Vector2(62, 87), Vector2(98, 87)],
+	[Vector2(60, 87), Vector2(102, 87)], [Vector2(59, 87), Vector2(103, 87)],
+	[Vector2(62, 82), Vector2(98, 82)], [Vector2(61, 86), Vector2(101, 86)],
+	[Vector2(61, 88), Vector2(102, 88)], [Vector2.ZERO, Vector2(103, 87)],
+]
+const ELBOWS := [
+	[Vector2(56, 103), Vector2(104, 103)], [Vector2(55, 104), Vector2(105, 103)],
+	[Vector2(54, 106), Vector2(108, 106)], [Vector2(54, 106), Vector2(108, 106)],
+	[Vector2(55, 102), Vector2(104, 102)], [Vector2(54, 105), Vector2(109, 105)],
+	[Vector2(53, 105), Vector2(109, 105)], [Vector2.ZERO, Vector2(111, 108)],
+]
+# Eight beats from the reference: rest, brace, raise, high guard, impact, follow-through, recover, rest.
+const POSES := [
+	Vector3(0.0, 0.0, 0.0), Vector3(0.28, 0.38, 0.4), Vector3(0.66, 0.57, -0.5),
+	Vector3(1.0, 0.32, -2.0), Vector3(0.39, 0.45, 4.0), Vector3(0.47, 0.36, 3.0),
+	Vector3(0.18, 0.18, 1.5), Vector3(0.0, 0.0, 0.0),
+]
+const SPRITE_CENTER := Vector2(80.0, 86.0)
 const CELL := 160.0
-# 128 opaque pixels become ~50 world pixels. Harin's standing art is 80–86 px.
-const SCALE := 0.39
-const RADIUS := 14.0
+# The 126 px standing silhouette becomes ~86 world pixels.
+const SCALE := 0.68
+const RADIUS := 21.0
 const ATTACK_TIME := 0.6
+const IMPACT_TIME := ATTACK_TIME * 4.0 / 8.0
 const HIT_TIME := 0.4
 # The supplied last death cell (column 27) is fully transparent in every row.
 const DEATH_FRAMES := 5
@@ -40,7 +62,9 @@ static func draw_alive(canvas: CanvasItem, enemy: Dictionary, center: Vector2, n
 		_draw_attack(canvas, enemy, center, clampf(progress, 0.0, 1.0), camera)
 	elif now < float(enemy.hit_until):
 		var column := 18 + clampi(int((now + HIT_TIME - float(enemy.hit_until)) * 10.0), 0, 3)
-		_draw_frame(canvas, enemy.variant, enemy.row, column, center)
+		var impact := clampf((float(enemy.hit_until) - now - HIT_TIME + 0.09) / 0.09, 0.0, 1.0)
+		var tint := Color.WHITE.lerp(Color("#ffb4a3"), impact)
+		_draw_frame(canvas, enemy.variant, enemy.row, column, center, tint)
 	elif enemy.moving:
 		_draw_walk(canvas, enemy, center, camera)
 	else:
@@ -75,34 +99,53 @@ static func _draw_walk(canvas: CanvasItem, enemy: Dictionary, center: Vector2, c
 
 static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2, progress: float, camera: Transform2D) -> void:
 	var direction: Vector2 = enemy.attack_direction
+	var variant: int = enemy.variant
 	var row := facing_row(direction)
-	var strike := 1.0 - smoothstep(0.10, 0.74, progress)
-	var column := 12 + mini(int(progress * 6.0), 5)
-	canvas.draw_set_transform_matrix(camera * Transform2D(direction.x * strike * 0.055, center))
-	_draw_frame(canvas, enemy.variant, row, column, Vector2.ZERO)
+	var mirror := -1.0 if row == 1 else 1.0
+	var phase := minf(progress * 8.0, 7.0)
+	var pose: Vector3 = POSES[int(phase)].lerp(POSES[mini(int(phase) + 1, 7)], fposmod(phase, 1.0))
+	var lean := direction * maxf(0.0, pose.z) * 0.65 + Vector2(0.0, pose.z)
+	var compression := 1.0 - maxf(0.0, pose.z) * 0.018
+	var body := camera * Transform2D(direction.x * pose.z * 0.012,
+		Vector2(mirror, compression), 0.0, center + lean)
+	var cell_rect := Rect2(-SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
+	var source := Rect2(Vector2(variant * CELL, 0.0), Vector2.ONE * CELL)
+	if row != 0:
+		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose)
+	canvas.draw_set_transform_matrix(body)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, cell_rect, source)
+	if row == 0:
+		_draw_attack_arm(canvas, body, variant, 0, direction, mirror, pose)
+	_draw_attack_arm(canvas, body, variant, 1, direction, mirror, pose)
 	canvas.draw_set_transform_matrix(camera)
-	if strike <= 0.02:
+
+
+static func _draw_attack_arm(canvas: CanvasItem, body: Transform2D, variant: int, arm: int,
+		direction: Vector2, mirror: float, pose: Vector3) -> void:
+	if variant == 7 and arm == 0:
 		return
-	# The temporary sheets keep the arms close to the body. Extend a visible
-	# shoulder, elbow, forearm and open hand while the feet stay planted.
-	var side := direction.orthogonal()
-	if direction.y > 0.0 or direction.x < 0.0:
-		side = -side
-	var shoulder := center + side * 8.0 - Vector2(0, 5)
-	var elbow := shoulder + direction * (3.0 + 6.0 * strike) + side * (4.0 - 2.0 * strike)
-	var hand := shoulder + direction * (5.0 + 15.0 * strike) - side * (5.0 * strike)
-	var sleeve := Color("#57534e")
-	var skin := Color("#a9a68b")
-	var outline := Color("#252522")
-	canvas.draw_line(shoulder, elbow, outline, 7.0, true)
-	canvas.draw_line(elbow, hand, outline, 6.0, true)
-	canvas.draw_line(shoulder, elbow, sleeve, 4.0, true)
-	canvas.draw_line(elbow, hand, skin.darkened(0.2), 3.5, true)
-	canvas.draw_circle(hand, 2.8, skin, true)
-	for finger in range(3):
-		var spread := float(finger - 1)
-		canvas.draw_line(hand + side * spread * 1.3, hand + direction * (3.5 + strike) + side * spread * 2.0,
-			skin, 1.2, true)
+	var shoulder: Vector2 = SHOULDERS[variant][arm]
+	var elbow: Vector2 = ELBOWS[variant][arm]
+	var side := -1.0 if arm == 0 else 1.0
+	var aimed := Vector2(direction.x * mirror, direction.y)
+	var aim_angle := angle_difference(PI * 0.5, aimed.angle())
+	# Fan both sleeves out around the head during the wind-up, then turn toward impact.
+	var raised := -side * (PI - 0.43)
+	var lift := smoothstep(0.48, 0.94, pose.x)
+	var extension := lerpf(aim_angle, raised, lift)
+	var angle := extension * minf(1.0, pose.x * 2.2)
+	if absf(direction.y) > absf(direction.x):
+		angle += side * pose.y * 1.15 * (1.0 - lift)
+	var upper := body * Transform2D(angle, (shoulder - SPRITE_CENTER) * SCALE)
+	var lower := upper * Transform2D(side * pose.y * 0.9 * (1.0 - lift),
+		Vector2.ONE * (1.0 + maxf(0.0, pose.z) * 0.035), 0.0, (elbow - shoulder) * SCALE)
+	var size := Vector2.ONE * CELL * SCALE
+	var cell := Vector2.ONE * CELL
+	var source := Vector2(variant * CELL, (1 + arm * 2) * CELL)
+	canvas.draw_set_transform_matrix(upper)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-shoulder * SCALE, size), Rect2(source, cell))
+	canvas.draw_set_transform_matrix(lower)
+	canvas.draw_texture_rect_region(ATTACK_PARTS, Rect2(-elbow * SCALE, size), Rect2(source + Vector2(0.0, CELL), cell))
 
 
 static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:
@@ -110,7 +153,7 @@ static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, n
 	_draw_frame(canvas, corpse.variant, corpse.row, 22 + frame, center)
 
 
-static func _draw_frame(canvas: CanvasItem, variant: int, row: int, column: int, center: Vector2) -> void:
+static func _draw_frame(canvas: CanvasItem, variant: int, row: int, column: int, center: Vector2, tint := Color.WHITE) -> void:
 	var source := Rect2(Vector2(column, row) * CELL, Vector2.ONE * CELL)
-	var destination := Rect2(center - Vector2(80.0, 86.0) * SCALE, Vector2.ONE * CELL * SCALE)
-	canvas.draw_texture_rect_region(SHEETS[variant], destination, source)
+	var destination := Rect2(center - SPRITE_CENTER * SCALE, Vector2.ONE * CELL * SCALE)
+	canvas.draw_texture_rect_region(SHEETS[variant], destination, source, tint)

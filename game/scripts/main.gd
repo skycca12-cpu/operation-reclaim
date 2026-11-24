@@ -1,9 +1,13 @@
 extends Control
 
 const PlayerProjectiles = preload("res://scripts/reclaim/player_projectiles.gd")
+const FlowUI = preload("res://scripts/reclaim/flow/flow_ui.gd")
+const OpsUI = preload("res://scripts/reclaim/operation_ui.gd")
+const OperatorInfo = preload("res://scripts/reclaim/operator_info.gd")
 const FieldWarning = preload("res://scripts/reclaim/field_warning.gd")
 const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
+const YujinVisual = preload("res://scripts/reclaim/yujin_visual.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const JejuMapArt = preload("res://scripts/reclaim/jeju_map_art.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
@@ -14,15 +18,27 @@ const PrologueScreen = preload("res://scripts/reclaim/flow/prologue_screen.gd")
 const LandingSequence = preload("res://scripts/reclaim/flow/landing_sequence.gd")
 const FlowSfx = preload("res://scripts/reclaim/flow/flow_sfx.gd")
 ## Landing zone and first player position for the opening landing cut.
-const LANDING_ZONE := Vector2(300.0, -10.0)
+const LANDING_ZONE := Vector2(235.0, -10.0)
 const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
 const CELL := 48.0
 const PLAYER_RADIUS := 13.0
-const GRID_SIZE := 7
+const ENEMY_SHOT_RADIUS := 7.0
+const GRID_SIZE := 11
+const GRID_MIN := -2
+const GRID_MAX := GRID_MIN + GRID_SIZE - 1
+const BUILD_ENTRANCES := [Vector2i(3, GRID_MIN), Vector2i(3, GRID_MAX), Vector2i(GRID_MIN, 3), Vector2i(GRID_MAX, 3)]
+const MAX_CAMERA_ZOOM := 2.4
+const HIT_SPARK_TIME := 0.18
+const BUILD_SHORTCUTS := {
+	KEY_1: "basic", KEY_2: "heavy", KEY_3: "rocket", KEY_4: "electric",
+	KEY_5: "flame", KEY_6: "freeze", KEY_7: "repair", KEY_8: "wall",
+	KEY_F1: "clinic", KEY_F2: "supply", KEY_F3: "workshop", KEY_F4: "research", KEY_F5: "outpost",
+}
+const RESERVED_KEYS := [KEY_TAB, KEY_C, KEY_B, KEY_G, KEY_U, KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]
 const MAX_ENEMIES := 320
+const WAVE_SPAWN_MULTIPLIER := 5
 const WAVE_SECONDS := 22.0
-const MAP_LIMIT := Vector2(2200.0, 1600.0)
 const BASE_CELL := Vector2i(3, 3)
 const PALETTE := {
 	"bg": Color("#121719"), "ground": Color("#202826"), "road": Color("#303733"), "line": Color("#72796a"),
@@ -30,6 +46,7 @@ const PALETTE := {
 	"gold": Color("#d0a873"), "green": Color("#8db296"), "red": Color("#df7664"), "blue": Color("#78b7c2"), "white": Color("#ffffff")
 }
 
+var jeju_map := JejuMapArt.new()
 var screen := "boot"
 var player_index := 0
 var difficulty_index := 1
@@ -83,6 +100,15 @@ var augments_taken := 0
 var augment_reroll_used := false
 var augment_options: Array[Dictionary] = []
 var picked_augment_ids: Array[String] = []
+var acquired_augments: Dictionary = {}
+var run_base_stats: Dictionary = {}
+var operator_info: OperatorInfo
+var hud_portrait: TextureRect
+var hud_hero := -1
+var hud_name: Label
+var hud_health: Label
+var hud_level: Label
+var hud_hq: Label
 var boss_40_spawned := false
 var boss_80_spawned := false
 var boss_100_spawned := false
@@ -119,6 +145,7 @@ var awaiting_binding := ""
 var permanent_upgrades: Dictionary = {}
 var saved_run: Dictionary = {}
 var _random := RandomNumberGenerator.new()
+var _yujin_visual = YujinVisual.new()
 var _harin_visual = HarinVisual.new()
 var player_motion := Vector2.ZERO
 var boot_screen: Control
@@ -182,6 +209,7 @@ func _ready() -> void:
 	flow_sfx = FlowSfx.new()
 	add_child(flow_sfx)
 	flow_sfx.enabled = sound_on
+	jeju_map.setup(self)
 	_build_ui()
 	_show_screen("boot")
 	print("[reclaim-boot] 수도 탈환작전 · 한국어 메뉴 준비")
@@ -200,6 +228,7 @@ func _process(delta: float) -> void:
 		return
 	_update_player(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
+	_yujin_visual.update(delta, player_motion.length_squared() > 36.0)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	_update_spawn(delta)
 	_update_enemies(delta)
@@ -220,6 +249,22 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if screen == "play" and awaiting_binding.is_empty() and event is InputEventKey:
+		var code: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+		if BUILD_SHORTCUTS.has(code) or code == KEY_U:
+			get_viewport().set_input_as_handled()
+			if event.pressed and not event.echo:
+				if code == KEY_U:
+					if not build_mode:
+						_upgrade_selected()
+				else:
+					_select_build(BUILD_SHORTCUTS[code])
+			return
+	if screen in ["play", "info"] and event is InputEventKey and (event.physical_keycode == KEY_C or event.keycode == KEY_C):
+		get_viewport().set_input_as_handled()
+		if event.pressed and not event.echo:
+			_toggle_operator_info()
+		return
 	if event is InputEventMouseMotion or event is InputEventMouseButton:
 		aim_screen = get_global_transform_with_canvas().affine_inverse() * event.position
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
@@ -238,7 +283,9 @@ func _notification(what: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if awaiting_binding != "" and event is InputEventKey and event.pressed and not event.echo:
 		var binding: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
-		if binding == KEY_TAB:
+		var other_key := pause_key if awaiting_binding == "dash" else dash_key
+		if RESERVED_KEYS.has(binding) or BUILD_SHORTCUTS.has(binding) or binding == other_key:
+			_show_toast("이미 사용 중인 키입니다.")
 			get_viewport().set_input_as_handled()
 			return
 		if awaiting_binding == "dash":
@@ -261,6 +308,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_toggle_pause()
 			elif screen == "pause":
 				_close_pause()
+			elif screen == "info":
+				_toggle_operator_info()
 			elif screen == "settings":
 				_close_settings()
 			elif screen == "augment":
@@ -274,10 +323,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			elif code == dash_key:
 				_try_dash()
 				get_viewport().set_input_as_handled()
+			elif code == KEY_G:
+				_open_base_management()
+				get_viewport().set_input_as_handled()
 	if event is InputEventMouseButton and event.pressed and screen == "play":
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			var step := 0.15 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.15
-			camera_zoom = clampf(camera_zoom + step, 1.0, 1.6)
+			camera_zoom = clampf(camera_zoom + step, 1.0, MAX_CAMERA_ZOOM)
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_cancel_build()
@@ -295,7 +347,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _draw() -> void:
-	if screen in ["play", "pause", "augment", "result", "landing"] or (screen == "settings" and settings_from_pause):
+	var world_visible := screen in ["play", "pause", "augment", "result", "landing", "info"] or (screen == "settings" and settings_from_pause)
+	jeju_map.align(player_pos, size, _view_zoom(), world_visible)
+	if world_visible:
 		_draw_world()
 	else:
 		_draw_menu_backdrop()
@@ -437,6 +491,9 @@ func _build_intro_screen() -> void:
 	flow_prologue.sfx = flow_sfx
 	intro_screen.add_child(flow_prologue)
 	flow_prologue.finished.connect(_launch_run)
+	flow_prologue.skipped.connect(func():
+		_start_new_run()
+		skip_landing())
 func _build_settings_screen() -> void:
 	var box := _center_box(settings_screen)
 	_add_heading(box, "설정 · 조작", "WASD 이동은 고정 · 회피와 일시정지 키는 재지정 가능")
@@ -508,55 +565,67 @@ func _build_game_hud() -> void:
 	field_warning.offset_left = 20.0
 	field_warning.offset_bottom = -43.0
 	field_warning.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	var panel := PanelContainer.new()
-	panel.position = Vector2(18, 16)
-	panel.custom_minimum_size = Vector2(316, 174)
-	panel.add_theme_stylebox_override("panel", _panel_style(PALETTE.green))
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	run_hud.add_child(panel)
-	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 7)
-	panel.add_child(column)
-	stage_label = _make_label("1일차  /  준비", 16, PALETTE.gold)
-	column.add_child(stage_label)
-	var p_lab := _make_label("대원 체력", 12, PALETTE.muted)
-	column.add_child(p_lab)
-	hp_bar = ProgressBar.new()
-	hp_bar.custom_minimum_size = Vector2(276, 16)
-	hp_bar.show_percentage = false
-	column.add_child(hp_bar)
-	var b_lab := _make_label("지휘본부", 12, PALETTE.muted)
-	column.add_child(b_lab)
-	base_bar = ProgressBar.new()
-	base_bar.custom_minimum_size = Vector2(276, 16)
-	base_bar.show_percentage = false
-	column.add_child(base_bar)
-	currency_label = _make_label("보급품 150  ·  처치 0  ·  훈장 0", 13, PALETTE.text)
-	column.add_child(currency_label)
-	combat_label = _make_label("", 14, PALETTE.gold)
-	column.add_child(combat_label)
-	status_label = _make_label("", 13, PALETTE.gold)
-	status_label.position = Vector2(350, 28)
-	status_label.custom_minimum_size = Vector2(500, 26)
-	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var pilot := _hud_plate(Vector2(14, 12))
+	var pilot_row := HBoxContainer.new()
+	pilot_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pilot.add_child(pilot_row)
+	hud_portrait = TextureRect.new()
+	hud_portrait.custom_minimum_size = Vector2(44, 52)
+	hud_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hud_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	hud_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pilot_row.add_child(hud_portrait)
+	var pilot_details := VBoxContainer.new()
+	pilot_details.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pilot_row.add_child(pilot_details)
+	hud_name = OpsUI.label("", 15)
+	hud_level = OpsUI.label("", 12, OpsUI.GOLD)
+	hud_health = OpsUI.label("", 12)
+	pilot_details.add_child(hud_name)
+	pilot_details.add_child(hud_level)
+	hp_bar = _hud_bar(108.0, Color("#b74743"))
+	pilot_details.add_child(hp_bar)
+	hud_health.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hud_health.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hp_bar.add_child(hud_health)
+
+	var base := _hud_plate(Vector2(195, 12))
+	var base_column := VBoxContainer.new()
+	base_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	base.add_child(base_column)
+	stage_label = OpsUI.label("", 13, OpsUI.GOLD)
+	base_column.add_child(stage_label)
+	hud_hq = OpsUI.label("", 12)
+	base_column.add_child(hud_hq)
+	base_bar = _hud_bar(150.0, Color("#699a60"))
+	base_column.add_child(base_bar)
+	var resources := _hud_plate(Vector2(451, 12))
+	currency_label = OpsUI.label("", 13)
+	resources.add_child(currency_label)
+	var ammo_panel := _hud_plate(Vector2(195, 75))
+	combat_label = OpsUI.label("", 13, OpsUI.GOLD)
+	ammo_panel.add_child(combat_label)
+	status_label = OpsUI.label("", 12, OpsUI.GOLD)
+	status_label.position = Vector2(14, 101)
 	run_hud.add_child(status_label)
-	boss_label = _make_label("", 16, PALETTE.red, true)
+	boss_label = OpsUI.label("", 14, PALETTE.red)
 	boss_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	boss_label.offset_top = 18
-	boss_label.offset_bottom = 52
-	boss_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	boss_label.offset_top = 112
+	boss_label.offset_bottom = 135
+	boss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	run_hud.add_child(boss_label)
 	var buttons := HBoxContainer.new()
 	buttons.anchor_left = 1.0
 	buttons.anchor_right = 1.0
-	buttons.offset_left = -316
-	buttons.offset_right = -16
-	buttons.offset_top = 16
-	buttons.offset_bottom = 62
-	buttons.add_theme_constant_override("separation", 8)
+	buttons.offset_left = -188.0
+	buttons.offset_right = -14.0
+	buttons.offset_top = 12
+	buttons.add_theme_constant_override("separation", 6)
 	run_hud.add_child(buttons)
-	buttons.add_child(_make_button("건설 [B]", _toggle_build_panel, PALETTE.gold, 154))
-	buttons.add_child(_make_button("일시정지", _toggle_pause, PALETTE.blue, 132))
+	buttons.add_child(OpsUI.tool_button("info", "캐릭터 정보 [C]", _toggle_operator_info))
+	buttons.add_child(OpsUI.tool_button("build", "건설 [B]", _toggle_build_panel))
+	buttons.add_child(OpsUI.tool_button("base", "지휘본부 관리 [G]", _open_base_management))
+	buttons.add_child(OpsUI.tool_button("pause", "일시정지", _toggle_pause))
 	build_panel = PanelContainer.new()
 	build_panel.anchor_left = 1.0
 	build_panel.anchor_right = 1.0
@@ -574,7 +643,7 @@ func _build_game_hud() -> void:
 	build_status_label = _make_label("시설을 고르고 전장 칸을 클릭하세요. 전투는 계속됩니다.", 12, PALETTE.muted)
 	build_status_label.custom_minimum_size.y = 30
 	build_content.add_child(build_status_label)
-	var hint := _make_label("건설 [B]: 시설 선택/배치   우클릭: 취소", 12, PALETTE.muted, true)
+	var hint := _make_label("건설 [B]   포탑 [1–7]   방벽 [8]   시설 [F1–F5]   강화 [U]   우클릭 취소", 12, PALETTE.muted, true)
 	hint.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 	hint.offset_top = -31
 	hint.offset_bottom = -8
@@ -605,10 +674,61 @@ func _build_game_hud() -> void:
 	inspector.add_child(ivbox)
 	inspector_label = _make_label("", 16, PALETTE.text)
 	ivbox.add_child(inspector_label)
-	ivbox.add_child(_make_button("강화", _upgrade_selected, PALETTE.green, 270))
+	ivbox.add_child(_make_button("강화 [U]", _upgrade_selected, PALETTE.green, 270))
 	ivbox.add_child(_make_button("철거", _remove_selected, PALETTE.red, 270))
 	ivbox.add_child(_make_button("닫기", _close_inspector, PALETTE.blue, 270))
+	operator_info = OperatorInfo.new()
+	operator_info.closed.connect(_toggle_operator_info)
+	game_ui.add_child(operator_info)
+	operator_info.hide()
 	game_ui.visible = false
+
+
+func _hud_plate(position: Vector2) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.position = position
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", OpsUI.plate(Color("#7b6945")))
+	run_hud.add_child(panel)
+	return panel
+
+
+func _hud_bar(width: float, fill: Color) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(width, 16)
+	bar.show_percentage = false
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar.add_theme_stylebox_override("background", OpsUI.plate(Color("#635646"), Color("#242626"), 0.0))
+	bar.add_theme_stylebox_override("fill", OpsUI.plate(fill, fill, 0.0))
+	return bar
+
+
+func _open_base_management() -> void:
+	if screen != "play":
+		return
+	var hq := _hq_index()
+	if hq >= 0:
+		_cancel_build()
+		selected_entity = hq
+		_open_inspector()
+
+
+func _toggle_operator_info() -> void:
+	if screen == "info":
+		_show_screen("play")
+	elif screen == "play":
+		operator_info.fill("캐릭터 정보  /  %s  ·  Lv.%d" % [Data.CHARACTERS[player_index].name, player_level],
+			_operator_portrait(), _operator_stat_rows(), acquired_augments.values(),
+			"전투 시작 기준에 훈장 강화·고유 보정이 포함됩니다. 사격 빈도는 재장전 제외, 건설 보정은 비용에 적용됩니다.")
+		_show_screen("info")
+
+
+func _operator_portrait() -> AtlasTexture:
+	var texture: Texture2D = FlowUI.PORTRAITS[player_index]
+	var portrait := AtlasTexture.new()
+	portrait.atlas = texture
+	portrait.region = Rect2(texture.get_width() * 0.17, 0.0, texture.get_width() * 0.66, texture.get_height() * 0.40)
+	return portrait
 
 
 func _build_pause_screen() -> void:
@@ -660,10 +780,11 @@ func _show_screen(which: String) -> void:
 	if screen == "settings" and which != "settings" and not audio_save_timer.is_stopped():
 		audio_save_timer.stop()
 		_save_all()
-	var was_in_combat := screen in ["play", "augment", "pause"] or (screen == "settings" and settings_from_pause)
+	var was_in_combat := screen in ["play", "augment", "pause", "info"] or (screen == "settings" and settings_from_pause)
 	if which != "play":
 		manual_trigger = false
 	screen = which
+	operator_info.visible = which == "info"
 	boot_screen.visible = which == "boot"
 	for c in [menu_screen, character_screen, difficulty_screen, intro_screen, settings_screen, perk_screen, game_ui, pause_screen, result_screen, augment_screen]:
 		c.visible = false
@@ -675,7 +796,7 @@ func _show_screen(which: String) -> void:
 		"landing": pass
 		"settings": settings_screen.visible = true
 		"perks": perk_screen.visible = true
-		"play": game_ui.visible = true
+		"play", "info": game_ui.visible = true
 		"pause":
 			game_ui.visible = true
 			pause_screen.visible = true
@@ -690,7 +811,7 @@ func _show_screen(which: String) -> void:
 	if which == "character": flow_character.on_shown()
 	if which == "settings": _update_binding_labels()
 	if which == "perks": _update_perk_screen()
-	var combat_paused := which == "pause" or (which == "settings" and settings_from_pause)
+	var combat_paused := which in ["pause", "info"] or (which == "settings" and settings_from_pause)
 	AudioDirector.set_game_paused(combat_paused)
 	if sound_on and which in ["play", "augment"]:
 		AudioDirector.play_music("music.gameplay")
@@ -749,6 +870,7 @@ func _start_new_run() -> void:
 	var hq: Dictionary = structures[0]
 	hq_build_ratio = 0.0
 	landing.setup(LANDING_ZONE, PLAYER_START, _entry_world_center(hq), flow_sfx)
+	landing.operator_line = PrologueScreen.HERO_LINES[player_index]
 	player_pos = landing.player_world()
 	_show_screen("landing")
 func _update_landing(delta: float) -> void:
@@ -758,6 +880,7 @@ func _update_landing(delta: float) -> void:
 	player_motion = (player_pos - before) / maxf(delta, 0.001)
 	if player_motion.length() > 1.0:
 		player_facing = player_motion.normalized()
+	_yujin_visual.update(delta, player_motion.length_squared() > 36.0)
 	_harin_visual.update(delta, player_motion, player_hp, Data.CHARACTERS[player_index].id == "harin")
 	hq_build_ratio = maxf(0.0, landing.hq_ratio())
 	if landing.done:
@@ -776,6 +899,7 @@ func _finish_landing() -> void:
 
 
 func _reset_run() -> void:
+	_yujin_visual.reset()
 	difficulty = Data.DIFFICULTIES[difficulty_index].duplicate(true)
 	stage = 1
 	stage_elapsed = 0.0
@@ -792,6 +916,7 @@ func _reset_run() -> void:
 	augments_taken = 0
 	augment_reroll_used = false
 	picked_augment_ids.clear()
+	acquired_augments.clear()
 	structures.clear()
 	enemies.clear()
 	zombie_corpses.clear()
@@ -829,7 +954,7 @@ func _reset_run() -> void:
 	player_facing = Vector2.RIGHT
 	player_attack_timer = 0.0
 	player_reload_timer = 0.0
-	player_magazine = int(hero.magazine)
+	player_magazine = _magazine_capacity()
 	manual_attack = false
 	manual_trigger = false
 	dash_timer = 0.0
@@ -841,6 +966,7 @@ func _reset_run() -> void:
 	player_mod_building_hp += float(permanent_upgrades.get("building_hp", 0)) * 0.08
 	player_mod_rate += float(permanent_upgrades.get("reload", 0)) * 0.04
 	player_mod_salvage += float(permanent_upgrades.get("salvage", 0)) * 0.05
+	run_base_stats = _combat_stats()
 	var hp := 1600.0 * player_mod_building_hp
 	structures.append({"kind": "hq", "cell": BASE_CELL, "hp": hp, "max_hp": hp, "level": 1, "cool": 0.0, "built": true})
 	spawn_timer = 2.0
@@ -880,18 +1006,10 @@ func _load_saved_run() -> void:
 	player_hp = clampf(float(state.get("player_hp", player_max_hp)), 1.0, player_max_hp)
 	player_projectiles.shots.clear()
 	enemy_shots.clear()
-	var capacity := int(hero.magazine)
-	player_magazine = clampi(int(state.get("magazine", capacity)), 0, capacity)
-	player_attack_timer = 0.0
-	player_reload_timer = 0.0
-	if capacity > 0 and player_magazine == 0:
-		player_reload_timer = clampf(float(state.get("reload_remaining", hero.reload)), 0.0, float(hero.reload))
-		if player_reload_timer == 0.0:
-			player_magazine = capacity
 	manual_attack = bool(state.get("manual_attack", false))
 	manual_trigger = false
 	var pp: Array = state.get("player_pos", [180.0, 112.0])
-	player_pos = Vector2(float(pp[0]), float(pp[1]))
+	player_pos = jeju_map.nearest_land(Vector2(float(pp[0]), float(pp[1])), PLAYER_RADIUS)
 	structures.clear()
 	for entry in state.get("structures", []):
 		structures.append({"kind": String(entry.get("kind", "wall")), "cell": Vector2i(int(entry.get("x", 0)), int(entry.get("y", 0))), "hp": float(entry.get("hp", 100.0)), "max_hp": float(entry.get("max_hp", 100.0)), "level": int(entry.get("level", 1)), "cool": 0.0, "built": true})
@@ -908,7 +1026,8 @@ func _load_saved_run() -> void:
 		if warned_enemies.has(String(kind)):
 			field_warning.enqueue(String(kind))
 	for entry in state.get("enemies", []):
-		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), Vector2(float(entry.get("x", 0.0)), float(entry.get("y", 0.0))), bool(entry.get("boss", false)))
+		var saved_pos := Vector2(float(entry.get("x", 0.0)), float(entry.get("y", 0.0)))
+		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), jeju_map.nearest_land(saved_pos, ZombieVisual.RADIUS), bool(entry.get("boss", false)))
 		enemy.hp = float(entry.get("hp", enemy.max_hp))
 		enemy.cool = float(entry.get("cool", 0.5))
 		var saved_variant := int(entry.get("variant", -1))
@@ -921,6 +1040,14 @@ func _load_saved_run() -> void:
 	boss_100_spawned = stage >= 100
 	pending_final_boss = stage >= 100
 	_restore_run_modifiers()
+	var capacity := _magazine_capacity()
+	player_magazine = clampi(int(state.get("magazine", capacity)), 0, capacity)
+	player_attack_timer = 0.0
+	player_reload_timer = 0.0
+	if capacity > 0 and player_magazine == 0:
+		player_reload_timer = clampf(float(state.get("reload_remaining", hero.reload)), 0.0, float(hero.reload))
+		if player_reload_timer == 0.0:
+			player_magazine = capacity
 	win_state = false
 	spawn_timer = 1.5
 	augment_reroll_used = false
@@ -1076,7 +1203,7 @@ func _refresh_build_panel() -> void:
 	for child in build_content.get_children():
 		if child != build_status_label:
 			child.queue_free()
-	var title := _make_label("실시간 건설", 21, PALETTE.gold)
+	var title := _make_label("실시간 건설 · 11×11", 21, PALETTE.gold)
 	build_content.add_child(title)
 	var tabrow := HBoxContainer.new()
 	tabrow.add_theme_constant_override("separation", 5)
@@ -1094,12 +1221,12 @@ func _refresh_build_panel() -> void:
 	scroll.add_child(list)
 	if build_tab == "turret":
 		for item in Data.TURRETS:
-			list.add_child(_make_button("%s  ·  %d 보급품\n%s" % [item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), item.color, 285))
+			list.add_child(_make_button("[%s] %s  ·  %d 보급품\n%s" % [OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id)), item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), item.color, 285))
 	elif build_tab == "building":
 		for item in Data.BUILDINGS:
-			list.add_child(_make_button("%s  ·  %d 보급품\n%s" % [item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), PALETTE.green, 285))
+			list.add_child(_make_button("[%s] %s  ·  %d 보급품\n%s" % [OS.get_keycode_string(BUILD_SHORTCUTS.find_key(item.id)), item.name, _effective_cost(int(item.cost)), item.role], _select_build.bind(String(item.id)), PALETTE.green, 285))
 	else:
-		list.add_child(_make_button("모래주머니 방벽  ·  12 보급품\n1×1칸 · 사방 출입구를 막을 수 없습니다", _select_build.bind("wall"), PALETTE.gold, 285))
+		list.add_child(_make_button("[8] 모래주머니 방벽  ·  12 보급품\n1×1칸 · 사방 출입구를 막을 수 없습니다", _select_build.bind("wall"), PALETTE.gold, 285))
 	build_content.add_child(_make_button("선택 취소", _cancel_build, PALETTE.red, 285))
 	build_content.move_child(build_status_label, 0)
 
@@ -1115,15 +1242,14 @@ func _select_build(kind: String) -> void:
 	build_mode = true
 	selected_entity = -1
 	var item := _build_definition(kind)
-	build_status_label.text = "%s 선택됨 · 설치 칸을 클릭하세요 (B 취소)" % String(item.get("name", "방벽"))
+	build_status_label.text = "%s 선택됨 · 설치 칸을 클릭하세요 (우클릭 취소)" % String(item.get("name", "방벽"))
 	var inspector := run_hud.find_child("Inspector", true, false) as Control
 	if inspector: inspector.visible = false
 
 
 func _effective_cost(base: int) -> int:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
-	var reduction := player_mod_build - (0.10 if hero.id == "yujin" else 0.0)
-	return maxi(1, int(round(float(base) * maxf(0.5, reduction))))
+	return maxi(1, int(round(float(base) * _build_cost_factor(hero, player_mod_build))))
 
 
 func _build_definition(kind: String) -> Dictionary:
@@ -1165,13 +1291,13 @@ func _occupied_cells(entry: Dictionary) -> Array[Vector2i]:
 
 
 func _cell_is_entrance(cell: Vector2i) -> bool:
-	return cell == Vector2i(3, 0) or cell == Vector2i(3, 6) or cell == Vector2i(0, 3) or cell == Vector2i(6, 3)
+	return BUILD_ENTRANCES.has(cell)
 
 
 func _validate_placement(kind: String, cell: Vector2i) -> String:
 	var definition := _build_definition(kind)
 	var width := 2 if _is_building(kind) else 1
-	if cell.x < 0 or cell.y < 0 or cell.x + width > GRID_SIZE or cell.y >= GRID_SIZE:
+	if cell.x < GRID_MIN or cell.y < GRID_MIN or cell.x + width - 1 > GRID_MAX or cell.y > GRID_MAX:
 		return "건설 구역 밖입니다."
 	if kind == "wall" and _cell_is_entrance(cell):
 		return "동서남북 영구 출입구는 막을 수 없습니다."
@@ -1208,9 +1334,8 @@ func _path_stays_open(new_cell: Vector2i) -> bool:
 		for cell in _occupied_cells(entry): blocked[cell] = true
 	blocked[new_cell] = true
 	var goals: Array[Vector2i] = [Vector2i(2, 3), Vector2i(5, 3), Vector2i(3, 2), Vector2i(3, 4)]
-	var starts: Array[Vector2i] = [Vector2i(3, 0), Vector2i(3, 6), Vector2i(0, 3), Vector2i(6, 3)]
 	for index in range(4):
-		if not _grid_path_exists(starts[index], goals[index], blocked): return false
+		if not _grid_path_exists(BUILD_ENTRANCES[index], goals[index], blocked): return false
 	return true
 
 
@@ -1222,7 +1347,7 @@ func _grid_path_exists(start: Vector2i, goal: Vector2i, blocked: Dictionary) -> 
 		if cur == goal: return true
 		for step in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
 			var next: Vector2i = cur + step
-			if next.x < 0 or next.y < 0 or next.x >= GRID_SIZE or next.y >= GRID_SIZE: continue
+			if next.x < GRID_MIN or next.y < GRID_MIN or next.x > GRID_MAX or next.y > GRID_MAX: continue
 			if blocked.has(next) or seen.has(next): continue
 			seen[next] = true
 			queue.append(next)
@@ -1345,10 +1470,16 @@ func _try_dash() -> void:
 
 
 func _move_player(motion: Vector2) -> void:
-	var candidate_x := player_pos + Vector2(motion.x, 0)
-	if _blocking_structure(candidate_x, PLAYER_RADIUS, true) < 0: player_pos.x = candidate_x.x
-	var candidate_y := player_pos + Vector2(0, motion.y)
-	if _blocking_structure(candidate_y, PLAYER_RADIUS, true) < 0: player_pos.y = candidate_y.y
+	# Step across the footprint checks so a long dash cannot cross a cliff.
+	var steps := maxi(1, ceili(maxf(absf(motion.x), absf(motion.y)) / 16.0))
+	var step := motion / float(steps)
+	for i in range(steps):
+		var candidate_x := player_pos + Vector2(step.x, 0.0)
+		if jeju_map.walkable(candidate_x, PLAYER_RADIUS) and _blocking_structure(candidate_x, PLAYER_RADIUS, true) < 0:
+			player_pos.x = candidate_x.x
+		var candidate_y := player_pos + Vector2(0.0, step.y)
+		if jeju_map.walkable(candidate_y, PLAYER_RADIUS) and _blocking_structure(candidate_y, PLAYER_RADIUS, true) < 0:
+			player_pos.y = candidate_y.y
 
 
 func _structure_overlap_depth(point: Vector2, center: Vector2, width: int, radius: float) -> float:
@@ -1388,8 +1519,6 @@ func _update_player(delta: float) -> void:
 	else:
 		_move_player(direction * speed * delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
-	player_pos.x = clampf(player_pos.x, -MAP_LIMIT.x, MAP_LIMIT.x)
-	player_pos.y = clampf(player_pos.y, -MAP_LIMIT.y, MAP_LIMIT.y)
 	player_motion = (player_pos - previous_position) / maxf(delta, 0.001)
 	_update_player_attack(delta)
 	if player_drone_level > 0:
@@ -1412,7 +1541,7 @@ func _update_player_attack(delta: float) -> void:
 			player_facing = aim.normalized()
 		wants_attack = screen == "play" and manual_trigger and not build_mode
 	else:
-		var target := _nearest_enemy(player_pos, float(hero.range) * player_mod_range)
+		var target := _nearest_enemy(player_pos, _weapon_range(hero))
 		if target >= 0:
 			var aim: Vector2 = enemies[target].pos - player_pos
 			if not aim.is_zero_approx():
@@ -1423,7 +1552,7 @@ func _update_player_attack(delta: float) -> void:
 	if player_reload_timer > 0.0:
 		player_reload_timer = maxf(0.0, player_reload_timer - delta)
 		if player_reload_timer == 0.0:
-			player_magazine = int(hero.magazine)
+			player_magazine = _magazine_capacity()
 	if wants_attack and player_attack_timer <= 0.0 and player_reload_timer <= 0.0:
 		_attack_player()
 
@@ -1431,15 +1560,17 @@ func _update_player_attack(delta: float) -> void:
 func _attack_player() -> void:
 	var hero: Dictionary = Data.CHARACTERS[player_index]
 	var kind := String(hero.id)
-	var reload := float(hero.rate) / player_mod_rate
+	var interval := _weapon_interval(hero, player_mod_rate)
 	if kind == "yujin":
-		player_attack_timer = maxf(0.08, reload)
+		_yujin_visual.attack(interval)
+		player_attack_timer = interval
 		var direction := player_facing.normalized()
+		var reach := _weapon_range(hero)
 		for i in range(enemies.size() - 1, -1, -1):
 			var target_pos: Vector2 = enemies[i].pos
 			var toward := target_pos - player_pos
-			if toward.length() <= float(hero.range) * player_mod_range and (toward.is_zero_approx() or direction.dot(toward.normalized()) > 0.70):
-				_damage_enemy(i, float(hero.damage) * player_mod_damage * 0.45, "chainsaw")
+			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > 0.70):
+				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
 				if effects.size() < 40: effects.append({"a": player_pos + direction * 26, "b": target_pos, "time": 0.09, "color": Color("#f1a34f")})
 		return
 	if player_magazine <= 0:
@@ -1447,19 +1578,21 @@ func _attack_player() -> void:
 	player_magazine -= 1
 	if player_magazine == 0:
 		player_reload_timer = float(hero.reload)
+	var muzzle_offset := Vector2.ZERO
 	if kind == "harin":
-		_harin_visual.trigger_attack()
+		_harin_visual.trigger_attack(player_facing)
+		muzzle_offset = _harin_visual.muzzle_offset(player_facing)
 	if sound_on:
 		AudioDirector.play_cue("player.action", 0.78 if kind == "tae" else 1.12 if kind == "si" else 1.0)
-	player_attack_timer = maxf(0.05, reload)
+	player_attack_timer = interval
 	var direction := player_facing.normalized()
-	var max_range := float(hero.range) * player_mod_range
+	var max_range := _weapon_range(hero)
 	var pellets := int(hero.pellets) + player_extra_pellets if kind == "tae" else 1
-	var damage := float(hero.damage) * player_mod_damage / float(pellets)
+	var damage := _weapon_damage(hero, player_mod_damage) / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 if kind == "tae" else 0.0)
-		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1), color)
+		player_projectiles.fire(player_pos, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1), color, muzzle_offset)
 
 
 func _update_spawn(delta: float) -> void:
@@ -1484,16 +1617,25 @@ func _update_spawn(delta: float) -> void:
 	if spawn_timer <= 0.0 and enemies.size() < MAX_ENEMIES:
 		var base_interval := 1.25 / float(difficulty.get("spawn", 1.0))
 		spawn_timer = maxf(0.18, base_interval * (1.0 - minf(0.55, float(stage) * 0.004)))
-		var count := 1 + (1 if stage >= 16 and _random.randf() < 0.25 else 0)
+		var base_count := 1 + (1 if stage >= 16 and _random.randf() < 0.25 else 0)
+		var count := mini(base_count * WAVE_SPAWN_MULTIPLIER, MAX_ENEMIES - enemies.size())
 		for n in range(count):
-			if enemies.size() >= MAX_ENEMIES: break
 			var kind := _choose_enemy_kind()
 			var angle := _random.randf_range(0.0, TAU)
-			var distance := _random.randf_range(470.0, 740.0)
-			var pos := player_pos + Vector2(cos(angle), sin(angle)) * distance
-			pos.x = clampf(pos.x, -MAP_LIMIT.x + 90, MAP_LIMIT.x - 90)
-			pos.y = clampf(pos.y, -MAP_LIMIT.y + 90, MAP_LIMIT.y - 90)
+			var distance := _random.randf_range(700.0, 940.0) if stage == 1 else _random.randf_range(470.0, 740.0)
+			var pos := _land_spawn(angle, distance)
 			_spawn_enemy(kind, pos, false)
+
+
+func _land_spawn(angle: float, distance: float) -> Vector2:
+	# Try neighbouring directions before falling back to nearby land.
+	var limit := JejuMapArt.LIMIT - Vector2.ONE * 32.0
+	for attempt in range(8):
+		var direction := Vector2.from_angle(angle + float(attempt) * TAU / 8.0)
+		var candidate := (player_pos + direction * distance).clamp(-limit, limit)
+		if candidate.distance_squared_to(player_pos) >= 300.0 * 300.0 and jeju_map.walkable(candidate, 24.0):
+			return candidate
+	return jeju_map.nearest_land(player_pos + Vector2.from_angle(angle) * distance, 24.0)
 
 
 func _choose_enemy_kind() -> String:
@@ -1548,7 +1690,7 @@ func _spawn_boss(at_stage: int) -> void:
 	var old_stage := stage
 	stage = at_stage
 	var angle := _random.randf_range(0, TAU)
-	var spawn_at := player_pos + Vector2(cos(angle), sin(angle)) * 650.0
+	var spawn_at := _land_spawn(angle, 650.0)
 	var kind := "boss40" if at_stage == 40 else "boss80" if at_stage == 80 else "boss100"
 	_spawn_enemy(kind, spawn_at, true)
 	stage = old_stage
@@ -1576,6 +1718,9 @@ func _update_enemies(delta: float) -> void:
 		var body_radius := ZombieVisual.RADIUS if animated else 11.0
 		e.cool = maxf(0.0, float(e.cool) - delta)
 		e.slow = maxf(0.0, float(e.slow) - delta)
+		if e.has("strike_remaining"):
+			_resolve_normal_strike(e, delta)
+			continue
 		if bool(e.boss): _update_boss_pattern(e, delta)
 		if String(e.kind) == "bomber":
 			var d_player: float = e.pos.distance_to(player_pos)
@@ -1596,8 +1741,10 @@ func _update_enemies(delta: float) -> void:
 		e.target = "player" if target_player else "hq"
 		var target_pos: Vector2 = player_pos if target_player else hq_pos
 		var target_structure := -1 if target_player else hq_index
-		if not bool(e.ranged):
-			var wall := _priority_wall(e.pos, walls)
+		if not bool(e.ranged) and not walls.is_empty():
+			var wall := int(_first_wall_hit(e.pos, target_pos).index)
+			if wall < 0:
+				wall = _priority_wall(e.pos, walls)
 			if wall >= 0:
 				target_structure = wall
 				e.target = "wall"
@@ -1626,6 +1773,45 @@ func _update_enemies(delta: float) -> void:
 	_play_zombie_ambient()
 
 
+func _first_wall_hit(start: Vector2, end: Vector2, padding := 0.0) -> Dictionary:
+	var first := {"index": -1, "fraction": INF}
+	for i in range(structures.size()):
+		var wall := structures[i]
+		if wall.kind != "wall" or float(wall.hp) <= 0.0:
+			continue
+		var half_extent := Vector2.ONE * (CELL * 0.5 + padding)
+		var bounds := Rect2(_entry_world_center(wall) - half_extent, half_extent * 2.0)
+		var fraction := _segment_rect_entry(start, end, bounds)
+		if fraction < float(first.fraction):
+			first = {"index": i, "fraction": fraction}
+	return first
+
+
+func _segment_rect_entry(start: Vector2, end: Vector2, bounds: Rect2) -> float:
+	var motion := end - start
+	var entry := 0.0
+	var exit := 1.0
+	for axis in range(2):
+		if is_zero_approx(motion[axis]):
+			if start[axis] < bounds.position[axis] or start[axis] > bounds.end[axis]:
+				return INF
+			continue
+		var near := (bounds.position[axis] - start[axis]) / motion[axis]
+		var far := (bounds.end[axis] - start[axis]) / motion[axis]
+		entry = maxf(entry, minf(near, far))
+		exit = minf(exit, maxf(near, far))
+		if entry > exit:
+			return INF
+	return entry
+
+
+func _segment_circle_entry(start: Vector2, end: Vector2, center: Vector2, radius: float) -> float:
+	if start.distance_squared_to(center) <= radius * radius:
+		return 0.0
+	var fraction := Geometry2D.segment_intersects_circle(start, end, center, radius)
+	return fraction if fraction >= 0.0 else INF
+
+
 func _priority_wall(point: Vector2, walls: Array[int]) -> int:
 	var nearest := -1
 	var best_distance := 150.0 * 150.0
@@ -1650,26 +1836,79 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 			return
 	elif toward.length_squared() <= 30.0 * 30.0:
 		if float(enemy.cool) <= 0.0:
-			_player_take_damage(float(enemy.attack), "적의 근접 공격")
-			if enemy.has("variant"): _animate_zombie_attack(enemy, toward)
+			if enemy.has("variant"):
+				_queue_normal_strike(enemy, toward)
+			else:
+				_apply_enemy_melee_to_player(enemy)
 			enemy.cool = 0.65 if enemy.boss else 1.0
 		return
 	var speed := float(enemy.speed) * (0.48 if float(enemy.slow) > 0.0 else 1.0)
-	var proposed: Vector2 = enemy.pos + toward.normalized() * speed * delta
-	var blocker := _blocking_structure(proposed, 24.0 if enemy.boss else body_radius)
+	var movement := toward.normalized() * speed * delta
+	var radius := 24.0 if enemy.boss else body_radius
+	var proposed: Vector2 = enemy.pos + movement
+	if not jeju_map.walkable(proposed, radius):
+		var followed := float(enemy.get("terrain_side", 1.0 if int(enemy.spawn_id) % 2 == 0 else -1.0))
+		for angle in [0.72 * followed, 1.42 * followed, -0.72 * followed, -1.42 * followed]:
+			var alternate: Vector2 = enemy.pos + movement.rotated(angle)
+			if jeju_map.walkable(alternate, radius):
+				proposed = alternate
+				enemy.terrain_side = signf(angle)
+				break
+	if not jeju_map.walkable(proposed, radius):
+		return
+	var blocker := _blocking_structure(proposed, radius)
 	if blocker < 0:
 		enemy.pos = proposed
 	else:
 		_strike_structure(enemy, blocker)
 
 
+func _apply_enemy_melee_to_player(enemy: Dictionary) -> void:
+	var wall := int(_first_wall_hit(enemy.pos, player_pos).index)
+	if wall >= 0:
+		_damage_structure(wall, float(enemy.attack))
+	else:
+		_player_take_damage(float(enemy.attack), "적의 근접 공격")
+
+
 func _strike_structure(enemy: Dictionary, index: int) -> void:
 	if float(enemy.cool) > 0.0:
 		return
 	var toward: Vector2 = _entry_world_center(structures[index]) - enemy.pos
-	_damage_structure(index, float(enemy.attack))
-	if enemy.has("variant"): _animate_zombie_attack(enemy, toward)
+	if enemy.has("variant"):
+		_queue_normal_strike(enemy, toward, structures[index])
+	else:
+		_damage_structure(index, float(enemy.attack))
 	enemy.cool = 1.15
+
+
+func _queue_normal_strike(enemy: Dictionary, toward: Vector2, target: Variant = null) -> void:
+	enemy.strike_remaining = ZombieVisual.IMPACT_TIME
+	enemy.strike_target = target
+	_animate_zombie_attack(enemy, toward)
+
+
+func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
+	enemy.strike_remaining = float(enemy.strike_remaining) - delta
+	if float(enemy.strike_remaining) > 0.0001:
+		return
+	var target: Variant = enemy.strike_target
+	enemy.erase("strike_remaining")
+	enemy.erase("strike_target")
+	if target == null:
+		var offset: Vector2 = player_pos - enemy.pos
+		if offset.length_squared() <= 30.0 * 30.0 and offset.dot(enemy.attack_direction) >= 0.0:
+			_apply_enemy_melee_to_player(enemy)
+		return
+	for index in range(structures.size()):
+		if not is_same(structures[index], target) or float(target.hp) <= 0.0:
+			continue
+		var kind := String(target.kind)
+		var width := 2 if kind == "hq" or _is_building(kind) else 1
+		if _structure_overlap_depth(enemy.pos, _entry_world_center(target), width, ZombieVisual.RADIUS + 5.0) >= 0.0:
+			var wall := int(_first_wall_hit(enemy.pos, _entry_world_center(target)).index)
+			_damage_structure(wall if wall >= 0 else index, float(enemy.attack))
+		return
 
 
 func _play_zombie_ambient() -> void:
@@ -1700,12 +1939,13 @@ func _update_boss_pattern(e: Dictionary, delta: float) -> void:
 	elif current_stage == 80:
 		var target := _nearest_structure(e.pos, 560.0, false)
 		if target >= 0:
-			_damage_structure(target, float(e.attack) * 2.0)
+			var wall := int(_first_wall_hit(e.pos, _entry_world_center(structures[target])).index)
+			_damage_structure(wall if wall >= 0 else target, float(e.attack) * 2.0)
 			_show_toast("파쇄자 · 구조물에 강한 충격")
 	elif current_stage == 100:
 		for n in range(3):
 			var a := _random.randf_range(0, TAU)
-			_spawn_enemy("normal", e.pos + Vector2(cos(a), sin(a)) * 90.0, false)
+			_spawn_enemy("normal", jeju_map.nearest_land(e.pos + Vector2.from_angle(a) * 90.0, ZombieVisual.RADIUS), false)
 		_show_toast("군체 지배자 · 추가 개체 소환")
 
 
@@ -1719,12 +1959,21 @@ func _explode_bomber(enemy: Dictionary) -> void:
 	var target_player := String(enemy.get("target", "player")) == "player"
 	var center: Vector2 = player_pos if target_player else _hq_position()
 	var dist: float = enemy.pos.distance_to(center)
-	if dist < 120.0:
+	var protected := int(_first_wall_hit(enemy.pos, center).index) >= 0
+	# Evaluate cover against the pre-blast walls, so a wall destroyed by this
+	# explosion still shields everything behind it from this same explosion.
+	var blast_targets: Array[int] = []
+	for i in range(structures.size() - 1, -1, -1):
+		var structure_center := _entry_world_center(structures[i])
+		if structure_center.distance_to(enemy.pos) <= 105.0:
+			var wall := int(_first_wall_hit(enemy.pos, structure_center).index)
+			if wall < 0 or wall == i:
+				blast_targets.append(i)
+	if dist < 120.0 and not protected:
 		if target_player: _player_take_damage(float(enemy.attack) * 1.8, "자폭 폭발")
 		else: _damage_hq(float(enemy.attack) * 2.4)
-	for i in range(structures.size() - 1, -1, -1):
-		if _entry_world_center(structures[i]).distance_to(enemy.pos) <= 105.0:
-			_damage_structure(i, float(enemy.attack) * 0.8)
+	for i in blast_targets:
+		_damage_structure(i, float(enemy.attack) * 0.8)
 	effects.append({"a": enemy.pos, "b": enemy.pos + Vector2(95, 0), "time": 0.28, "color": PALETTE.red, "blast": true})
 	_show_toast("자폭체 폭발 · 경고 원에서 벗어나세요.")
 
@@ -1736,6 +1985,11 @@ func _damage_enemy(index: int, amount: float, source: String) -> void:
 		amount *= 0.4
 		enemy.guard = maxf(0.0, float(enemy.guard) - 0.28)
 	enemy.hp = float(enemy.hp) - amount
+	if amount > 0.0 and shake_on and effects.size() < 80 and _zombie_on_screen(_world_to_screen(enemy.pos)):
+		var point: Vector2 = enemy.pos
+		var angle := player_pos.angle_to_point(point)
+		effects.append({"a": point, "b": point, "time": HIT_SPARK_TIME, "hit_angle": angle,
+			"color": Color("#ffb34f") if source == "chainsaw" else Color("#f8d4aa")})
 	if amount > 0.0 and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 1.18)
@@ -1774,9 +2028,9 @@ func _update_zombie_corpses(now: float) -> void:
 		zombie_corpses.pop_front()
 
 
-func _zombie_on_screen(point: Vector2) -> bool:
+func _zombie_on_screen(point: Vector2, padding := 48.0) -> bool:
 	var visible_size := size / _view_zoom()
-	return Rect2((size - visible_size) * 0.5, visible_size).grow(48.0).has_point(point)
+	return Rect2((size - visible_size) * 0.5, visible_size).grow(padding).has_point(point)
 
 
 func _explode_damage_center(center: Vector2, radius: float, damage: float) -> void:
@@ -1857,14 +2111,27 @@ func _nearest_structure(pos: Vector2, range: float, damaged_only: bool) -> int:
 func _update_projectiles(delta: float) -> void:
 	for i in range(enemy_shots.size() - 1, -1, -1):
 		var shot: Dictionary = enemy_shots[i]
-		shot.pos += shot.velocity * delta
+		var start: Vector2 = shot.pos
+		var end: Vector2 = start + shot.velocity * clampf(float(shot.life), 0.0, delta)
 		shot.life -= delta
-		var target_player: bool = shot.pos.distance_to(player_pos) < 24.0
-		var target_hq: bool = shot.pos.distance_to(_hq_position()) < 28.0
-		if target_player or target_hq or float(shot.life) <= 0.0:
-			if target_player and dash_timer <= 0.0: _player_take_damage(float(shot.damage), "원거리 투사체")
-			elif target_hq: _damage_hq(float(shot.damage))
-			effects.append({"a": shot.pos, "b": shot.pos + Vector2(26, 0), "time": 0.14, "color": PALETTE.red})
+		var wall := _first_wall_hit(start, end, ENEMY_SHOT_RADIUS)
+		var player_hit := _segment_circle_entry(start, end, player_pos, PLAYER_RADIUS + ENEMY_SHOT_RADIUS)
+		var hq_hit := _segment_circle_entry(start, end, _hq_position(), 28.0) if _hq_index() >= 0 else INF
+		var impact := minf(float(wall.fraction), minf(player_hit, hq_hit))
+		if impact != INF:
+			shot.pos = start.lerp(end, impact)
+			if float(wall.fraction) == impact:
+				_damage_structure(int(wall.index), float(shot.damage))
+			elif player_hit == impact:
+				_player_take_damage(float(shot.damage), "원거리 투사체")
+			else:
+				_damage_hq(float(shot.damage))
+		else:
+			shot.pos = end
+		if impact != INF or float(shot.life) <= 0.0:
+			if effects.size() < 80:
+				var direction: Vector2 = shot.velocity.normalized()
+				effects.append({"a": shot.pos, "b": shot.pos - direction * 18.0, "time": 0.14, "color": PALETTE.red})
 			enemy_shots.remove_at(i)
 
 
@@ -1914,16 +2181,24 @@ func _check_level_up() -> void:
 		_offer_augments()
 
 
-func _offer_augments() -> void:
-	var available := Data.augment_catalog()
+func _eligible_augments() -> Array[Dictionary]:
+	var available: Array[Dictionary] = []
 	var hero_id := String(Data.CHARACTERS[player_index].id)
-	for i in range(available.size() - 1, -1, -1):
-		var id := String(available[i].id)
-		var belongs_to_hero := false
-		for hero in ["tae", "si", "harin", "yujin"]:
-			if id.begins_with(hero + "_"): belongs_to_hero = true
-		if picked_augment_ids.has(id) or (belongs_to_hero and not id.begins_with(hero_id + "_")):
-			available.remove_at(i)
+	for card in Data.augment_catalog():
+		if String(card.get("hero", hero_id)) != hero_id:
+			continue
+		if (card.effect == "projectile" and hero_id != "tae") or (card.effect == "pierce" and hero_id == "yujin"):
+			continue
+		if card.id == Data.HARIN_MAGAZINE_AUGMENT:
+			if _magazine_augment_stacks() < Data.MAGAZINE_AUGMENT_LIMIT:
+				available.append(card)
+		elif not picked_augment_ids.has(card.id):
+			available.append(card)
+	return available
+
+
+func _offer_augments() -> void:
+	var available := _eligible_augments()
 	while available.size() < 3:
 		available.append({"id": "field_%02d" % available.size(), "name": "현장 적응", "effect": "damage", "description": "공격 피해가 증가합니다."})
 	augment_options.clear()
@@ -1953,20 +2228,11 @@ func _rebuild_augment_cards() -> void:
 		row.remove_child(child)
 		child.queue_free()
 	for card in augment_options:
-		var rarity_color := PALETTE.muted if card.rarity == "일반" else PALETTE.green if card.rarity == "고급" else PALETTE.blue if card.rarity == "희귀" else Color("#bd8de0") if card.rarity == "영웅" else PALETTE.gold
-		var b := _make_button("%s  ·  %s\n%s\n%s" % [String(card.rarity), "★".repeat(int(card.stars)), String(card.name), String(card.description)], _choose_augment.bind(card), rarity_color, 189)
-		b.add_theme_font_size_override("font_size", 16)
-		b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		b.custom_minimum_size.y = 120
-		for state in ["normal", "hover", "pressed", "focus"]:
-			var style := b.get_theme_stylebox(state) as StyleBoxFlat
-			style.content_margin_left = 6.0
-			style.content_margin_right = 6.0
-			style.content_margin_top = 5.0
-			style.content_margin_bottom = 5.0
-			if state != "focus":
-				style.bg_color = Color(PALETTE.panel.lerp(rarity_color, 0.11 if state == "normal" else 0.22), 0.96)
-		row.add_child(b)
+		var display := card.duplicate()
+		display.description = _augment_effect_text(card)
+		if card.has("hero"):
+			display.name = "%s · %s" % [Data.CHARACTERS[player_index].name, card.name]
+		row.add_child(OpsUI.augment_card(display, _choose_augment.bind(card), 189.0, 158.0, true))
 	augment_reroll_button.disabled = augment_reroll_used
 	augment_reroll_button.text = "무료 리롤 사용됨" if augment_reroll_used else "무료 리롤 1회"
 
@@ -1976,12 +2242,7 @@ func _reroll_augments() -> void:
 	augment_reroll_used = true
 	augment_options.clear()
 	# One reroll keeps every offer distinct and keeps the specified rarity odds.
-	var available := Data.augment_catalog()
-	var hero_id := String(Data.CHARACTERS[player_index].id)
-	for i in range(available.size() - 1, -1, -1):
-		var id := String(available[i].id)
-		var belongs_to_hero := id.begins_with("tae_") or id.begins_with("si_") or id.begins_with("harin_") or id.begins_with("yujin_")
-		if picked_augment_ids.has(id) or (belongs_to_hero and not id.begins_with(hero_id + "_")): available.remove_at(i)
+	var available := _eligible_augments()
 	for i in range(3):
 		var card: Dictionary = available.pop_at(_random.randi_range(0, available.size() - 1))
 		card["rarity"] = _pick_rarity()
@@ -1991,7 +2252,23 @@ func _reroll_augments() -> void:
 
 
 func _choose_augment(card: Dictionary) -> void:
-	picked_augment_ids.append(String(card.id))
+	var id := String(card.id)
+	if id == Data.HARIN_MAGAZINE_AUGMENT and (Data.CHARACTERS[player_index].id != "harin" or _magazine_augment_stacks() >= Data.MAGAZINE_AUGMENT_LIMIT):
+		return
+	if not picked_augment_ids.has(id):
+		picked_augment_ids.append(id)
+	var entry: Dictionary = acquired_augments.get(id, {})
+	var count := int(entry.get("count", 0)) + 1
+	var effects_applied: Array = entry.get("effects_applied", [])
+	if effects_applied.is_empty() and entry.has("stars"):
+		effects_applied.append(entry.description)
+	effects_applied.append(_augment_effect_text(card))
+	if int(card.stars) >= int(entry.get("stars", 0)):
+		entry = card.duplicate()
+		entry["description"] = _augment_effect_text(card)
+	entry["count"] = count
+	entry["effects_applied"] = effects_applied
+	acquired_augments[id] = entry
 	var mult := 1.0 + 0.025 * float(card.stars)
 	match String(card.effect):
 		"damage": player_mod_damage *= 1.0 + 0.07 * mult
@@ -2011,15 +2288,131 @@ func _choose_augment(card: Dictionary) -> void:
 		"projectile": player_extra_pellets += 1
 		"pierce": player_pierce += 1
 		"drone": player_drone_level += 1
+		"magazine", "saw_reach": pass
 		_: player_mod_damage *= 1.06
 	_show_screen("play")
 	_show_toast("현장 증강 · %s" % String(card.name))
 
 
+func _magazine_augment_stacks() -> int:
+	var entry: Dictionary = acquired_augments.get(Data.HARIN_MAGAZINE_AUGMENT, {})
+	return clampi(int(entry.get("count", 0)), 0, Data.MAGAZINE_AUGMENT_LIMIT)
+
+
+func _magazine_capacity() -> int:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	return int(hero.magazine) + (_magazine_augment_stacks() * Data.MAGAZINE_AUGMENT_ROUNDS if hero.id == "harin" else 0)
+
+
+func _weapon_range(hero: Dictionary) -> float:
+	var reach := float(hero.range) * player_mod_range
+	if hero.id == "yujin" and picked_augment_ids.has(Data.YUJIN_REACH_AUGMENT):
+		reach += Data.SAW_REACH_BONUS
+	return reach
+
+
+func _weapon_interval(hero: Dictionary, rate: float) -> float:
+	return maxf(0.08 if hero.id == "yujin" else 0.05, float(hero.rate) / rate)
+
+
+func _weapon_damage(hero: Dictionary, multiplier: float) -> float:
+	return float(hero.damage) * multiplier * (0.45 if hero.id == "yujin" else 1.0)
+
+
+func _incoming_damage_factor(hero: Dictionary, armor: float) -> float:
+	return maxf(0.25, armor - (0.12 if hero.id == "tae" else 0.0))
+
+
+func _build_cost_factor(hero: Dictionary, multiplier: float) -> float:
+	return maxf(0.5, multiplier - (0.10 if hero.id == "yujin" else 0.0))
+
+
+func _combat_stats() -> Dictionary:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	return {
+		"hp": player_max_hp,
+		"magazine": float(_magazine_capacity()),
+		"damage": _weapon_damage(hero, player_mod_damage),
+		"rate": 1.0 / _weapon_interval(hero, player_mod_rate),
+		"speed": float(hero.speed) * player_mod_speed,
+		"range": _weapon_range(hero),
+		"armor": (1.0 - _incoming_damage_factor(hero, player_mod_armor)) * 100.0,
+		"build": _build_cost_factor(hero, player_mod_build) * 100.0,
+	}
+
+
+func _legacy_base_stats() -> Dictionary:
+	var hero: Dictionary = Data.CHARACTERS[player_index]
+	return {
+		"magazine": float(hero.magazine),
+		"hp": float(hero.hp) + float(permanent_upgrades.get("health", 0)) * 15.0,
+		"damage": _weapon_damage(hero, 1.0 + float(permanent_upgrades.get("damage", 0)) * 0.06),
+		"rate": 1.0 / _weapon_interval(hero, 1.0 + float(permanent_upgrades.get("reload", 0)) * 0.04),
+		"speed": float(hero.speed) * (1.0 + float(permanent_upgrades.get("speed", 0)) * 0.04),
+		"range": float(hero.range) * (1.0 + float(permanent_upgrades.get("range", 0)) * 0.05),
+		"armor": (1.0 - _incoming_damage_factor(hero, 1.0)) * 100.0,
+		"build": _build_cost_factor(hero, maxf(0.55, 1.0 - float(permanent_upgrades.get("build", 0)) * 0.04)) * 100.0,
+	}
+
+
+func _operator_stat_rows() -> Array:
+	var current := _combat_stats()
+	var base := run_base_stats if not run_base_stats.is_empty() else _legacy_base_stats()
+	var rows := []
+	for field in [
+		["hp", "최대 체력", ""], ["damage", "공격 피해 (1회 합계)", ""],
+		["rate", "공격 빈도", "/초"], ["speed", "이동 속도", " px/초"], ["range", "공격 범위", " px"],
+		["armor", "받는 피해 감소", "%"], ["build", "건설 비용 배율", "%"],
+		["magazine", "최대 탄창 용량", "발"],
+	]:
+		if field[0] == "magazine" and int(current.magazine) == 0:
+			continue
+		var final_value := float(current[field[0]])
+		var base_value := float(base.get(field[0], Data.CHARACTERS[player_index].magazine if field[0] == "magazine" else final_value))
+		var difference := final_value - base_value
+		var unit := String(field[2])
+		if field[0] == "magazine":
+			rows.append([field[1], "%d발" % base_value, "+%d발" % difference if difference > 0 else "—", "%d발" % final_value])
+			continue
+		var delta_text := "—" if is_zero_approx(difference) else "%s%.2f%s" % ["+" if difference > 0.0 else "", difference, "%p" if unit == "%" else unit]
+		rows.append([field[1], "%.2f%s" % [base_value, unit], delta_text, "%.2f%s" % [final_value, unit]])
+	return rows
+
+
+func _augment_effect_text(card: Dictionary) -> String:
+	if not card.has("stars"):
+		return String(card.get("description", "")) + " · 세부 획득 기록 없음"
+	var scale := 1.0 + 0.025 * float(card.stars)
+	match String(card.effect):
+		"damage": return "공격 피해 +%.2f%%" % (7.0 * scale)
+		"rate", "reload":
+			var hero: Dictionary = Data.CHARACTERS[player_index]
+			var before := 1.0 / _weapon_interval(hero, player_mod_rate)
+			var after := 1.0 / _weapon_interval(hero, player_mod_rate * (1.0 + 0.06 * scale))
+			return "공격 빈도 +%.2f%%\n%.2f → %.2f회/초" % [(after / before - 1.0) * 100.0, before, after]
+		"range": return "무기·포탑 사거리 +%.2f%%" % (6.0 * scale)
+		"health": return "최대 체력 +%.2f · 획득 시 체력 최대 35 회복" % (14.0 * scale)
+		"armor": return "받는 피해 배율 ×0.94 (고유 보정·하한 별도)"
+		"speed": return "이동 속도 배율 +%.2f%%" % (4.5 * scale)
+		"xp": return "경험치 배율 +%.2f%%" % (8.0 * scale)
+		"building_hp": return "건설 시 시설 내구도 배율 +%.2f%%" % (8.0 * scale)
+		"salvage": return "보급품 배율 +%.2f%%" % (10.0 * scale)
+		"turret_damage": return "포탑 피해 배율 +%.2f%%" % (8.0 * scale)
+		"turret_rate": return "포탑 공격 빈도 배율 +%.2f%%" % (8.0 * scale)
+		"build": return "건설 비용 배율 -5%p (최소 비용 배율 적용)"
+		"projectile": return "산탄총 발사 탄환 +1" if Data.CHARACTERS[player_index].id == "tae" else "산탄 수 +1 (산탄총에만 적용)"
+		"pierce": return "총기 관통 대상 +1"
+		"drone": return "지원 드론 레벨 +1 · 자동 지원 사격"
+		"saw_reach": return "전기톱 공격 거리 +%d px" % Data.SAW_REACH_BONUS
+		"magazine":
+			var capacity := _magazine_capacity()
+			return "최대 탄창 +%d발 (%d → %d발)\n중첩 %d/%d · 재장전 시 반영" % [Data.MAGAZINE_AUGMENT_ROUNDS, capacity, capacity + Data.MAGAZINE_AUGMENT_ROUNDS, _magazine_augment_stacks() + 1, Data.MAGAZINE_AUGMENT_LIMIT]
+	return "공격 피해 +6%"
+
+
 func _player_take_damage(amount: float, cause: String) -> void:
 	if dash_timer > 0.0: return
-	var reduction := 0.12 if Data.CHARACTERS[player_index].id == "tae" else 0.0
-	player_hp -= amount * maxf(0.25, player_mod_armor - reduction)
+	player_hp -= amount * _incoming_damage_factor(Data.CHARACTERS[player_index], player_mod_armor)
 	if sound_on and run_seconds >= impact_sound_at:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 0.80)
@@ -2075,16 +2468,23 @@ func _show_toast(message: String) -> void:
 
 func _refresh_hud() -> void:
 	if hp_bar == null or game_ui == null: return
-	if screen == "play" or screen == "pause" or screen == "augment":
+	if screen in ["play", "pause", "augment", "info"]:
+		if hud_hero != player_index:
+			hud_hero = player_index
+			hud_portrait.texture = _operator_portrait()
+		hud_name.text = String(Data.CHARACTERS[player_index].name)
+		hud_level.text = "Lv.%d  [C]" % player_level
+		hud_health.text = "%d / %d" % [ceili(player_hp), ceili(player_max_hp)]
 		hp_bar.max_value = player_max_hp
 		hp_bar.value = player_hp
 		var hq := _hq_index()
 		if hq >= 0:
 			base_bar.max_value = float(structures[hq].max_hp)
 			base_bar.value = float(structures[hq].hp)
+			hud_hq.text = "HQ  %d / %d" % [ceili(base_bar.value), ceili(base_bar.max_value)]
 		var remaining := maxi(0, int(WAVE_SECONDS - stage_elapsed))
 		stage_label.text = "단계 %d / 100  ·  %s  ·  다음 단계 %02d초" % [stage, String(difficulty.get("label", "")), remaining]
-		currency_label.text = "보급품 %d  ·  처치 %d  ·  훈장 %d  ·  Lv.%d" % [money, kills, medals, player_level]
+		currency_label.text = "보급품 %d  ·  처치 %d  ·  훈장 %d" % [money, kills, medals]
 		var boss_text := ""
 		for e in enemies:
 			if bool(e.get("boss", false)):
@@ -2093,7 +2493,7 @@ func _refresh_hud() -> void:
 		boss_label.text = boss_text
 		var toast_node := run_hud.find_child("Toast", true, false) as Label
 		if toast_node: toast_node.text = toast if toast_timer > 0.0 else ""
-		var capacity := int(Data.CHARACTERS[player_index].magazine)
+		var capacity := _magazine_capacity()
 		var ammo := "전기톱 · 탄약 미사용" if capacity == 0 else "탄약 %d / %d" % [player_magazine, capacity]
 		if player_reload_timer > 0.0:
 			ammo += " · 재장전 중"
@@ -2103,7 +2503,7 @@ func _refresh_hud() -> void:
 
 func _save_all() -> void:
 	var output: Dictionary = {"schema": 1, "medals": medals, "upgrades": permanent_upgrades, "dash_key": dash_key, "pause_key": pause_key, "sound_on": sound_on, "shake_on": shake_on, "saved_run": saved_run}
-	if screen == "play" or screen == "pause" or screen == "augment":
+	if screen in ["play", "pause", "augment", "info"]:
 		var structure_rows: Array[Dictionary] = []
 		for s in structures:
 			var cell: Vector2i = s.get("cell", Vector2i.ZERO)
@@ -2117,6 +2517,8 @@ func _save_all() -> void:
 		if boss_80_spawned: boss_flags.append(80)
 		if boss_100_spawned: boss_flags.append(100)
 		saved_run["boss_flags"] = boss_flags
+		saved_run["base_stats"] = run_base_stats
+		saved_run["acquired_augments"] = acquired_augments
 		saved_run["warned_enemies"] = warned_enemies.keys()
 		saved_run["pending_enemy_warnings"] = field_warning.pending_warnings()
 		saved_run["magazine"] = player_magazine
@@ -2143,8 +2545,11 @@ func _load_data() -> void:
 		permanent_upgrades[perk.id] = clampi(int(permanent_upgrades.get(perk.id, 0)), 0, 5)
 	dash_key = int(data.get("dash_key", KEY_SHIFT))
 	pause_key = int(data.get("pause_key", KEY_ESCAPE))
-	if dash_key == KEY_TAB: dash_key = KEY_SHIFT
-	if pause_key == KEY_TAB: pause_key = KEY_ESCAPE
+	if RESERVED_KEYS.has(dash_key) or BUILD_SHORTCUTS.has(dash_key): dash_key = KEY_SHIFT
+	if RESERVED_KEYS.has(pause_key) or BUILD_SHORTCUTS.has(pause_key): pause_key = KEY_ESCAPE
+	if pause_key == dash_key:
+		dash_key = KEY_SHIFT
+		pause_key = KEY_ESCAPE
 	sound_on = bool(data.get("sound_on", true))
 	bgm_volume = clampi(int(data.get("bgm_volume", 100)), 0, 100)
 	effects_volume = clampi(int(data.get("effects_volume", 100)), 0, 100)
@@ -2172,6 +2577,13 @@ func _restore_run_modifiers() -> void:
 	augments_taken = int(mods.get("augments", 0))
 	picked_augment_ids.clear()
 	for value in mods.get("picked", []): picked_augment_ids.append(String(value))
+	run_base_stats = saved_run.get("base_stats", _legacy_base_stats())
+	acquired_augments = saved_run.get("acquired_augments", {}).duplicate(true)
+	for card in Data.augment_catalog():
+		if picked_augment_ids.has(card.id) and not acquired_augments.has(card.id):
+			var legacy := card.duplicate()
+			legacy.description = _augment_effect_text(card)
+			acquired_augments[card.id] = legacy
 	var flags: Array = saved_run.get("boss_flags", [])
 	boss_40_spawned = flags.has(40)
 	boss_80_spawned = flags.has(80)
@@ -2216,28 +2628,31 @@ func _draw_menu_backdrop() -> void:
 
 func _draw_world() -> void:
 	var view := Rect2(Vector2.ZERO, size)
-	draw_rect(view, Color("#1c2421"))
 	var zoom := _view_zoom()
 	var camera := Transform2D(0.0, Vector2.ONE * zoom, 0.0, size * 0.5 * (1.0 - zoom))
 	draw_set_transform_matrix(camera)
-	_draw_city_tiles()
-	_draw_base_zone()
-	if build_open:
+	var camera_offset := _world_to_screen(Vector2.ZERO)
+	for prop in jeju_map.decorations:
+		if _zombie_on_screen(prop.feet + camera_offset, 190.0):
+			JejuMapArt.draw_prop(self, prop, camera_offset)
+	for feet in jeju_map.lamps:
+		var glow := feet + camera_offset + Vector2(11, -11)
+		if _zombie_on_screen(glow, 90.0):
+			for radius in [56.0, 45.0, 34.0, 23.0, 12.0]:
+				draw_circle(glow, radius, Color(1.0, 0.58, 0.19, 0.034), true, -1.0, true)
+	if build_open or build_mode:
 		_draw_build_grid()
-	for entry in structures:
-		if float(entry.hp) > 0.0: _draw_structure(entry)
-	for corpse in zombie_corpses:
-		var center := _world_to_screen(corpse.pos)
-		if _zombie_on_screen(center):
-			ZombieVisual.draw_dead(self, corpse, center, run_seconds)
-	for enemy in enemies: _draw_enemy(enemy, camera)
+	_draw_world_depth(camera, camera_offset)
 	for projectile in enemy_shots: _draw_enemy_projectile(projectile)
 	for shot in player_projectiles.shots:
-		var tip := _world_to_screen(shot.pos)
-		draw_line(tip - shot.direction * 12.0, tip, shot.color, 2.0)
+		var traveled: float = shot.traveled
+		var tail_length := minf(12.0, traveled)
+		var offset: Vector2 = shot.muzzle_offset / zoom
+		var tip := _world_to_screen(shot.pos) + offset * maxf(0.0, 1.0 - traveled / 96.0)
+		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length)
+		tail += offset * maxf(0.0, 1.0 - (traveled - tail_length) / 96.0)
+		draw_line(tail, tip, shot.color, 2.0)
 	for effect in effects: _draw_effect(effect)
-	if screen != "landing" or landing.player_visible():
-		_draw_player()
 	if screen == "landing":
 		landing.draw(self, _world_to_screen)
 		landing.draw_overlay(self, size)
@@ -2245,25 +2660,43 @@ func _draw_world() -> void:
 	draw_set_transform(Vector2.ZERO)
 	if screen == "play" and manual_attack and not build_mode:
 		_draw_cross(aim_screen, 7, Color(PALETTE.gold, 0.55))
-	if screen in ["pause", "augment", "result"] or (screen == "settings" and settings_from_pause):
+	if screen in ["pause", "augment", "result", "info"] or (screen == "settings" and settings_from_pause):
 		draw_rect(view, Color(0.025, 0.035, 0.035, 0.16 if screen == "augment" else 0.42))
 
 
-func _draw_city_tiles() -> void:
-	JejuMapArt.draw(self, player_pos, size)
-
-
-func _draw_base_zone() -> void:
-	var center := _world_to_screen(Vector2.ZERO)
-	draw_circle(center, 255, Color(0.08, 0.12, 0.10, 0.16))
-	draw_arc(center, 170.0, 0.0, TAU, 64, Color(PALETTE.gold, 0.15), 1.2)
-	# A subtle field-light square marks the construction zone even when its grid is hidden.
-	draw_rect(Rect2(center - Vector2(CELL * 3.5, CELL * 3.5), Vector2(CELL * 7.0, CELL * 7.0)), Color(0.5, 0.6, 0.45, 0.025), false, 1.0)
+func _draw_world_depth(camera: Transform2D, camera_offset: Vector2) -> void:
+	var layers: Array[Array] = []
+	for prop in jeju_map.props:
+		if _zombie_on_screen(prop.feet + camera_offset, 260.0):
+			layers.append([prop.feet.y, 0, prop])
+	for entry in structures:
+		if float(entry.hp) > 0.0:
+			layers.append([_entry_world_center(entry).y + CELL * 0.5, 1, entry])
+	for corpse in zombie_corpses:
+		if _zombie_on_screen(_world_to_screen(corpse.pos)):
+			layers.append([corpse.pos.y + 40.0, 2, corpse])
+	for enemy in enemies:
+		if _zombie_on_screen(_world_to_screen(enemy.pos), 100.0):
+			layers.append([enemy.pos.y + 40.0, 3, enemy])
+	if screen != "landing" or landing.player_visible():
+		layers.append([player_pos.y + 40.0 / _view_zoom(), 4, {}])
+	layers.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	for item in layers:
+		match item[1]:
+			0: JejuMapArt.draw_prop(self, item[2], camera_offset)
+			1: _draw_structure(item[2])
+			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds)
+			3: _draw_enemy(item[2], camera)
+			4:
+				# Draw at the camera focus point in screen pixels, then restore the world transform.
+				draw_set_transform(Vector2.ZERO)
+				_draw_player()
+				draw_set_transform_matrix(camera)
 
 
 func _draw_build_grid() -> void:
-	for y in range(7):
-		for x in range(7):
+	for y in range(GRID_MIN, GRID_MAX + 1):
+		for x in range(GRID_MIN, GRID_MAX + 1):
 			var cell := Vector2i(x, y)
 			var p := _world_to_screen(_cell_world(cell))
 			var rect := Rect2(p - Vector2(CELL * 0.5, CELL * 0.5), Vector2(CELL, CELL))
@@ -2293,15 +2726,11 @@ func _draw_structure(entry: Dictionary) -> void:
 	var center := _world_to_screen(_entry_world_center(entry))
 	var width := 2 if kind == "hq" or _is_building(kind) else 1
 	var bounds := Rect2(center - Vector2(CELL * float(width) * 0.5, CELL * 0.5), Vector2(CELL * float(width), CELL))
-	if kind == "hq" and hq_build_ratio < 1.0:
-		LandingSequence.draw_tent_build(self, bounds, center, hq_build_ratio if landing.hq_ratio() >= 0.0 else -1.0)
-		return
 	if kind == "hq":
-		# Only the initial military tent and HQ are drawn; no default allies or defenses.
-		draw_rect(bounds.grow(-5), Color("#6b7058"))
-		draw_colored_polygon(PackedVector2Array([Vector2(bounds.position.x - 2, bounds.position.y + 4), Vector2(center.x, bounds.position.y - 12), Vector2(bounds.end.x + 2, bounds.position.y + 4)]), Color("#8f7456"))
-		draw_line(Vector2(center.x, bounds.position.y - 11), Vector2(center.x, bounds.position.y + 20), Color("#d0bd8e"), 2.0)
-		draw_rect(Rect2(center.x - 7, bounds.position.y + 9, 14, 16), Color("#353a31"))
+		if hq_build_ratio <= 0.0:
+			return
+		var tent_size := JejuMapArt.HQ.get_size() * (112.0 / JejuMapArt.HQ.get_width())
+		draw_texture_rect(JejuMapArt.HQ, Rect2(center + Vector2(-tent_size.x * 0.5, 24.0 - tent_size.y), tent_size), false, Color(1, 1, 1, hq_build_ratio))
 		draw_string(ThemeDB.fallback_font, center + Vector2(-34, 40), "지휘본부", HORIZONTAL_ALIGNMENT_LEFT, 90, 11, PALETTE.text)
 	elif kind == "wall":
 		draw_rect(bounds.grow(-7), Color("#9a8667"))
@@ -2328,10 +2757,12 @@ func _draw_structure(entry: Dictionary) -> void:
 		draw_rect(Rect2(bounds.position.x + 7, bounds.position.y + 8, bounds.size.x - 14, 5), Color(c.lightened(0.23)))
 		draw_rect(Rect2(center.x - 6, center.y - 3, 13, 19), Color("#303832"))
 		draw_string(ThemeDB.fallback_font, center + Vector2(-21, 23), String(def.get("short", "시설")), HORIZONTAL_ALIGNMENT_LEFT, 60, 10, PALETTE.text)
-	if kind != "wall":
-		var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
-		draw_rect(Rect2(center.x - 20.0 * float(width), bounds.position.y - 6, 40.0 * float(width), 3), Color(0, 0, 0, 0.7))
-		draw_rect(Rect2(center.x - 20.0 * float(width), bounds.position.y - 6, 40.0 * float(width) * ratio, 3), PALETTE.green if ratio > 0.35 else PALETTE.red)
+	var ratio := clampf(float(entry.hp) / maxf(1.0, float(entry.max_hp)), 0.0, 1.0)
+	var bar_width := 28.0 if kind == "wall" else 40.0 * float(width)
+	var bar := Rect2(center.x - bar_width * 0.5, bounds.position.y - 6, bar_width, 3)
+	draw_rect(bar, Color(0, 0, 0, 0.7))
+	bar.size.x *= ratio
+	draw_rect(bar, PALETTE.green if ratio > 0.35 else PALETTE.red)
 	if selected_entity >= 0 and selected_entity < structures.size() and structures[selected_entity] == entry:
 		draw_rect(bounds.grow(3), PALETTE.blue, false, 2.0)
 
@@ -2345,8 +2776,8 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		ZombieVisual.draw_alive(self, enemy, p, run_seconds, camera)
 		if float(enemy.hp) < float(enemy.max_hp):
 			var ratio := clampf(float(enemy.hp) / float(enemy.max_hp), 0.0, 1.0)
-			draw_rect(Rect2(p.x - 12, p.y - 33, 24, 3), Color(0, 0, 0, 0.65))
-			draw_rect(Rect2(p.x - 12, p.y - 33, 24 * ratio, 3), PALETTE.green)
+			draw_rect(Rect2(p.x - 12, p.y - 48, 24, 3), Color(0, 0, 0, 0.65))
+			draw_rect(Rect2(p.x - 12, p.y - 48, 24 * ratio, 3), PALETTE.green)
 		return
 	if String(enemy.kind) == "bomber" and float(enemy.get("charge", 0)) > 0.0:
 		var pulse := 56.0 - 28.0 * maxf(0.0, float(enemy.charge)) / 0.72
@@ -2383,7 +2814,7 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 func _draw_enemy_projectile(shot: Dictionary) -> void:
 	var p := _world_to_screen(shot.pos)
 	var c: Color = shot.get("color", PALETTE.red)
-	draw_circle(p, 7.0, c)
+	draw_circle(p, ENEMY_SHOT_RADIUS, c)
 	draw_line(p, p - Vector2(10, 8), Color(c, 0.42), 3.0)
 
 
@@ -2392,7 +2823,16 @@ func _draw_effect(effect: Dictionary) -> void:
 	var b := _world_to_screen(effect.b)
 	var alpha := clampf(float(effect.time) / 0.25, 0.0, 1.0)
 	var c: Color = effect.get("color", PALETTE.gold)
-	if bool(effect.get("blast", false)):
+	if effect.has("hit_angle"):
+		var strength := clampf(float(effect.time) / HIT_SPARK_TIME, 0.0, 1.0)
+		var age := 1.0 - strength
+		for spread in [-0.9, -0.3, 0.22, 0.78]:
+			var ray := Vector2.from_angle(float(effect.hit_angle) + float(spread))
+			var start := a + ray * (4.0 + 18.0 * age)
+			draw_line(start, start + ray * (4.0 + 7.0 * strength), Color(c, strength), 2.0)
+		if age < 0.32:
+			draw_circle(a, 3.5 * strength, Color("#fff0cb"))
+	elif bool(effect.get("blast", false)):
 		draw_arc(a, 24.0 + 110.0 * (1.0 - alpha), 0, TAU, 42, Color(c, alpha), 3.0)
 	else:
 		draw_line(a, b, Color(c, alpha), 2.0)
@@ -2406,6 +2846,8 @@ func _draw_player() -> void:
 		if player_reload_timer > 0.0:
 			reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
 		_harin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0, player_drone_level, reload_progress)
+	elif Data.CHARACTERS[player_index].id == "yujin":
+		_yujin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0)
 	else:
 		var color: Color = Data.CHARACTERS[player_index].color
 		if dash_timer > 0.0:
@@ -2418,11 +2860,9 @@ func _draw_player() -> void:
 		draw_line(p + dir * 11.0, p + dir * 28.0, Color(PALETTE.gold), 2.0)
 		if Data.CHARACTERS[player_index].id == "tae":
 			draw_arc(p - dir * 8.0, 18, -1.2, 1.2, 18, Color("#ccd4be"), 4.0)
-		elif Data.CHARACTERS[player_index].id == "yujin":
-			draw_arc(p, 51, dir.angle() - 0.8, dir.angle() + 0.8, 24, Color("#eea354", 0.26), 2.0)
 	if screen == "play" and manual_attack and not build_mode:
 		var color := Color(PALETTE.gold, 0.55)
-		var aim_length := p.distance_to(_world_to_screen(_screen_to_world(aim_screen)))
+		var aim_length := p.distance_to(aim_screen)
 		if aim_length > 24.0:
 			draw_line(p + dir * 20.0, p + dir * minf(aim_length - 5.0, 92.0), color, 1.0)
 
