@@ -21,7 +21,7 @@ const TURRET_ROWS := {"basic": 0, "heavy": 1, "rocket": 2, "electric": 3, "flame
 const FACILITY_COLUMNS := {"clinic": 0, "supply": 1, "workshop": 2, "research": 3, "outpost": 4}
 const AugmentCatalog = preload("res://scripts/reclaim/augment_catalog.gd")
 const SpecialEnemies = preload("res://scripts/reclaim/special_enemies.gd")
-const JejuFixedMap = preload("res://scripts/reclaim/jeju_fixed_map.gd")
+const FlatArena = preload("res://scripts/reclaim/flat_arena.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
 const MainMenuScreen = preload("res://scripts/reclaim/flow/main_menu_screen.gd")
 const CharacterSelectScreen = preload("res://scripts/reclaim/flow/character_select_screen.gd")
@@ -33,7 +33,7 @@ const FlowSfx = preload("res://scripts/reclaim/flow/flow_sfx.gd")
 const LANDING_ZONE := Vector2(235.0, -10.0)
 const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
-const CELL := 48.0
+const CELL := FlatArena.CELL
 const PLAYER_RADIUS := 13.0
 const ENEMY_SHOT_RADIUS := 7.0
 const GRID_SIZE := 11
@@ -61,7 +61,7 @@ const PALETTE := {
 	"gold": Color("#d0a873"), "green": Color("#8db296"), "red": Color("#df7664"), "blue": Color("#78b7c2"), "white": Color("#ffffff")
 }
 
-var jeju_map := JejuFixedMap.new()
+var jeju_map := FlatArena.new()
 var jeju_background: Sprite2D
 var screen := "boot"
 var player_index := 0
@@ -244,7 +244,6 @@ func _ready() -> void:
 	flow_sfx = FlowSfx.new()
 	add_child(flow_sfx)
 	flow_sfx.enabled = sound_on
-	jeju_map.setup()
 	jeju_background = jeju_map.create_background()
 	add_child(jeju_background)
 	_build_ui()
@@ -1118,9 +1117,6 @@ func _load_saved_run() -> void:
 		var enemy: Dictionary = _make_enemy(String(entry.get("kind", "normal")), jeju_map.nearest_land(saved_pos, ZombieVisual.RADIUS), bool(entry.get("boss", false)))
 		enemy.hp = float(entry.get("hp", enemy.max_hp))
 		enemy.cool = float(entry.get("cool", 0.5))
-		var route: Array = entry.get("approach_point", [])
-		if route.size() == 2:
-			enemy.approach_point = Vector2(float(route[0]), float(route[1]))
 		var saved_variant := int(entry.get("variant", -1))
 		if enemy.has("variant") and saved_variant >= 0 and saved_variant < ZombieVisual.SHEETS.size():
 			enemy.variant = saved_variant
@@ -1441,9 +1437,6 @@ func _cell_is_entrance(cell: Vector2i) -> bool:
 func _validate_placement(kind: String, cell: Vector2i) -> String:
 	var definition := _build_definition(kind)
 	var width := 2 if _is_building(kind) else 1
-	var footprint := Rect2(_cell_world(cell) - Vector2.ONE * CELL * 0.5, Vector2(width * CELL, CELL))
-	if not jeju_map.build_bounds.encloses(footprint):
-		return "건설 구역 밖입니다."
 	if cell.x < GRID_MIN or cell.y < GRID_MIN or cell.x + width - 1 > GRID_MAX or cell.y > GRID_MAX:
 		return "건설 구역 밖입니다."
 	if kind == "wall" and _cell_is_entrance(cell):
@@ -1783,8 +1776,8 @@ func _update_spawn(delta: float) -> void:
 			_spawn_enemy(kind, pos, false)
 
 
-func _land_spawn(angle: float, _distance: float) -> Vector2:
-	return jeju_map.spawn_points[jeju_map.spawn_index(angle)]
+func _land_spawn(angle: float, distance: float) -> Vector2:
+	return jeju_map.nearest_land(_hq_position() + Vector2.from_angle(angle) * distance, 48.0)
 
 
 func _choose_enemy_kind() -> String:
@@ -1798,11 +1791,7 @@ func _choose_enemy_kind() -> String:
 
 
 func _spawn_enemy(kind: String, pos: Vector2, is_boss: bool) -> void:
-	var enemy := _make_enemy(kind, pos, is_boss)
-	var approach := jeju_map.approach_point(pos)
-	if approach != JejuFixedMap.HQ_WORLD:
-		enemy.approach_point = approach
-	enemies.append(enemy)
+	enemies.append(_make_enemy(kind, pos, is_boss))
 	_warn_enemy_once(kind)
 
 
@@ -2103,12 +2092,6 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 			enemy.cool = 0.65 if enemy.boss else 1.0
 		return
 	var speed := float(enemy.speed) * (float(enemy.get("slow_factor", 0.48)) if float(enemy.slow) > 0.0 else 1.0) * (1.55 if rage else 1.0)
-	var route: Vector2 = enemy.get("approach_point", JejuFixedMap.HQ_WORLD)
-	if not enemy.get("air", false) and route != JejuFixedMap.HQ_WORLD:
-		if Vector2(enemy.pos).distance_squared_to(route) > 32.0 * 32.0:
-			toward = route - Vector2(enemy.pos)
-		else:
-			enemy.erase("approach_point")
 	var movement := toward.normalized() * speed * delta
 	var radius := 24.0 if enemy.boss else body_radius
 	var proposed: Vector2 = enemy.pos + movement
@@ -3129,8 +3112,7 @@ func _save_all() -> void:
 			structure_rows.append({"kind": String(s.kind), "x": cell.x, "y": cell.y, "hp": float(s.hp), "max_hp": float(s.max_hp), "level": int(s.level)})
 		var enemy_rows: Array[Dictionary] = []
 		for e in enemies:
-			var route: Vector2 = e.get("approach_point", JejuFixedMap.HQ_WORLD)
-			enemy_rows.append({"approach_point": [route.x, route.y], "kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))})
+			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))})
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
 		saved_run["boss_flags"] = boss_spawned.keys()
 		saved_run["final_boss_defeated"] = final_boss_defeated

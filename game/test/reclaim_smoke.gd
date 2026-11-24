@@ -340,69 +340,40 @@ func _test_repair_drone(game: Control) -> void:
 
 func _test_jeju_battlefield(game: Control) -> void:
 	var map: RefCounted = game.get("jeju_map")
-	var map_script = preload("res://scripts/reclaim/jeju_fixed_map.gd")
 	var bounds: Rect2 = map.get("bounds")
-	_check(bounds.size == Vector2(1536, 1024) * map_script.SCALE, "Jeju V2 keeps the original aspect ratio at a uniform scale")
-	_check(game.call("_hq_position") == map.call("_image_to_world", Vector2(768, 480)), "HQ matches the source anchor")
-	var obstacle: Vector2 = map.call("_image_to_world", Vector2(350, 365))
-	_check(not map.call("walkable", obstacle, 0.0), "source obstacle blocks the ground")
-	_check(map.call("walkable", map.call("_image_to_world", Vector2(692, 176)), 24.0)
-		and not map.call("walkable", map.call("_image_to_world", Vector2(732, 176)), 0.0),
-		"the northern approach follows the road beside the police station")
-	_check(map.call("walkable", map.call("_image_to_world", Vector2(980, 690)), 24.0)
-		and not map.call("walkable", map.call("_image_to_world", Vector2(1026, 711)), 0.0),
-		"the southeast obstacle blocks the rubble instead of the empty asphalt")
-	for point in [Vector2(349, 700), Vector2(330, 587), Vector2(519, 710), Vector2(559, 282), Vector2(387, 600),
-		Vector2(399, 308), Vector2(352, 315), Vector2(657, 278), Vector2(1129, 611),
-		Vector2(647, 726), Vector2(664, 728), Vector2(1168, 422)]:
-		_check(not map.call("walkable", map.call("_image_to_world", point), 0.0),
-			"Jeju rooftop, lamp, roadside concrete and rubble block ground movement at %s" % point)
-	for point in [Vector2(289, 510), Vector2(740, 756), Vector2(1190, 505), Vector2(680, 245)]:
-		_check(map.call("walkable", map.call("_image_to_world", point), 13.0),
-			"clear road stays walkable at %s" % point)
-	# Drive the same movement routine players use from the road into the arena.
-	var approaches := [
-		[Vector2(735, 239), Vector2(735, 330)],
-		[Vector2(739, 762), Vector2(739, 655)],
-		[Vector2(286, 459), Vector2(375, 461)],
-		[Vector2(1191, 526), Vector2(1106, 526)],
-	]
-	for route in approaches:
-		var start_point: Vector2 = map.call("_image_to_world", route[0])
-		var target_point: Vector2 = map.call("_image_to_world", route[1])
-		game.set("player_pos", start_point)
-		game.call("_move_player", target_point - start_point)
-		_check(Vector2(game.get("player_pos")).distance_to(target_point) < 1.0,
-			"open road entry reaches the arena from %s" % route[0])
-	_check(not map.call("walkable", bounds.position + Vector2(40, 40), 13.0), "the outer landscape blocks passage")
-	game.set("player_pos", obstacle + Vector2(-120, 0))
-	game.call("_move_player", Vector2(230, 0))
-	_check(game.get("player_pos").x < obstacle.x, "a long movement cannot skip over a V2 obstacle")
-	var spawns: PackedVector2Array = map.get("spawn_points")
-	_check(spawns.size() == 8, "all eight V2 spawn candidates are loaded")
-	for spawn in spawns:
-		var entry: Vector2 = map.call("approach_point", spawn)
-		var hq: Vector2 = game.call("_hq_position")
-		_check(map.call("_segment_clear", spawn, entry, 42.0) and map.call("_segment_clear", entry, hq, 42.0),
-			"V2 spawn %s has a continuous route to HQ" % spawn)
+	_check(bounds.size == Vector2(2880, 2880), "the flat arena is exactly 60 by 60 construction-size cells")
+	game.call("_reset_run")
+	var hq: Vector2 = game.call("_hq_position")
+	var spawn_sectors := {}
+	for i in range(8):
+		var angle := float(i) * TAU / 8.0
+		var spawn: Vector2 = game.call("_land_spawn", angle, 820.0)
+		_check(map.call("walkable", spawn, 42.0), "each spawn sector lies on flat ground")
+		spawn_sectors[spawn] = true
 		game.call("_reset_run")
 		game.set("treatment_remaining", 60.0)
 		game.call("_spawn_enemy", "normal", spawn, false)
 		var mob: Array = game.get("enemies")
-		for step in range(720):
+		for step in range(520):
 			game.call("_update_enemies", 0.05)
 		_check(mob.size() == 1 and Vector2(mob[0].pos).distance_to(hq) < 100.0,
-			"a live zombie reaches HQ from %s" % spawn)
+			"a zombie can approach the HQ directly from sector %d" % i)
+	_check(spawn_sectors.size() == 8, "all eight spawn sectors are distinct")
+	for direction in [Vector2.UP, Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT]:
+		game.set("player_pos", direction * 340.0)
+		game.call("_move_player", direction * 1800.0)
+		var reached: Vector2 = game.get("player_pos")
+		_check(map.call("walkable", reached, 13.0) and reached.dot(direction) > 1400.0,
+			"the player walks freely until reaching the arena boundary")
 	for zoom in [1.0, 2.4]:
 		var center: Vector2 = map.call("camera_center", bounds.position, Vector2(1280, 720), zoom)
-		_check(center.is_equal_approx(bounds.position + Vector2(640, 360) / zoom), "camera stays inside V2 bounds at %s zoom" % zoom)
+		_check(center.is_equal_approx(bounds.position + Vector2(640, 360) / zoom), "camera stays inside arena bounds")
 	game.call("_reset_run")
 	game.set("spawn_timer", 0.0)
 	game.call("_update_spawn", 0.0)
 	var first_wave: Array = game.get("enemies")
-	var start: Vector2 = game.get("player_pos")
-	_check(first_wave.size() == 5 and first_wave.all(func(enemy): return spawns.has(enemy.pos) and start.distance_to(enemy.pos) >= 450.0),
-		"the first wave uses authored routes away from the player")
+	_check(first_wave.size() == 5 and first_wave.all(func(enemy): return Vector2(enemy.pos).distance_to(hq) >= 699.0),
+		"the first wave spawns at its authored distance")
 	game.call("_reset_run")
 	game.set("stage", 95)
 	for i in range(70):
@@ -410,11 +381,7 @@ func _test_jeju_battlefield(game: Control) -> void:
 		game.call("_update_spawn", 0.0)
 	var enemies: Array = game.get("enemies")
 	_check(enemies.size() == 1900 and enemies.all(func(enemy): return map.call("walkable", enemy.pos, 24.0)),
-		"a late wave reaches the stage 95 1900-enemy target with all enemies on land")
-	for step in range(20):
-		game.call("_update_enemies", 0.05)
-	_check(enemies.all(func(enemy): return enemy.get("air", false) or enemy.get("underground", false) or map.call("walkable", enemy.pos, 0.0)),
-		"late-wave enemies stay on land while approaching the base")
+		"the late wave reaches the 1900-enemy target with all enemies on the map")
 	for hero in range(Data.CHARACTERS.size()):
 		game.call("_choose_character", hero)
 		game.call("_choose_difficulty", 1)
