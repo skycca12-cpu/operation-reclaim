@@ -3,22 +3,20 @@ extends RefCounted
 const VERTICAL_WALK := preload("res://assets/characters/yujin/vertical_walk.png")
 const VERTICAL_FRAME := Vector2(112, 112)
 const VERTICAL_FOOT_ANCHOR := Vector2(56, 94)
+const NORTH_ATTACK := preload("res://assets/characters/yujin/north_attack.png")
+const RUN_ATLAS := preload("res://assets/reclaim/characters/operator_run.png")
+const NEW_FRAME := Vector2(128, 152)
+const NEW_ORIGIN := Vector2(-64, -86)
+const NORTH_TIPS := [Vector2(0, -68), Vector2(0, -67), Vector2(-1, -78), Vector2(0, -71)]
 const FRONT_ATTACK = preload("res://assets/characters/yujin/yujin_front_attack.png")
 const FRONT_FRAME_SIZE := Vector2(112, 132)
 const FRONT_FOOT_ANCHOR := Vector2(56, 92)
 const BACK = preload("res://assets/characters/yujin/up.png")
-const SAW = preload("res://assets/characters/yujin/weapon.png")
 const IDLE := [
 	preload("res://assets/characters/yujin/idle0.png"),
 	preload("res://assets/characters/yujin/idle1.png"),
 	preload("res://assets/characters/yujin/idle2.png"),
 	preload("res://assets/characters/yujin/idle3.png"),
-]
-const WALK := [
-	preload("res://assets/characters/yujin/walk0.png"),
-	preload("res://assets/characters/yujin/walk1.png"),
-	preload("res://assets/characters/yujin/walk2.png"),
-	preload("res://assets/characters/yujin/walk3.png"),
 ]
 const CUT := [
 	preload("res://assets/characters/yujin/cut0.png"),
@@ -39,6 +37,7 @@ const FOOT_OFFSET := 40.0
 const CUT_CYCLE := 7.0 / 13.0
 
 var _attack_left := 0.0
+var _attack_facing := Vector2.DOWN
 var _cut_clock := 0.0
 var _clock := 0.0
 var _walk_distance := 0.0
@@ -53,7 +52,8 @@ func update(delta: float, motion := Vector2.ZERO) -> void:
 	_attack_left = maxf(0.0, _attack_left - delta)
 
 
-func attack(interval: float) -> void:
+func attack(interval: float, facing: Vector2) -> void:
+	_attack_facing = facing
 	if _attack_left <= 0.0:
 		_cut_clock = 0.0
 	_attack_left = maxf(interval + 0.05, CUT_CYCLE - fposmod(_cut_clock, CUT_CYCLE))
@@ -66,12 +66,13 @@ func reset() -> void:
 	_cut_clock = 0.0
 
 
-func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, dashing: bool) -> void:
+func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector2, dashing: bool) -> void:
 	var attacking := _attack_left > 0.0
+	var running := motion.length_squared() > 36.0
+	facing = _attack_facing if attacking else motion if running else facing
 	var progress := fposmod(_cut_clock / CUT_CYCLE, 1.0) if attacking else 0.0
 	var side := absf(facing.x) > absf(facing.y)
 	var back := not side and facing.y < 0.0
-	var running := moving or dashing
 	var stride := _walk_distance / 22.0
 	var bob := -roundf(2.0 * absf(sin(stride * PI * 0.5))) if running and not attacking else 0.0
 	var center := position + Vector2(0.0, FOOT_OFFSET + bob)
@@ -92,10 +93,22 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, moving: bool, 
 		var target := center.round() - FRONT_FOOT_ANCHOR
 		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(front_frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE))
 		return
-	if back:
-		_draw_saw(canvas, center + lean, facing, progress)
-	var frames := CUT if attacking else WALK if running else IDLE
-	var frame := int(progress * frames.size()) if attacking else int(stride) % frames.size() if running else int(_clock * 4.0) % frames.size()
+	if back and attacking:
+		var north_frame := clampi(int(progress * 4.0), 0, 3)
+		canvas.draw_texture_rect_region(NORTH_ATTACK, Rect2(position.round() + NEW_ORIGIN, NEW_FRAME),
+			Rect2(Vector2(north_frame * NEW_FRAME.x, 0), NEW_FRAME))
+		if north_frame == 1 or north_frame == 2:
+			_draw_north_sparks(canvas, position + NORTH_TIPS[north_frame], progress)
+		return
+	if side and running and not attacking:
+		var flip := Vector2(-1, 1) if facing.x < 0.0 else Vector2.ONE
+		canvas.draw_set_transform(position.round(), 0.0, flip)
+		canvas.draw_texture_rect_region(RUN_ATLAS, Rect2(NEW_ORIGIN, NEW_FRAME),
+			Rect2(Vector2(int(stride) % 4, 3) * NEW_FRAME, NEW_FRAME))
+		canvas.draw_set_transform(Vector2.ZERO)
+		return
+	var frames := CUT if attacking else IDLE
+	var frame := int(progress * frames.size()) if attacking else int(_clock * 4.0) % frames.size()
 	var sprite: Texture2D = BACK if back else frames[frame]
 	var height := BACK_HEIGHT if back else SIDE_HEIGHT
 	var size := sprite.get_size() * (height / sprite.get_height())
@@ -114,10 +127,10 @@ func _front_cut_frame(progress: float) -> int:
 	return 1 + clampi(int(progress * 5.0), 0, 4)
 
 
-func _draw_saw(canvas: CanvasItem, center: Vector2, direction: Vector2, progress: float) -> void:
-	var angle := direction.angle() + deg_to_rad(27.0)
-	angle += sin(progress * TAU) * 0.14
-	var grip := Vector2(13.0, -32.0)
-	canvas.draw_set_transform((center + grip).round(), angle)
-	canvas.draw_texture_rect(SAW, Rect2(-18.0, -23.0, 66.0, 43.0), false)
-	canvas.draw_set_transform(Vector2.ZERO)
+func _draw_north_sparks(canvas: CanvasItem, tip: Vector2, progress: float) -> void:
+	for index in range(5):
+		var angle := lerpf(-0.95, 0.95, float(index) / 4.0)
+		var direction := Vector2.UP.rotated(angle)
+		var reach := 5.0 + fposmod(progress * 21.0 + float(index) * 2.3, 7.0)
+		var spark := tip + direction * reach
+		canvas.draw_line(spark, spark + direction * 3.0, Color("#ffc774"), 1.5)

@@ -4,11 +4,14 @@ const SHEET: Texture2D = preload("res://assets/reclaim/characters/harin_sheet.pn
 const FRONT_ATTACK = preload("res://assets/reclaim/characters/harin_front_recoil.png")
 const FRONT_FRAME_SIZE := Vector2(112, 112)
 const FRONT_FRAME_ORIGIN := Vector2(-56, -54)
+const NORTH_ATTACK := preload("res://assets/reclaim/characters/harin_north_recoil.png")
+const RUN_ATLAS := preload("res://assets/reclaim/characters/operator_run.png")
+const NEW_FRAME := Vector2(128, 152)
+const NEW_ORIGIN := Vector2(-64, -86)
 const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
 const STRIDE_STEP := 23.0
-const FLASH_HOLD := 0.078
-const MUZZLES := [Vector2(0, 18), Vector2(42, -1), Vector2(-35, 2), Vector2(-42, 2)]
+const MUZZLES := [Vector2(0, 18), Vector2(42, -1), Vector2(6, -42), Vector2(-42, 2)]
 const ATTACK_HOLD := 0.16
 const HURT_HOLD := 0.22
 
@@ -39,7 +42,8 @@ func trigger_attack(facing: Vector2) -> void:
 
 
 func muzzle_offset(facing: Vector2) -> Vector2:
-	return MUZZLES[_facing_row(facing)]
+	var row := _facing_row(facing)
+	return MUZZLES[row] + _side_recoil(row, 0)
 
 
 func _front_shot_frame() -> int:
@@ -47,41 +51,52 @@ func _front_shot_frame() -> int:
 	return 1 + clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 3.0), 0, 2)
 
 
-func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, moving: bool, dashing: bool, drone_level: int, reload_progress: float) -> void:
+func _side_recoil(row: int, phase: int) -> Vector2:
+	if row != 1 and row != 3:
+		return Vector2.ZERO
+	return Vector2(float(-4 + 2 * mini(phase, 2)) * (1.0 if row == 1 else -1.0), 0.0)
+
+
+func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2, dashing: bool, drone_level: int, reload_progress: float) -> void:
 	var shooting := attack_timer > 0.0
-	var row := _facing_row(shot_facing if shooting else facing)
-	var running := moving or dashing
-	var run_frame := 1 + int(walk_distance / STRIDE_STEP) % 4
-	var column := run_frame if running else 0
-	if shooting:
-		column = 5 + clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 4.0), 0, 3)
-	elif reload_progress >= 0.0:
-		column = 9 + clampi(int(reload_progress * 4.0), 0, 3)
-	var origin := center - Vector2.ONE * DRAW_SIZE * 0.5
-	var source := Rect2(Vector2(column, row) * CELL_SIZE, Vector2.ONE * CELL_SIZE)
+	var running := motion.length_squared() > 36.0
+	var display_facing := shot_facing if shooting else facing
+	if running and not shooting and reload_progress < 0.0:
+		display_facing = motion
+	var row := _facing_row(display_facing)
+	var run_frame := int(walk_distance / STRIDE_STEP) % 4
+	var phase := clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 4.0), 0, 3) if shooting else 0
 	var tint := Color(1.0, 0.72, 0.72) if hurt_timer > 0.0 else Color.WHITE
-	var front_shot := shooting and row == 0
-	if front_shot:
+	if shooting and row == 0:
 		var frame := _front_shot_frame()
-		var target := center + FRONT_FRAME_ORIGIN
-		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE), tint)
-	elif running and shooting:
-		# Keep the firing pose above the waist while the stride continues below it.
-		const SPLIT := 71.0
-		var upper := Vector2(CELL_SIZE, SPLIT)
-		var lower := Vector2(CELL_SIZE, CELL_SIZE - SPLIT)
-		canvas.draw_texture_rect_region(SHEET, Rect2(origin, upper), Rect2(source.position, upper), tint)
-		var lower_offset := Vector2(0, SPLIT)
-		canvas.draw_texture_rect_region(SHEET, Rect2(origin + lower_offset, lower), Rect2(Vector2(run_frame, row) * CELL_SIZE + lower_offset, lower), tint)
+		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(center + FRONT_FRAME_ORIGIN, FRONT_FRAME_SIZE),
+			Rect2(Vector2(frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE), tint)
+	elif shooting and row == 2:
+		var frame := _front_shot_frame()
+		canvas.draw_texture_rect_region(NORTH_ATTACK, Rect2(center + NEW_ORIGIN, NEW_FRAME),
+			Rect2(Vector2(frame * NEW_FRAME.x, 0), NEW_FRAME), tint)
+	elif running and not shooting and reload_progress < 0.0:
+		var run_row := 0 if row == 0 else 1 if row == 2 else 2
+		var flip := Vector2(-1, 1) if row == 3 else Vector2.ONE
+		canvas.draw_set_transform(center.round(), 0.0, flip)
+		canvas.draw_texture_rect_region(RUN_ATLAS, Rect2(NEW_ORIGIN, NEW_FRAME),
+			Rect2(Vector2(run_frame, run_row) * NEW_FRAME, NEW_FRAME), tint)
+		canvas.draw_set_transform(Vector2.ZERO)
 	else:
-		canvas.draw_texture_rect_region(SHEET, Rect2(origin, Vector2.ONE * DRAW_SIZE), source, tint)
-	var flash_duration := ATTACK_HOLD / 3.0 if front_shot else FLASH_HOLD
+		var column := 5 + phase if shooting else 9 + clampi(int(reload_progress * 4.0), 0, 3) if reload_progress >= 0.0 else 0
+		var origin := center - Vector2.ONE * DRAW_SIZE * 0.5
+		if shooting:
+			origin += _side_recoil(row, phase)
+		canvas.draw_texture_rect_region(SHEET, Rect2(origin, Vector2.ONE * DRAW_SIZE),
+			Rect2(Vector2(column, row) * CELL_SIZE, Vector2.ONE * CELL_SIZE), tint)
+	var vertical_shot := row == 0 or row == 2
+	var flash_duration := ATTACK_HOLD / 3.0 if vertical_shot else ATTACK_HOLD / 4.0
 	if shooting and attack_timer > ATTACK_HOLD - flash_duration:
-		var barrel: Vector2 = MUZZLES[row]
-		var flash_direction := Vector2.DOWN if front_shot else Vector2(signf(barrel.x), 0)
-		_draw_flash(canvas, center + barrel, flash_direction, flash_duration)
+		var flash_direction := [Vector2.DOWN, Vector2.RIGHT, Vector2.UP, Vector2.LEFT][row] as Vector2
+		_draw_flash(canvas, center + muzzle_offset(shot_facing), flash_direction, flash_duration)
 	if dashing:
-		canvas.draw_line(center - facing.normalized() * 27.0, center - facing.normalized() * 11.0, Color("#9dd9e6", 0.7), 2.0)
+		var dash_direction := (motion if running else facing).normalized()
+		canvas.draw_line(center - dash_direction * 27.0, center - dash_direction * 11.0, Color("#9dd9e6", 0.7), 2.0)
 	if drone_level > 0:
 		_draw_support_drone(canvas, center, drone_level)
 

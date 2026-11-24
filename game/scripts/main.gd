@@ -1714,7 +1714,7 @@ func _attack_player() -> void:
 	_mark_csv_trigger("attack")
 	var interval := _weapon_interval(hero, player_mod_rate * (_csv_factor("rate") + _recent_combat_bonus("crit_rate", "kill_rate") / 100.0))
 	if kind == "yujin":
-		_yujin_visual.attack(interval)
+		_yujin_visual.attack(interval, player_facing)
 		player_attack_timer = interval
 		var direction := player_facing.normalized()
 		var reach := _weapon_range(hero)
@@ -3508,9 +3508,9 @@ func _draw_player(p: Vector2) -> void:
 		var reload_progress := -1.0
 		if player_reload_timer > 0.0:
 			reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
-		_harin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0, player_drone_level + int(_csv_bonus("combat_drone")), reload_progress)
+		_harin_visual.draw(self, p, dir, player_motion, dash_timer > 0.0, player_drone_level + int(_csv_bonus("combat_drone")), reload_progress)
 	elif Data.CHARACTERS[player_index].id == "yujin":
-		_yujin_visual.draw(self, p, dir, player_motion.length() > 6.0, dash_timer > 0.0)
+		_yujin_visual.draw(self, p, dir, player_motion, dash_timer > 0.0)
 	else:
 		var color: Color = Data.CHARACTERS[player_index].color
 		if dash_timer > 0.0:

@@ -512,6 +512,16 @@ func _test_harin_muzzle(game: Control) -> void:
 	_check(visual.call("_front_shot_frame") == 1, "Harin starts on the compressed recoil frame at discharge")
 	visual.call("update", 0.07, Vector2.ZERO, 100.0, true)
 	_check(visual.call("_front_shot_frame") == 2, "Harin advances to the return pose")
+	for shot_origin in [
+		[Vector2.UP, Vector2(6, -42)],
+		[Vector2.LEFT, Vector2(-38, 2)],
+		[Vector2.RIGHT, Vector2(38, -1)],
+	]:
+		shots.clear()
+		game.set("player_facing", shot_origin[0])
+		game.call("_attack_player")
+		_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(shot_origin[1]) / 2.0),
+			"Harin's projectile starts at the displayed barrel for %s" % shot_origin[0])
 	game.set("camera_zoom", 1.0)
 
 
@@ -530,6 +540,9 @@ func _test_yujin(game: Control) -> void:
 	_check(float(enemies[0].hp) < front_hp and is_equal_approx(float(enemies[1].hp), back_hp),
 		"Yujin's chainsaw preserves forward-only melee damage")
 	_check(float(visual.get("_attack_left")) > 0.0, "the real melee attack starts Yujin's cutting animation")
+	game.set("player_facing", Vector2.UP)
+	game.call("_attack_player")
+	_check(visual.get("_attack_facing") == Vector2.UP, "Yujin's attack pose follows the northward cut")
 	visual.call("update", 1.0)
 	_check(is_zero_approx(float(visual.get("_attack_left"))), "Yujin returns to idle after cutting ends")
 	visual.call("update", 0.10, Vector2(0, 245))
