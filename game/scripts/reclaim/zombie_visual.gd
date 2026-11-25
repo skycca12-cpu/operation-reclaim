@@ -71,6 +71,7 @@ const CELL := 160.0
 # The 126 px standing silhouette becomes ~86 world pixels.
 const SCALE := 0.68
 const RADIUS := 21.0
+const DRAW_SCALE := 0.5
 const ATTACK_TIME := 0.6
 const ATTACK_BEATS := 8
 const IMPACT_BEAT := 4
@@ -186,7 +187,8 @@ static func _draw_jeju(canvas: CanvasItem, enemy: Dictionary, center: Vector2, n
 		tilt = motion * 0.16 * (-1.0 if facing_left else 1.0)
 		stretch = Vector2(1.0 + motion * 0.07, 1.0 - motion * 0.09)
 	elif now < float(enemy.hit_until) - HIT_TIME + RECOIL_TIME:
-		tilt = cos(float(enemy.get("hit_direction", 0.0))) * 0.12
+		var hit_direction: Vector2 = enemy.get("hit_direction", Vector2.ZERO)
+		tilt = hit_direction.x * 0.12
 		tint = tint.lerp(Color(1.0, 0.59, 0.52, tint.a), 0.32)
 	var emergence := smoothstep(0.0, 0.42, now - float(enemy.emerged_at)) if enemy.has("emerged_at") else 1.0
 	if facing_left:
@@ -262,20 +264,23 @@ static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2,
 	NormalVisual.frame(canvas, int(enemy.get("appearance", enemy.variant)), column, center, tint)
 
 
-static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float) -> void:
+static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float, camera: Transform2D) -> void:
 	if JEJU_ENEMIES.has(corpse.get("kind", "")):
 		var texture: Texture2D = JEJU_ENEMIES[corpse.kind]
 		var age := clampf((now - float(corpse.start)) / DEATH_TIME, 0.0, 1.0)
-		var extent := texture.get_size() * (82.0 * float(corpse.scale) / texture.get_height())
+		var extent := texture.get_size() * (82.0 * DRAW_SCALE * float(corpse.scale) / texture.get_height())
 		extent.y *= 1.0 - age * 0.75
-		var feet := center + Vector2(0, 30.0 * float(corpse.scale))
+		var feet := center + Vector2(0, 30.0 * DRAW_SCALE * float(corpse.scale))
 		canvas.draw_texture_rect(texture, Rect2(feet - Vector2(extent.x * 0.5, extent.y), extent), false, Color(1, 1, 1, 1.0 - age))
 		return
+	var shrink := Transform2D(0.0, Vector2.ONE * DRAW_SCALE, 0.0, center * (1.0 - DRAW_SCALE))
+	canvas.draw_set_transform_matrix(camera * shrink)
 	var frame := clampi(int((now - float(corpse.start)) * DEATH_FPS), 0, DEATH_FRAMES - 1)
 	if corpse.has("appearance"):
 		NormalVisual.frame(canvas, corpse.appearance, 6 + frame, center, Color.WHITE, corpse.row == 1)
 	else:
 		_draw_frame(canvas, corpse.variant, corpse.row, 22 + frame, center)
+	canvas.draw_set_transform_matrix(camera)
 
 
 static func _draw_frame(canvas: CanvasItem, variant: int, row: int, column: int, center: Vector2, tint := Color.WHITE) -> void:

@@ -54,7 +54,9 @@ func _side_recoil(row: int, phase: int) -> Vector2:
 	return Vector2(float(-4 + 2 * mini(phase, 2)) * (1.0 if row == 1 else -1.0), 0.0)
 
 
-func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2, dashing: bool, reload_progress: float, echo := 0.0) -> void:
+func draw(canvas: CanvasItem, screen_position: Vector2, facing: Vector2, motion: Vector2, dashing: bool, reload_progress: float, echo := 0.0, draw_scale := 1.0) -> void:
+	var center := Vector2.ZERO
+	canvas.draw_set_transform(screen_position.round(), 0.0, Vector2.ONE * draw_scale)
 	var running := motion.length_squared() > 36.0
 	var attack_row := _facing_row(shot_facing)
 	var flash_duration := ATTACK_HOLD / 3.0 if attack_row == 0 or attack_row == 2 else ATTACK_HOLD / 4.0
@@ -75,7 +77,8 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2,
 		canvas.draw_texture_rect_region(NORTH_ATTACK, Rect2(center + NEW_ORIGIN, NEW_FRAME),
 			Rect2(Vector2(frame * NEW_FRAME.x, 0), NEW_FRAME), tint)
 	elif running and not shooting:
-		OperatorRun.draw(canvas, center, "harin", motion, walk_distance, tint)
+		OperatorRun.draw(canvas, screen_position, "harin", motion, walk_distance, tint, draw_scale)
+		canvas.draw_set_transform(screen_position.round(), 0.0, Vector2.ONE * draw_scale)
 	else:
 		var column := 5 + phase if shooting else 9 + clampi(int(reload_progress * 4.0), 0, 3) if reload_progress >= 0.0 else 0
 		var origin := center - Vector2.ONE * DRAW_SIZE * 0.5
@@ -89,6 +92,7 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2,
 	if dashing:
 		var dash_direction := (motion if running else facing).normalized()
 		canvas.draw_line(center - dash_direction * 27.0, center - dash_direction * 11.0, Color("#9dd9e6", 0.7), 2.0)
+	canvas.draw_set_transform(Vector2.ZERO)
 
 
 

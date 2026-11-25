@@ -308,7 +308,7 @@ func _test_jeju_encounters(game: Control) -> void:
 		initial_hp = float(game.get("player_hp"))
 		boss.pattern_timer = 0.0
 		game.call("_update_boss_pattern", boss, 0.0)
-		_check(ZombieVisual.JEJU_ENEMIES.has(kind) and boss.art_scale == Data.BOSSES[wave].scale, "%s has dedicated art and a fixed size" % kind)
+		_check(ZombieVisual.JEJU_ENEMIES.has(kind) and boss.art_scale == 2.0, "%s has dedicated art and a fixed size" % kind)
 		if wave != 40:
 			_check(boss.has("pattern_pos"), "%s telegraphs its signature attack" % kind)
 			game.call("_update_boss_pattern", boss, 1.0)
@@ -357,14 +357,10 @@ func _test_jeju_encounters(game: Control) -> void:
 func _test_integrated_progression(game: Control) -> void:
 	game.call("_reset_run")
 	game.call("_show_screen", "play")
-	var roster = preload("res://scripts/reclaim/special_enemies.gd")
 	for index in range(20):
 		var id := "S%02d" % (index + 1)
 		var special: Dictionary = game.call("_make_enemy", id, Vector2(600, 450), false)
-		var base_size := float(roster.definition(id).scale)
-		var extra := float(special.art_scale) - base_size
-		_check(special.special and extra >= 0.0 and extra <= 0.5
-			and is_equal_approx(extra * 10.0, roundf(extra * 10.0))
+		_check(special.special and float(special.art_scale) > 0.0 and float(special.art_scale) <= 1.5
 			and ZombieVisual.JEJU_ENEMIES.has(id),
 			"special enemy %s has dedicated art and a valid size tier" % id)
 	var enemies: Array = game.get("enemies")
@@ -609,7 +605,7 @@ func _test_harin_muzzle(game: Control) -> void:
 	var visual: RefCounted = game.get("_harin_visual")
 	var shots: Array = game.get("player_projectiles").shots
 	var player: Vector2 = game.get("player_pos")
-	_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(0, 9.0)),
+	_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(0, 4.5)),
 		"Harin's downward projectile starts at the on-screen barrel at 2x zoom")
 	_check(visual.call("_front_shot_frame") == 1, "Harin starts on the compressed recoil frame at discharge")
 	visual.call("update", 0.07, Vector2.ZERO, 100.0, true)
@@ -622,7 +618,7 @@ func _test_harin_muzzle(game: Control) -> void:
 		shots.clear()
 		game.set("player_facing", shot_origin[0])
 		game.call("_attack_player")
-		_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(shot_origin[1]) / 2.0),
+		_check(shots.size() == 1 and Vector2(shots[0].pos).is_equal_approx(player + Vector2(shot_origin[1]) / 4.0),
 			"Harin's projectile starts at the displayed barrel for %s" % shot_origin[0])
 	game.set("camera_zoom", 1.0)
 

@@ -18,10 +18,10 @@ static func frame_cell(hero: String, motion: Vector2, distance: float) -> Vector
 
 
 static func draw(canvas: CanvasItem, center: Vector2, hero: String, motion: Vector2,
-		distance: float, tint: Color) -> void:
+		distance: float, tint: Color, draw_scale := 1.0) -> void:
 	var cell := frame_cell(hero, motion, distance)
 	var flip := Vector2(-1, 1) if absf(motion.x) > absf(motion.y) and motion.x < 0.0 else Vector2.ONE
-	canvas.draw_set_transform(center.round(), 0.0, flip)
+	canvas.draw_set_transform(center.round(), 0.0, flip * draw_scale)
 	canvas.draw_texture_rect_region(ATLAS, Rect2(ORIGIN, FRAME),
 		Rect2(Vector2(cell) * FRAME, FRAME), tint)
 	canvas.draw_set_transform(Vector2.ZERO)

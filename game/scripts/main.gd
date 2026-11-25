@@ -41,6 +41,7 @@ const PLAYER_START := Vector2(180.0, 112.0)
 const SAVE_PATH := "user://reclaim_save.json"
 const CELL := FlatArena.CELL
 const PLAYER_RADIUS := 13.0
+const PLAYER_DRAW_SCALE := 0.5
 const ENEMY_SHOT_RADIUS := 7.0
 const GRID_SIZE := 11
 const GRID_MIN := -2
@@ -1219,8 +1220,6 @@ func _load_saved_run() -> void:
 		if enemy.has("variant") and saved_variant >= 0 and saved_variant < ZombieVisual.SHEETS.size():
 			enemy.variant = saved_variant
 			enemy.appearance = clampi(int(entry.get("appearance", saved_variant)), 0, 49)
-		if entry.has("art_scale") and not enemy.boss:
-			enemy.art_scale = float(entry.art_scale)
 		if enemy.kind == "S10":
 			enemy.underground = bool(entry.get("underground", true))
 			if enemy.underground and entry.has("burrow_warning"):
@@ -1967,10 +1966,10 @@ func _attack_player() -> void:
 	var tracer_offset := Vector2.ZERO
 	if kind == "harin":
 		_harin_visual.trigger_attack(player_facing)
-		muzzle += _harin_visual.muzzle_offset(player_facing) / _view_zoom()
+		muzzle += _harin_visual.muzzle_offset(player_facing) * PLAYER_DRAW_SCALE / _view_zoom()
 	else:
 		_infantry_visual.attack(player_facing)
-		tracer_offset = _infantry_visual.muzzle(kind, player_facing) / _view_zoom()
+		tracer_offset = _infantry_visual.muzzle(kind, player_facing) * PLAYER_DRAW_SCALE / _view_zoom()
 	if sound_on:
 		AudioDirector.play_cue("player.shotgun" if kind == "tae" else "player.m4", 1.08 if kind == "si" else 1.0)
 	player_attack_timer = interval
@@ -2061,7 +2060,7 @@ func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
 	if kind == "normal" or kind == "small" or not special.is_empty() or is_boss:
 		enemy.appearance = 0 if is_boss else _random.randi_range(0, 49) if special.is_empty() else _random.randi_range(0, 3)
 		enemy.variant = int(enemy.appearance) % ZombieVisual.SHEETS.size()
-		enemy.art_scale = float(data.get("scale", 1.0)) if is_boss else 0.55 if kind == "small" else float(special.get("scale", 1.0)) + (_random.randi_range(0, 5) * 0.1 if not special.is_empty() else 0.0)
+		enemy.art_scale = float(data.get("scale", 1.0)) if is_boss else 0.55 if kind == "small" else minf(float(special.get("scale", 1.0)), 1.5)
 		enemy.special = not special.is_empty()
 		enemy.air = SpecialEnemies.airborne(kind)
 		enemy.ability = float(special.get("period", 0.0))
@@ -3543,8 +3542,6 @@ func _save_all() -> void:
 		var enemy_rows: Array[Dictionary] = []
 		for e in enemies:
 			var row := {"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))}
-			if e.has("art_scale"):
-				row.art_scale = e.art_scale
 			if e.kind == "S10":
 				row.underground = e.underground
 				if e.has("burrow_warning"):
@@ -3751,12 +3748,12 @@ func _draw_world_depth(camera: Transform2D) -> void:
 		if enemy.has("pattern_pos") or _zombie_on_screen(_world_to_screen(enemy.pos), 240.0 if enemy.boss else 100.0):
 			layers.append([enemy.pos.y + 40.0, 3, enemy])
 	if treatment_remaining <= 0.0 and (screen != "landing" or landing.player_visible()):
-		layers.append([player_pos.y + 40.0 / _view_zoom(), 4, {}])
+		layers.append([player_pos.y + 40.0 * PLAYER_DRAW_SCALE / _view_zoom(), 4, {}])
 	layers.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
 	for item in layers:
 		match item[1]:
 			1: _draw_structure(item[2], camera)
-			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds)
+			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds, camera)
 			3: _draw_enemy(item[2], camera)
 			4:
 				# Draw at the camera focus point in screen pixels, then restore the world transform.
@@ -3901,7 +3898,7 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		draw_arc(target, 19.0, 0.0, TAU, 20, Color(enemy.color, 0.86), 2.0)
 	if float(enemy.get("guard_until", 0.0)) > run_seconds:
 		draw_arc(p, 57.0, 0.0, TAU, 36, Color("#b5bbc5"), 3.0)
-	var radius := PlayerProjectiles.enemy_radius(enemy)
+	var radius := PlayerProjectiles.enemy_radius(enemy) * ZombieVisual.DRAW_SCALE
 	if enemy.has("variant"):
 		if not _zombie_on_screen(p, 240.0 if boss else 100.0): return
 		if enemy.get("underground", false):
@@ -3909,7 +3906,7 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 				var progress := 1.0 - float(enemy.burrow_warning) / AMBUSH_WARNING
 				BurrowVisual.ground(self, p, AMBUSH_RADIUS, progress, 0.0, run_seconds)
 			return
-		var art_scale := float(enemy.get("art_scale", 1.0))
+		var art_scale := ZombieVisual.DRAW_SCALE * float(enemy.get("art_scale", 1.0))
 		var lift := -30.0 if enemy.get("air", false) else 0.0
 		var transform := Transform2D(0.0, Vector2.ONE * art_scale, 0.0, p * (1.0 - art_scale) + Vector2(0, lift))
 		var visual_camera := camera * transform
@@ -3939,8 +3936,8 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		_draw_enemy_elements(enemy, p + Vector2(0, lift), frozen)
 		if float(enemy.hp) < float(enemy.max_hp):
 			var ratio := clampf(float(enemy.hp) / float(enemy.max_hp), 0.0, 1.0)
-			draw_rect(Rect2(p.x - 12, p.y - 47.0 * float(enemy.get("art_scale", 1.0)) + lift, 24, 3), Color(0, 0, 0, 0.65))
-			draw_rect(Rect2(p.x - 12, p.y - 47.0 * float(enemy.get("art_scale", 1.0)) + lift, 24 * ratio, 3), PALETTE.green)
+			draw_rect(Rect2(p.x - 12, p.y - 47.0 * art_scale + lift, 24, 3), Color(0, 0, 0, 0.65))
+			draw_rect(Rect2(p.x - 12, p.y - 47.0 * art_scale + lift, 24 * ratio, 3), PALETTE.green)
 		return
 	if String(enemy.kind) == "bomber" and float(enemy.get("charge", 0)) > 0.0:
 		var pulse := 56.0 - 28.0 * maxf(0.0, float(enemy.charge)) / 0.72
@@ -4047,12 +4044,12 @@ func _draw_player(p: Vector2) -> void:
 		if opacity > 0.0:
 			var direction: Vector2 = sample.direction
 			if sample.get("shield", false):
-				_infantry_visual.draw_shield_charge(self, point, direction, Color(0.55, 0.86, 0.96, opacity))
+				_infantry_visual.draw_shield_charge(self, point, direction, Color(0.55, 0.86, 0.96, opacity), PLAYER_DRAW_SCALE)
 			else:
 				_draw_operator_sprite(point, direction, direction * 225.0, false, opacity)
 	var dir := player_facing.normalized()
 	if shield_dash and dash_timer > 0.0:
-		_infantry_visual.draw_shield_charge(self, p, dash_direction, Color.WHITE)
+		_infantry_visual.draw_shield_charge(self, p, dash_direction, Color.WHITE, PLAYER_DRAW_SCALE)
 	else:
 		_draw_operator_sprite(p, dir, player_motion, dash_timer > 0.0)
 	if screen == "play" and manual_attack and not build_mode:
@@ -4069,11 +4066,11 @@ func _draw_operator_sprite(p: Vector2, dir: Vector2, motion: Vector2, dashing: b
 			var reload_progress := -1.0
 			if player_reload_timer > 0.0 and echo == 0.0:
 				reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
-			_harin_visual.draw(self, p, dir, motion, dashing, reload_progress, echo)
+			_harin_visual.draw(self, p, dir, motion, dashing, reload_progress, echo, PLAYER_DRAW_SCALE)
 		"yujin":
-			_yujin_visual.draw(self, p, dir, motion, dashing, echo, _weapon_elements() if echo == 0.0 else 0, run_seconds)
+			_yujin_visual.draw(self, p, dir, motion, dashing, echo, _weapon_elements() if echo == 0.0 else 0, run_seconds, PLAYER_DRAW_SCALE)
 		_:
-			_infantry_visual.draw(self, p, kind, dir, motion, dashing, echo)
+			_infantry_visual.draw(self, p, kind, dir, motion, dashing, echo, PLAYER_DRAW_SCALE)
 
 
 func _draw_cross(center: Vector2, radius: float, color: Color) -> void:

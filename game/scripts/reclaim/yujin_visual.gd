@@ -69,7 +69,10 @@ func reset() -> void:
 	_cut_clock = 0.0
 
 
-func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector2, dashing: bool, echo := 0.0, element_mask := 0, time := 0.0) -> void:
+func draw(canvas: CanvasItem, screen_position: Vector2, facing: Vector2, motion: Vector2, dashing: bool, echo := 0.0, element_mask := 0, time := 0.0, draw_scale := 1.0) -> void:
+	var position := Vector2.ZERO
+	var base := Transform2D(0.0, Vector2.ONE * draw_scale, 0.0, screen_position.round())
+	canvas.draw_set_transform_matrix(base)
 	var running := motion.length_squared() > 36.0
 	var attacking := echo == 0.0 and _attack_left > 0.0 and (not running or _attack_pose_left > 0.0)
 	facing = _attack_facing if attacking else motion if running else facing
@@ -81,12 +84,12 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 	var lean := facing * (sin(progress * PI) * 4.0) if attacking else Vector2.ZERO
 	if dashing:
 		canvas.draw_circle(position, 24.0, Color("#739de33b"))
-	canvas.draw_set_transform(position + Vector2(0.0, FOOT_OFFSET - 2.0), 0.0, Vector2(1.0, 0.35))
+	canvas.draw_set_transform_matrix(base * Transform2D(0.0, Vector2(1.0, 0.35), 0.0, Vector2(0, FOOT_OFFSET - 2.0)))
 	if echo == 0.0:
 		canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
-	canvas.draw_set_transform(Vector2.ZERO)
+	canvas.draw_set_transform_matrix(base)
 	if running and not attacking:
-		OperatorRun.draw(canvas, position, "yujin", motion, _walk_distance, tint)
+		OperatorRun.draw(canvas, screen_position, "yujin", motion, _walk_distance, tint, draw_scale)
 		return
 	if not side and not back:
 		var front_frame := _front_cut_frame(progress) if attacking else 0
@@ -94,6 +97,7 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(front_frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE), tint)
 		if attacking and element_mask != 0:
 			_draw_element(canvas, position + Vector2(0, 53), Vector2.DOWN, element_mask, time)
+		canvas.draw_set_transform(Vector2.ZERO)
 		return
 	if back and attacking:
 		var north_frame := clampi(int(progress * 4.0), 0, 3)
@@ -103,6 +107,7 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 			_draw_element(canvas, position + NORTH_TIPS[north_frame], Vector2.UP, element_mask, time)
 		if north_frame == 1 or north_frame == 2:
 			_draw_north_sparks(canvas, position + NORTH_TIPS[north_frame], progress)
+		canvas.draw_set_transform(Vector2.ZERO)
 		return
 	var frames := CUT if attacking else IDLE
 	var frame := int(progress * frames.size()) if attacking else int(_clock * 4.0) % frames.size()
@@ -110,13 +115,14 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 	var height := BACK_HEIGHT if back else SIDE_HEIGHT
 	var size := sprite.get_size() * (height / sprite.get_height())
 	var sprite_scale := Vector2(-1, 1) if side and facing.x < 0.0 else Vector2.ONE
-	canvas.draw_set_transform((center + lean).round(), 0.0, sprite_scale)
+	canvas.draw_set_transform_matrix(base * Transform2D(0.0, sprite_scale, 0.0, (center + lean).round()))
 	var anchor_x := size.x * 0.33 if side else size.x * 0.5
 	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false, tint)
-	canvas.draw_set_transform(Vector2.ZERO)
+	canvas.draw_set_transform_matrix(base)
 	if attacking and element_mask != 0:
 		var edge := Vector2(signf(facing.x) * 46.0, 13.0)
 		_draw_element(canvas, position + lean + edge, facing.normalized(), element_mask, time)
+	canvas.draw_set_transform(Vector2.ZERO)
 
 
 func _draw_element(canvas: CanvasItem, tip: Vector2, direction: Vector2, mask: int, time: float) -> void:
