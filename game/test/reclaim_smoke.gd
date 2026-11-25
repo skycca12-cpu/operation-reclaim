@@ -180,12 +180,14 @@ func _run() -> void:
 	pursuer.cool = 0.0
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
-	_check(game.get("player_hp") == health_before, "the raise phase does not inflict damage")
+	_check(game.get("player_hp") == health_before, "the wind-up phase does not inflict damage")
+	_check(not pursuer.attack_is_bite, "the first normal zombie strike is a claw attack")
 	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(game.get("player_hp") < health_before and pursuer.attack_until > game.get("run_seconds") and pursuer.attack_direction.is_equal_approx(Vector2.LEFT), "normal zombie damages the player and starts its attack animation")
 	var saved_player_pos: Vector2 = game.get("player_pos")
 	pursuer.cool = 0.0
 	game.call("_update_enemies", 0.01)
+	_check(pursuer.attack_is_bite, "the next normal zombie strike is a bite")
 	var before_dodge: float = game.get("player_hp")
 	game.set("player_pos", saved_player_pos + Vector2(-80.0, 0.0))
 	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
@@ -258,21 +260,113 @@ func _run() -> void:
 	_test_jeju_battlefield(resumed)
 	_test_repair_drone(resumed)
 	_test_integrated_progression(resumed)
+	_test_jeju_encounters(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_jeju_encounters(game: Control) -> void:
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	var enemies: Array = game.get("enemies")
+	var hq: Vector2 = game.call("_hq_position")
+	var start := hq + Vector2(200.0, 0.0)
+	game.call("_spawn_enemy", "S11", start, false)
+	var siege: Dictionary = enemies[0]
+	_check(siege.name == "공성형" and not siege.get("underground", false), "stage 46 specialist is a targetable siege enemy")
+	game.set("player_pos", hq + Vector2(0.0, 500.0))
+	game.call("_update_enemies", 0.1)
+	_check(siege.pos.distance_to(hq) < start.distance_to(hq), "siege enemy approaches the base along the ground")
+	var structures_before: Array = game.get("structures")
+	var hp_before: float = structures_before[0].hp
+	siege.pos = hq + Vector2(55.0, 0.0)
+	siege.cool = 0.0
+	game.call("_strike_structure", siege, 0)
+	game.call("_resolve_normal_strike", siege, 0.4)
+	_check(is_equal_approx(hp_before - float(structures_before[0].hp), float(siege.attack) * 3.0), "siege hit applies triple structure damage")
+	game.call("_save_all")
+	var saved: Dictionary = game.get("saved_run")
+	saved.enemies[0].hole = {"open": true}
+	game.call("_load_saved_run")
+	_check(enemies.size() == 1 and enemies[0].name == "공성형" and not enemies[0].get("underground", false),
+		"legacy worm saves restore the siege replacement on the surface")
+	var initial_hp: float
+
+	for wave in [20, 40, 60, 80, 100]:
+		game.call("_reset_run")
+		game.call("_show_screen", "play")
+		var kind := "boss%d" % wave
+		game.set("stage", wave)
+		game.set("player_pos", hq + Vector2(210.0, 0.0))
+		game.call("_spawn_enemy", kind, hq + Vector2(240.0, 0.0), true)
+		game.call("_spawn_enemy", "normal", hq + Vector2(215.0, 35.0), false)
+		var boss: Dictionary = enemies[0]
+		var ally: Dictionary = enemies[1]
+		var structures: Array = game.get("structures")
+		var hq_hp: float = structures[0].hp
+		initial_hp = float(game.get("player_hp"))
+		boss.pattern_timer = 0.0
+		game.call("_update_boss_pattern", boss, 0.0)
+		_check(ZombieVisual.JEJU_ENEMIES.has(kind) and boss.art_scale == Data.BOSSES[wave].scale, "%s has dedicated art and a fixed size" % kind)
+		if wave != 40:
+			_check(boss.has("pattern_pos"), "%s telegraphs its signature attack" % kind)
+			game.call("_update_boss_pattern", boss, 1.0)
+		match wave:
+			20:
+				_check(ally.get("rage_until", 0.0) > game.get("run_seconds") and enemies.size() == 2, "commander buffs nearby zombies")
+			40:
+				var hp: float = boss.hp
+				game.call("_damage_enemy", 0, 100.0, "test")
+				_check(is_equal_approx(hp - float(boss.hp), 40.0), "armored boss reduces incoming damage while guarding")
+			60:
+				_check(game.get("player_hp") < initial_hp and enemies.size() == 2, "guardian's impact damages the player")
+			80:
+				_check(structures[0].hp < hq_hp, "demolisher's impact damages the headquarters")
+			100:
+				_check(enemies.size() == 5, "hive ruler summons three reinforcements")
+
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.set("player_pos", hq + Vector2(205.0, 0.0))
+	game.call("_spawn_enemy", "S05", hq + Vector2(240.0, 0.0), false)
+	var bomber: Dictionary = enemies[0]
+	game.call("_update_special", bomber, 0, 0.2)
+	_check(float(bomber.charge) > 0.0, "explosive special starts its fuse in range")
+	game.set("player_pos", hq + Vector2(400.0, 0.0))
+	initial_hp = float(game.get("player_hp"))
+	game.call("_update_special", bomber, 0, 0.6)
+	_check(enemies.is_empty() and game.get("player_hp") == initial_hp, "armed bomber detonates while a player who leaves the warning area avoids damage")
+
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.call("_spawn_enemy", "S10", hq + Vector2(240.0, 0.0), false)
+	var ambusher: Dictionary = enemies[0]
+	ambusher.ability_cool = 0.0
+	game.call("_update_special", ambusher, 0, 0.01)
+	_check(ambusher.underground and ambusher.has("burrow_warning"), "ambush starts with a ground warning")
+	game.call("_update_special", ambusher, 0, 0.90)
+	var particles: Array = game.get("effects")
+	_check(not ambusher.underground and particles.any(func(effect): return effect.has("burrow_debris")), "ambusher emerges with debris after the warning")
+	_check(ZombieVisual.injury_tier(66.0, 100.0) == 0 and ZombieVisual.injury_tier(65.0, 100.0) == 1
+		and ZombieVisual.injury_tier(31.0, 100.0) == 1 and ZombieVisual.injury_tier(30.0, 100.0) == 2,
+		"enemy damage frames switch at 65 and 30 percent health")
+	_check(ZombieVisual.JEJU_MOTION.size() == 25, "all 20 special enemies and 5 bosses have motion atlases")
 
 
 func _test_integrated_progression(game: Control) -> void:
 	game.call("_reset_run")
 	game.call("_show_screen", "play")
 	var roster = preload("res://scripts/reclaim/special_enemies.gd")
-	var sizes := [2.0, 2.5, 3.0, 3.0, 2.0, 2.5, 2.5, 3.0, 2.5, 2.0, 3.0, 2.0, 2.0, 0.5, 2.5, 2.0, 2.0, 3.0, 2.5, 3.0]
 	for index in range(20):
 		var id := "S%02d" % (index + 1)
 		var special: Dictionary = game.call("_make_enemy", id, Vector2(600, 450), false)
-		_check(special.special and special.art_scale == sizes[index] and roster.TYPES.has(id),
-			"special enemy %s uses its configured silhouette and state" % id)
+		var base_size := float(roster.definition(id).scale)
+		var extra := float(special.art_scale) - base_size
+		_check(special.special and extra >= 0.0 and extra <= 0.5
+			and is_equal_approx(extra * 10.0, roundf(extra * 10.0))
+			and ZombieVisual.JEJU_ENEMIES.has(id),
+			"special enemy %s has dedicated art and a valid size tier" % id)
 	var enemies: Array = game.get("enemies")
 	var milestones := [20, 40, 60, 80, 100]
 	game.set("augments_taken", 100)
@@ -373,7 +467,7 @@ func _test_jeju_battlefield(game: Control) -> void:
 		var reached: Vector2 = game.get("player_pos")
 		_check(map.call("walkable", reached, 13.0) and reached.dot(direction) > 1400.0,
 			"the player walks freely until reaching the arena boundary")
-	for zoom in [1.0, 2.4]:
+	for zoom in [0.65, 1.0, 2.4]:
 		var center: Vector2 = map.call("camera_center", bounds.position, Vector2(1280, 720), zoom)
 		_check(center.is_equal_approx(bounds.position + Vector2(640, 360) / zoom), "camera stays inside arena bounds")
 	game.call("_reset_run")
@@ -572,13 +666,17 @@ func _test_yujin(game: Control) -> void:
 	_check(visual.get("_attack_facing") == Vector2.UP, "Yujin's attack pose follows the northward cut")
 	visual.call("update", 1.0)
 	_check(is_zero_approx(float(visual.get("_attack_left"))), "Yujin returns to idle after cutting ends")
-	visual.call("update", 0.10, Vector2(0, 245))
-	_check(visual.call("_vertical_walk_cell", false) == Vector2i(1, 0)
-		and visual.call("_vertical_walk_cell", true) == Vector2i(1, 1),
-		"Yujin selects distinct front and back walking rows")
-	visual.call("update", 0.18, Vector2(0, 245))
-	_check(visual.call("_vertical_walk_cell", false) == Vector2i(3, 0),
-		"Yujin's walking stride advances to the opposite boot pose")
+	var run = preload("res://scripts/reclaim/operator_run.gd")
+	for hero in ["harin", "yujin", "tae", "si"]:
+		var start: Vector2i = run.frame_cell(hero, Vector2.DOWN, 0.0)
+		_check(run.frame_cell(hero, Vector2.UP, 0.0).y == start.y + 1
+			and run.frame_cell(hero, Vector2.RIGHT, 0.0).y == start.y + 2,
+			"%s selects separate front, back and side run art" % hero)
+		var phases := PackedInt32Array()
+		for step in range(5):
+			phases.append(run.frame_cell(hero, Vector2.DOWN, step * run.STEP_DISTANCE).x)
+		_check(phases == PackedInt32Array([0, 1, 2, 3, 0]),
+			"%s advances through both contacts and both passing poses" % hero)
 
 
 func _test_operator_hud(game: Control) -> void:
@@ -670,6 +768,7 @@ func _test_structure_targets(game: Node) -> void:
 	var health_before: float = game.get("player_hp")
 	game.call("_update_enemies", 0.1)
 	_check(wall.hp == 100.0, "wall is not damaged before the impact pose")
+	_check(not attacker.attack_is_bite, "a normal zombie claws a structure")
 	game.call("_update_enemies", ZombieVisual.IMPACT_TIME)
 	_check(attacker.target == "wall" and wall.hp < 100.0 and game.get("player_hp") == health_before, "a nearby wall takes priority over an in-reach player")
 	var waiting_position: Vector2 = attacker.pos
@@ -717,7 +816,11 @@ func _test_combat_zoom_and_augments(game: Control) -> void:
 	wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
 	for i in range(12):
 		root.push_input(wheel.duplicate(), true)
-	_check(is_equal_approx(game.get("camera_zoom"), 1.0), "mouse wheel returns to the original view")
+	_check(is_equal_approx(game.get("camera_zoom"), 0.65), "mouse wheel reaches the wider view at 0.65x")
+	camera_point = game.size * 0.5 + Vector2(48.0 * 0.65, 0.0)
+	world_point = game.call("_screen_to_world", camera_point)
+	_check(world_point.is_equal_approx(game.get("player_pos") + Vector2(48.0, 0.0)), "wide-view clicks retain one-tile world accuracy")
+	game.set("camera_zoom", 1.0)
 	game.call("_offer_augments")
 	var row := (game.get("augment_screen") as Control).find_child("AugmentCards", true, false) as HBoxContainer
 	_check(row.get_child_count() == 3 and row.get_combined_minimum_size().x <= 600.0 and row.get_combined_minimum_size().x >= 560.0, "the three augment cards are enlarged but fit within a compact row")
@@ -763,7 +866,7 @@ func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
 
 func _test_operator_skills(game: Control) -> void:
 	for cue in ["player.shotgun", "player.m4", "player.chainsaw", "player.chainsaw_rev", "enemy.low",
-			"enemy.high", "enemy.elderly", "enemy.boss_arrival"]:
+			"enemy.high", "enemy.elderly", "enemy.boss_arrival", "player.shield_impact"]:
 		_check(game.get_node("/root/AudioDirector").play_cue(cue), "imported combat cue is loaded: %s" % cue)
 	game.set("player_index", 0)
 	game.call("_reset_run")
@@ -777,6 +880,11 @@ func _test_operator_skills(game: Control) -> void:
 	_check(zombie.hp == 555.0 and game.get("shield_targets").size() == 1,
 		"shield charge follows actual movement and strikes once per zombie")
 	_check(game.get("skill_ready_at") == 12.0, "shield charge starts its own cooldown")
+	var hit_position: Vector2 = zombie.pos
+	_check(zombie.down_until > 0.0 and zombie.knock_left > 0.0, "shield contact knocks the zombie down")
+	game.call("_update_enemies", 0.1)
+	_check(Vector2(zombie.pos).x > hit_position.x and not zombie.moving, "knockdown pushes the zombie and prevents it attacking")
+	_test_element_statuses(game)
 
 	game.set("player_index", 1)
 	game.call("_reset_run")
@@ -818,6 +926,26 @@ func _test_operator_skills(game: Control) -> void:
 	_check(game.get("saw_cut_audio_at") > 0.0 and target.pos == target_position,
 		"the saw triggers its cutting cue on contact without moving the zombie")
 	_check(structures.back().hp == 66.0, "the fifth saw kill repairs the nearest damaged non-HQ structure")
+
+
+func _test_element_statuses(game: Control) -> void:
+	var enemies: Array = game.get("enemies")
+	enemies.clear()
+	game.set("run_seconds", 0.0)
+	var point: Vector2 = game.get("player_pos") + Vector2(88, 0)
+	var enemy := _spawn_test_zombie(game, point, 50.0)
+	game.call("_apply_status", enemy, "burn", 2.0, 3.0)
+	game.call("_apply_status", enemy, "poison", 2.0, 4.0)
+	game.call("_apply_cold", enemy, true)
+	game.set("run_seconds", 0.46)
+	game.call("_update_enemies", 0.1)
+	_check(enemy.hp == 43.0 and enemy.pos == point, "burn and poison tick while cold stops movement with no extra tick damage")
+	var effects: Array = game.get("effects")
+	_check(effects.any(func(effect): return effect.get("dot_text", "") == "3" and effect.color.r > effect.color.g)
+		and effects.any(func(effect): return effect.get("dot_text", "") == "4" and effect.color.g > effect.color.r),
+		"burn and poison report actual damage in distinct colors")
+	game.call("_damage_enemy", 0, 60.0, "player")
+	_check(effects.any(func(effect): return effect.get("ice_shatter", false)), "a killed frozen zombie shatters")
 
 
 func _test_dash_echoes(game: Control) -> void:

@@ -1,10 +1,9 @@
 extends RefCounted
 
-const VERTICAL_WALK := preload("res://assets/characters/yujin/vertical_walk.png")
-const VERTICAL_FRAME := Vector2(112, 112)
-const VERTICAL_FOOT_ANCHOR := Vector2(56, 94)
+const Elements = preload("res://scripts/reclaim/element_visual.gd")
+
 const NORTH_ATTACK := preload("res://assets/characters/yujin/north_attack.png")
-const RUN_ATLAS := preload("res://assets/reclaim/characters/operator_run.png")
+const OperatorRun = preload("res://scripts/reclaim/operator_run.gd")
 const NEW_FRAME := Vector2(128, 152)
 const NEW_ORIGIN := Vector2(-64, -86)
 const NORTH_TIPS := [Vector2(0, -68), Vector2(0, -67), Vector2(-1, -78), Vector2(0, -71)]
@@ -70,7 +69,7 @@ func reset() -> void:
 	_cut_clock = 0.0
 
 
-func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector2, dashing: bool, echo := 0.0) -> void:
+func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector2, dashing: bool, echo := 0.0, element_mask := 0, time := 0.0) -> void:
 	var running := motion.length_squared() > 36.0
 	var attacking := echo == 0.0 and _attack_left > 0.0 and (not running or _attack_pose_left > 0.0)
 	facing = _attack_facing if attacking else motion if running else facing
@@ -78,9 +77,7 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 	var progress := fposmod(_cut_clock / CUT_CYCLE, 1.0) if attacking else 0.0
 	var side := absf(facing.x) > absf(facing.y)
 	var back := not side and facing.y < 0.0
-	var stride := _walk_distance / 22.0
-	var bob := -roundf(2.0 * absf(sin(stride * PI * 0.5))) if running and not attacking else 0.0
-	var center := position + Vector2(0.0, FOOT_OFFSET + bob)
+	var center := position + Vector2(0.0, FOOT_OFFSET)
 	var lean := facing * (sin(progress * PI) * 4.0) if attacking else Vector2.ZERO
 	if dashing:
 		canvas.draw_circle(position, 24.0, Color("#739de33b"))
@@ -88,30 +85,24 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 	if echo == 0.0:
 		canvas.draw_circle(Vector2.ZERO, 16.0, Color("#00000062"))
 	canvas.draw_set_transform(Vector2.ZERO)
-	if not side and running and not attacking:
-		var frame := _vertical_walk_cell(back)
-		var target := (position + Vector2(0.0, FOOT_OFFSET)).round() - VERTICAL_FOOT_ANCHOR
-		canvas.draw_texture_rect_region(VERTICAL_WALK, Rect2(target, VERTICAL_FRAME),
-			Rect2(Vector2(frame) * VERTICAL_FRAME, VERTICAL_FRAME), tint)
+	if running and not attacking:
+		OperatorRun.draw(canvas, position, "yujin", motion, _walk_distance, tint)
 		return
 	if not side and not back:
 		var front_frame := _front_cut_frame(progress) if attacking else 0
 		var target := center.round() - FRONT_FOOT_ANCHOR
 		canvas.draw_texture_rect_region(FRONT_ATTACK, Rect2(target, FRONT_FRAME_SIZE), Rect2(Vector2(front_frame * FRONT_FRAME_SIZE.x, 0), FRONT_FRAME_SIZE), tint)
+		if attacking and element_mask != 0:
+			_draw_element(canvas, position + Vector2(0, 53), Vector2.DOWN, element_mask, time)
 		return
 	if back and attacking:
 		var north_frame := clampi(int(progress * 4.0), 0, 3)
 		canvas.draw_texture_rect_region(NORTH_ATTACK, Rect2(position.round() + NEW_ORIGIN, NEW_FRAME),
 			Rect2(Vector2(north_frame * NEW_FRAME.x, 0), NEW_FRAME), tint)
+		if element_mask != 0:
+			_draw_element(canvas, position + NORTH_TIPS[north_frame], Vector2.UP, element_mask, time)
 		if north_frame == 1 or north_frame == 2:
 			_draw_north_sparks(canvas, position + NORTH_TIPS[north_frame], progress)
-		return
-	if side and running and not attacking:
-		var flip := Vector2(-1, 1) if facing.x < 0.0 else Vector2.ONE
-		canvas.draw_set_transform(position.round(), 0.0, flip)
-		canvas.draw_texture_rect_region(RUN_ATLAS, Rect2(NEW_ORIGIN, NEW_FRAME),
-			Rect2(Vector2(int(stride) % 4, 3) * NEW_FRAME, NEW_FRAME), tint)
-		canvas.draw_set_transform(Vector2.ZERO)
 		return
 	var frames := CUT if attacking else IDLE
 	var frame := int(progress * frames.size()) if attacking else int(_clock * 4.0) % frames.size()
@@ -123,10 +114,13 @@ func draw(canvas: CanvasItem, position: Vector2, facing: Vector2, motion: Vector
 	var anchor_x := size.x * 0.33 if side else size.x * 0.5
 	canvas.draw_texture_rect(sprite, Rect2(Vector2(-anchor_x, -size.y), size), false, tint)
 	canvas.draw_set_transform(Vector2.ZERO)
+	if attacking and element_mask != 0:
+		var edge := Vector2(signf(facing.x) * 46.0, 13.0)
+		_draw_element(canvas, position + lean + edge, facing.normalized(), element_mask, time)
 
 
-func _vertical_walk_cell(back: bool) -> Vector2i:
-	return Vector2i(int(_walk_distance / 22.0) % 4, 1 if back else 0)
+func _draw_element(canvas: CanvasItem, tip: Vector2, direction: Vector2, mask: int, time: float) -> void:
+	Elements.trail(canvas, tip - direction * 22.0, tip, mask, time)
 
 
 func _front_cut_frame(progress: float) -> int:

@@ -5,12 +5,11 @@ const FRONT_ATTACK = preload("res://assets/reclaim/characters/harin_front_recoil
 const FRONT_FRAME_SIZE := Vector2(112, 112)
 const FRONT_FRAME_ORIGIN := Vector2(-56, -54)
 const NORTH_ATTACK := preload("res://assets/reclaim/characters/harin_north_recoil.png")
-const RUN_ATLAS := preload("res://assets/reclaim/characters/operator_run.png")
+const OperatorRun = preload("res://scripts/reclaim/operator_run.gd")
 const NEW_FRAME := Vector2(128, 152)
 const NEW_ORIGIN := Vector2(-64, -86)
 const CELL_SIZE := 96.0
 const DRAW_SIZE := 96.0
-const STRIDE_STEP := 23.0
 const MUZZLES := [Vector2(0, 18), Vector2(42, -1), Vector2(6, -42), Vector2(-42, 2)]
 const ATTACK_HOLD := 0.16
 const HURT_HOLD := 0.22
@@ -65,7 +64,6 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2,
 	if running and not shooting:
 		display_facing = motion
 	var row := _facing_row(display_facing)
-	var run_frame := int(walk_distance / STRIDE_STEP) % 4
 	var phase := clampi(int((1.0 - attack_timer / ATTACK_HOLD) * 4.0), 0, 3) if shooting else 0
 	var tint := Color(0.33, 0.27, 0.51, echo) if echo > 0.0 else Color(1.0, 0.72, 0.72) if hurt_timer > 0.0 else Color.WHITE
 	if shooting and row == 0:
@@ -77,12 +75,7 @@ func draw(canvas: CanvasItem, center: Vector2, facing: Vector2, motion: Vector2,
 		canvas.draw_texture_rect_region(NORTH_ATTACK, Rect2(center + NEW_ORIGIN, NEW_FRAME),
 			Rect2(Vector2(frame * NEW_FRAME.x, 0), NEW_FRAME), tint)
 	elif running and not shooting:
-		var run_row := 0 if row == 0 else 1 if row == 2 else 2
-		var flip := Vector2(-1, 1) if row == 3 else Vector2.ONE
-		canvas.draw_set_transform(center.round(), 0.0, flip)
-		canvas.draw_texture_rect_region(RUN_ATLAS, Rect2(NEW_ORIGIN, NEW_FRAME),
-			Rect2(Vector2(run_frame, run_row) * NEW_FRAME, NEW_FRAME), tint)
-		canvas.draw_set_transform(Vector2.ZERO)
+		OperatorRun.draw(canvas, center, "harin", motion, walk_distance, tint)
 	else:
 		var column := 5 + phase if shooting else 9 + clampi(int(reload_progress * 4.0), 0, 3) if reload_progress >= 0.0 else 0
 		var origin := center - Vector2.ONE * DRAW_SIZE * 0.5

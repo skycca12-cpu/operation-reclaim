@@ -4,25 +4,32 @@ const BrowserBgmPlayer = preload("res://scripts/manus/browser_bgm_player.gd")
 
 const MAX_SFX_VOICES := 8
 const MAX_UI_VOICES := 2
+const SAW_SILENT_DB := -48.0
+const SAW_RUNNING_DB := -2.2
 # Optional resource paths. Empty means intentionally silent; add project audio
 # here or call register_cue() after importing an AudioStream resource.
+# Cue trims balance active loudness before the shared effects slider.
+# The cut overlay is quieter so it can play over the running motor.
 const CUES := {
-	"player.shotgun": {"path": "res://assets/reclaim/audio/shotgun.ogg", "bus": "SFX"},
-	"player.m4": {"path": "res://assets/reclaim/audio/rifle_m4.ogg", "bus": "SFX"},
-	"player.chainsaw_rev": {"path": "res://assets/reclaim/audio/chainsaw_rev.ogg", "bus": "SFX"},
-	"player.chainsaw": {"path": "res://assets/reclaim/audio/chainsaw_cut.ogg", "bus": "SFX"},
-	"enemy.low": {"path": "res://assets/reclaim/audio/zombie_growl_low.ogg", "bus": "SFX"},
-	"enemy.high": {"path": "res://assets/reclaim/audio/zombie_growl_high.ogg", "bus": "SFX"},
-	"enemy.elderly": {"path": "res://assets/reclaim/audio/zombie_growl_elderly.ogg", "bus": "SFX"},
-	"enemy.boss_arrival": {"path": "res://assets/reclaim/audio/boss_arrival.ogg", "bus": "SFX"},
-	"enemy.ambient": {"path": "res://assets/reclaim/audio/zombie_ambient.wav", "bus": "SFX"},
-	"enemy.attack": {"path": "res://assets/reclaim/audio/combat_zombie.wav", "bus": "SFX"},
+	"player.shotgun": {"path": "res://assets/reclaim/audio/shotgun.ogg", "bus": "SFX", "gain_db": -0.7},
+	"player.m4": {"path": "res://assets/reclaim/audio/rifle_m4.ogg", "bus": "SFX", "gain_db": -0.3},
+	"player.chainsaw_rev": {"path": "res://assets/reclaim/audio/chainsaw_rev.ogg", "bus": "SFX", "gain_db": -3.3},
+	"player.chainsaw": {"path": "res://assets/reclaim/audio/chainsaw_cut.ogg", "bus": "SFX", "gain_db": -4.5},
+	"enemy.low": {"path": "res://assets/reclaim/audio/zombie_growl_low.ogg", "bus": "SFX", "gain_db": 10.7},
+	"enemy.high": {"path": "res://assets/reclaim/audio/zombie_growl_high.ogg", "bus": "SFX", "gain_db": 19.7},
+	"enemy.elderly": {"path": "res://assets/reclaim/audio/zombie_growl_elderly.ogg", "bus": "SFX", "gain_db": 13.5},
+	"enemy.boss_arrival": {"path": "res://assets/reclaim/audio/boss_arrival.ogg", "bus": "SFX", "gain_db": 4.7},
+	"enemy.ambient": {"path": "res://assets/reclaim/audio/zombie_ambient.wav", "bus": "SFX", "gain_db": 5.7},
+	"enemy.burrow_rumble": {"path": "res://assets/reclaim/audio/burrow_rumble.ogg", "bus": "SFX", "gain_db": -4.0},
+	"enemy.burrow_break": {"path": "res://assets/reclaim/audio/burrow_break.ogg", "bus": "SFX", "gain_db": -4.0},
+	"enemy.attack": {"path": "res://assets/reclaim/audio/combat_zombie.wav", "bus": "SFX", "gain_db": -0.9},
 	"music.title": {"path": "", "kind": "music"},
 	"music.gameplay": {"path": "res://assets/reclaim/audio/combat_music.ogg", "kind": "music"},
 	"ui.confirm": {"path": "", "bus": "UI"},
 	"ui.cancel": {"path": "", "bus": "UI"},
-	"player.action": {"path": "res://assets/reclaim/audio/combat_shot.wav", "bus": "SFX"},
-	"enemy.impact": {"path": "res://assets/reclaim/audio/combat_hit.wav", "bus": "SFX"},
+	"player.action": {"path": "res://assets/reclaim/audio/combat_shot.wav", "bus": "SFX", "gain_db": -2.2},
+	"player.shield_impact": {"path": "res://assets/reclaim/audio/shield_impact.ogg", "bus": "SFX"},
+	"enemy.impact": {"path": "res://assets/reclaim/audio/combat_hit.wav", "bus": "SFX", "gain_db": 1.3},
 	"score.reward": {"path": "", "bus": "SFX"},
 	"game.pause": {"path": "", "bus": "UI"},
 	"game.victory": {"path": "", "bus": "SFX"},
@@ -42,6 +49,10 @@ var _game_sound_enabled := true
 var _game_music_gain := 1.0
 var _game_effects_gain := 1.0
 var _music_tween: Tween
+var _shield_windup: AudioStreamPlayer
+var _saw_motor: AudioStreamPlayer
+var _saw_active := false
+var _saw_pitch := 1.0
 
 
 func _ready() -> void:
@@ -62,9 +73,46 @@ func _ready() -> void:
 		_sfx_players.append(_make_player("Sfx%d" % index, "SFX"))
 	for index: int in MAX_UI_VOICES:
 		_ui_players.append(_make_player("Ui%d" % index, "UI"))
+	_shield_windup = _make_player("ShieldWindup", "SFX")
+	_shield_windup.stream = ResourceLoader.load("res://assets/reclaim/audio/shield_windup.ogg") as AudioStream
+	_saw_motor = _make_player("ChainsawMotor", "SFX")
+	var motor := ResourceLoader.load("res://assets/reclaim/audio/chainsaw_motor.ogg") as AudioStreamOggVorbis
+	motor.loop = true
+	_saw_motor.stream = motor
+	_saw_motor.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
+	_saw_motor.volume_db = SAW_SILENT_DB
 	_load_streams()
 	TuningStore.value_changed.connect(_on_tuning_changed)
 	_apply_bus_settings()
+
+
+func play_shield_windup() -> void:
+	if _game_sound_enabled and _unlocked and not _paused and not _headless:
+		_shield_windup.play()
+
+
+func stop_shield_windup() -> void:
+	_shield_windup.stop()
+
+
+func set_chainsaw_motor(active: bool, overheated := false) -> void:
+	_saw_active = active
+	_saw_pitch = 0.92 if overheated else 1.0
+
+
+func _process(delta: float) -> void:
+	var running := _saw_active and _game_sound_enabled and not _paused and _unlocked and not _headless
+	if not _saw_motor.playing:
+		if not running:
+			return
+		_saw_motor.volume_db = SAW_SILENT_DB
+		_saw_motor.pitch_scale = _saw_pitch
+		_saw_motor.play()
+	var target := SAW_RUNNING_DB if running else SAW_SILENT_DB
+	_saw_motor.volume_db = move_toward(_saw_motor.volume_db, target, delta * (700.0 if running else 260.0))
+	_saw_motor.pitch_scale = move_toward(_saw_motor.pitch_scale, _saw_pitch, delta * 0.5)
+	if not running and _saw_motor.volume_db <= SAW_SILENT_DB:
+		_saw_motor.stop()
 
 
 func _exit_tree() -> void:
@@ -72,6 +120,9 @@ func _exit_tree() -> void:
 
 
 func release_streams() -> void:
+	stop_shield_windup()
+	_saw_active = false
+	_saw_motor.stop()
 	stop_music(0.0)
 	for player: AudioStreamPlayer in _sfx_players + _ui_players:
 		player.stop()
@@ -192,6 +243,7 @@ func play_cue(cue_id: String, pitch_scale: float = 1.0) -> bool:
 	var players := _ui_players if str(cue.get("bus", "SFX")) == "UI" else _sfx_players
 	var player := _claim_voice(players)
 	player.stream = stream
+	player.volume_db = float(cue.get("gain_db", 0.0))
 	player.pitch_scale = clampf(pitch_scale, 0.75, 1.35)
 	player.play()
 	return true

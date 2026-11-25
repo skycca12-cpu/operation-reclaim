@@ -25,3 +25,8 @@ node_modules/
 !site/**
 
 # Template fonts (subset WOFF2) restore from assets.lock.json like other media.
+
+# Project-authored enemy art and burrow audio are not scaffold media.
+!/assets/reclaim/zombies/jeju/**/*.png
+!/assets/reclaim/audio/burrow_rumble.ogg
+!/assets/reclaim/audio/burrow_break.ogg

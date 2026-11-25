@@ -1,15 +1,18 @@
 extends Control
 
 const PlayerProjectiles = preload("res://scripts/reclaim/player_projectiles.gd")
+const Elements = preload("res://scripts/reclaim/element_visual.gd")
 const FlowUI = preload("res://scripts/reclaim/flow/flow_ui.gd")
 const OpsUI = preload("res://scripts/reclaim/operation_ui.gd")
 const OperatorInfo = preload("res://scripts/reclaim/operator_info.gd")
 const FieldWarning = preload("res://scripts/reclaim/field_warning.gd")
+const BurrowVisual = preload("res://scripts/reclaim/burrow_visual.gd")
 const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 const YujinVisual = preload("res://scripts/reclaim/yujin_visual.gd")
 const InfantryVisual = preload("res://scripts/reclaim/infantry_visual.gd")
 const TACTICAL_DRONE = preload("res://assets/reclaim/characters/tactical_drone.png")
+const TACTICAL_DRONE_SIDE = preload("res://assets/reclaim/characters/tactical_drone_side.png")
 const Skills = preload("res://scripts/reclaim/operator_skills.gd")
 const HarinVisual = preload("res://scripts/reclaim/character_visual.gd")
 const REPAIR_DRONE_ART = preload("res://assets/reclaim/jeju/structures/repair_drone.png")
@@ -43,6 +46,7 @@ const GRID_SIZE := 11
 const GRID_MIN := -2
 const GRID_MAX := GRID_MIN + GRID_SIZE - 1
 const BUILD_ENTRANCES := [Vector2i(3, GRID_MIN), Vector2i(3, GRID_MAX), Vector2i(GRID_MIN, 3), Vector2i(GRID_MAX, 3)]
+const MIN_CAMERA_ZOOM := 0.65
 const MAX_CAMERA_ZOOM := 2.4
 const HIT_SPARK_TIME := 0.18
 const BUILD_SHORTCUTS := {
@@ -93,7 +97,6 @@ var saw_overheated := false
 var saw_last_cut := -1.0
 var saw_chain := 0
 var saw_repair_kills := 0
-var saw_audio_at := 0.0
 var saw_cut_audio_at := 0.0
 var combat_drone_position := Vector2.ZERO
 var combat_drone_fire_at := -1.0
@@ -116,7 +119,8 @@ var medals := 0
 var boss_kills := 0
 var difficulty: Dictionary = {}
 var enemy_update_group := 0
-var tunnel_routes: Array[Dictionary] = []
+const AMBUSH_WARNING := 0.85
+const AMBUSH_RADIUS := 37.0
 var pending_skill_blasts: Array[Dictionary] = []
 var last_crit_at := -10.0
 var last_kill_at := -10.0
@@ -290,6 +294,8 @@ func _process(delta: float) -> void:
 		dash_echoes.pop_front()
 	if treatment_remaining <= 0.0:
 		_update_player(delta)
+	else:
+		AudioDirector.set_chainsaw_motor(false)
 	_update_operator_skill(delta)
 	player_projectiles.update(delta, enemies, _damage_enemy)
 	_yujin_visual.update(delta, player_motion)
@@ -298,7 +304,6 @@ func _process(delta: float) -> void:
 	_update_spawn(delta)
 	_update_enemies(delta)
 	_update_toxins(delta)
-	_update_tunnels(delta)
 	_resolve_skill_blasts()
 	_update_turrets(delta)
 	_update_repair_drone(delta)
@@ -405,7 +410,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed and screen == "play":
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			var step := 0.15 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.15
-			camera_zoom = clampf(camera_zoom + step, 1.0, MAX_CAMERA_ZOOM)
+			camera_zoom = clampf(camera_zoom + step, MIN_CAMERA_ZOOM, MAX_CAMERA_ZOOM)
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_cancel_build()
@@ -893,7 +898,9 @@ func _show_screen(which: String) -> void:
 		_save_all()
 	var was_in_combat := screen in ["play", "augment", "pause", "info"] or (screen == "settings" and settings_from_pause)
 	if which != "play":
+		AudioDirector.stop_shield_windup()
 		manual_trigger = false
+		AudioDirector.set_chainsaw_motor(false)
 	screen = which
 	operator_info.visible = which == "info"
 	boot_screen.visible = which == "boot"
@@ -1012,7 +1019,6 @@ func _finish_landing() -> void:
 
 func _reset_run() -> void:
 	toxin_zones.clear()
-	tunnel_routes.clear()
 	pending_skill_blasts.clear()
 	last_crit_at = -10.0
 	last_kill_at = -10.0
@@ -1095,13 +1101,14 @@ func _reset_run() -> void:
 	skill_ready_at = 0.0
 	skill_active_until = 0.0
 	shield_dash = false
+	AudioDirector.stop_shield_windup()
 	shield_targets.clear()
 	saw_heat = 0.0
 	saw_overheated = false
 	saw_last_cut = -1.0
 	saw_chain = 0
 	saw_repair_kills = 0
-	saw_audio_at = 0.0
+	AudioDirector.set_chainsaw_motor(false)
 	saw_cut_audio_at = 0.0
 	drone_timer = 0.0
 	combat_drone_position = PLAYER_START + Vector2(34, -28)
@@ -1152,9 +1159,10 @@ func _load_saved_run() -> void:
 	saw_repair_kills = int(ability.get("repair_kills", 0))
 	saw_chain = 0
 	saw_last_cut = -1.0
-	saw_audio_at = 0.0
+	AudioDirector.set_chainsaw_motor(false)
 	saw_cut_audio_at = 0.0
 	shield_dash = false
+	AudioDirector.stop_shield_windup()
 	shield_targets.clear()
 	dash_echoes.clear()
 	dash_timer = 0.0
@@ -1211,6 +1219,12 @@ func _load_saved_run() -> void:
 		if enemy.has("variant") and saved_variant >= 0 and saved_variant < ZombieVisual.SHEETS.size():
 			enemy.variant = saved_variant
 			enemy.appearance = clampi(int(entry.get("appearance", saved_variant)), 0, 49)
+		if entry.has("art_scale") and not enemy.boss:
+			enemy.art_scale = float(entry.art_scale)
+		if enemy.kind == "S10":
+			enemy.underground = bool(entry.get("underground", true))
+			if enemy.underground and entry.has("burrow_warning"):
+				enemy.burrow_warning = float(entry.burrow_warning)
 		enemies.append(enemy)
 		_warn_enemy_once(enemy.kind)
 	_restore_run_modifiers()
@@ -1539,6 +1553,9 @@ func _validate_placement(kind: String, cell: Vector2i) -> String:
 				if used == Vector2i(cell.x + dx, cell.y): occupied_count += 1
 	if occupied_count > 0: return "이미 다른 시설이 점유한 칸입니다."
 	var center := _cell_world(cell) + Vector2(CELL * 0.5 * float(width - 1), 0.0)
+	for enemy in enemies:
+		if enemy.has("burrow_warning") and _structure_overlap_depth(enemy.pos, center, width, PlayerProjectiles.enemy_radius(enemy)) >= 0.0:
+			return "지면이 갈라지는 곳에는 배치할 수 없습니다."
 	var overlap_depth := _structure_overlap_depth(player_pos, center, width, PLAYER_RADIUS)
 	if overlap_depth >= 0.0: return "대원이 서 있는 곳에는 배치할 수 없습니다."
 	if _is_building(kind):
@@ -1758,13 +1775,14 @@ func _update_player(delta: float) -> void:
 		dash_echo_time -= delta
 		if dash_echo_time <= 0.0 and previous_position.distance_squared_to(player_pos) > 4.0:
 			dash_echo_time = 0.032
-			dash_echoes.append({"pos": previous_position, "direction": dash_direction, "until": run_seconds + DASH_ECHO_LIFE})
+			dash_echoes.append({"pos": previous_position, "direction": dash_direction, "shield": shield_dash, "until": run_seconds + DASH_ECHO_LIFE})
 	else:
 		shield_dash = false
 		_move_player(direction * speed * delta)
 	dash_cooldown = maxf(0.0, dash_cooldown - delta)
 	player_motion = (player_pos - previous_position) / maxf(delta, 0.001)
-	_update_player_attack(delta)
+	if not shield_dash:
+		_update_player_attack(delta)
 	_update_combat_drone(delta)
 
 
@@ -1795,7 +1813,9 @@ func _update_combat_drone(delta: float) -> void:
 	if run_seconds - last_dash_at < 5.0:
 		damage *= _csv_factor("after_dash_drone")
 	_damage_enemy(drone_target, damage, "drone", origin)
-	var emitter := origin + combat_drone_facing * 9.0 if harin else origin
+	var side := _tactical_drone_side()
+	var muzzle := Vector2(0, 8) if side == 0.0 else Vector2(8.0 * side, 6.0)
+	var emitter := origin + muzzle if harin else origin
 	effects.append({"a": emitter, "b": target_pos, "time": 0.15, "color": Color("#b88dfb") if harin else PALETTE.blue})
 
 
@@ -1813,6 +1833,8 @@ func _use_operator_skill() -> void:
 			dash_cooldown = maxf(dash_cooldown, dash_timer)
 			shield_dash = true
 			shield_targets.clear()
+			if sound_on:
+				AudioDirector.play_shield_windup()
 			skill_ready_at = run_seconds + Skills.SHIELD_COOLDOWN
 		"si":
 			skill_active_until = run_seconds + Skills.FOCUS_DURATION
@@ -1839,8 +1861,38 @@ func _resolve_shield_dash(previous: Vector2) -> void:
 			continue
 		var closest := Geometry2D.get_closest_point_to_segment(target.pos, previous, player_pos)
 		if closest.distance_squared_to(target.pos) <= 31.0 * 31.0:
+			if shield_targets.is_empty():
+				AudioDirector.stop_shield_windup()
+				if sound_on:
+					AudioDirector.play_cue("player.shield_impact")
 			shield_targets[target.spawn_id] = true
+			var push: Vector2 = (dash_direction + (Vector2(target.pos) - closest).limit_length(24.0) / 36.0).normalized()
+			target.knock_direction = push
+			target.knock_left = 0.11 if target.boss else 0.22
+			target.down_until = run_seconds + (0.18 if target.boss else 0.55)
+			_interrupt_enemy_attack(target)
 			_damage_enemy(i, Skills.SHIELD_DAMAGE, "shield", previous)
+
+
+func _interrupt_enemy_attack(enemy: Dictionary) -> void:
+	enemy.erase("strike_remaining")
+	enemy.erase("strike_target")
+	enemy.attack_until = 0.0
+
+
+func _update_knocked_enemy(enemy: Dictionary, delta: float) -> void:
+	var remaining := minf(delta, float(enemy.knock_left))
+	enemy.knock_left = maxf(0.0, float(enemy.knock_left) - delta)
+	var radius := PlayerProjectiles.enemy_radius(enemy)
+	var speed := 150.0 if enemy.boss else 250.0
+	while remaining > 0.0001:
+		var step := minf(remaining, 0.025)
+		var next: Vector2 = enemy.pos + enemy.knock_direction * speed * step
+		if not jeju_map.walkable(next, radius) or _blocking_structure(next, radius) >= 0:
+			enemy.knock_left = 0.0
+			break
+		enemy.pos = next
+		remaining -= step
 
 
 func _update_operator_skill(delta: float) -> void:
@@ -1878,6 +1930,7 @@ func _update_player_attack(delta: float) -> void:
 			last_reload_at = run_seconds
 	if wants_attack and player_attack_timer <= 0.0 and player_reload_timer <= 0.0:
 		_attack_player()
+	AudioDirector.set_chainsaw_motor(screen == "play" and hero.id == "yujin" and wants_attack, saw_overheated)
 
 
 func _attack_player() -> void:
@@ -1926,22 +1979,16 @@ func _attack_player() -> void:
 	var pellets := (int(hero.pellets) + player_extra_pellets if kind == "tae" else 1) + int(_csv_bonus("pellets"))
 	var damage := _weapon_damage(hero, player_mod_damage) / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
+	var element_mask := _weapon_elements()
 	for pellet in range(pellets):
 		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 * _csv_reduction("pellet_focus") if kind == "tae" else 0.0)
-		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")), tracer_offset)
+		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")), tracer_offset, element_mask)
 
 
 func _play_saw_attack(made_contact: bool) -> void:
-	var pitch := 0.92 if saw_overheated else 1.0
-	if made_contact:
-		if run_seconds >= saw_cut_audio_at:
-			saw_cut_audio_at = run_seconds + 0.29
-			saw_audio_at = maxf(saw_audio_at, saw_cut_audio_at)
-			AudioDirector.play_cue("player.chainsaw", pitch)
-	elif run_seconds >= saw_audio_at:
-		saw_audio_at = run_seconds + 0.34
-		AudioDirector.play_cue("player.chainsaw_rev", pitch)
-
+	if made_contact and run_seconds >= saw_cut_audio_at:
+		saw_cut_audio_at = run_seconds + 0.29
+		AudioDirector.play_cue("player.chainsaw", 0.92 if saw_overheated else 1.0)
 
 func _update_spawn(delta: float) -> void:
 	stage_elapsed += delta
@@ -2012,9 +2059,9 @@ func _make_enemy(kind: String, pos: Vector2, is_boss: bool) -> Dictionary:
 	enemy_spawn_id += 1
 	enemy.spawn_id = enemy_spawn_id
 	if kind == "normal" or kind == "small" or not special.is_empty() or is_boss:
-		enemy.appearance = _random.randi_range(0, 49)
+		enemy.appearance = 0 if is_boss else _random.randi_range(0, 49) if special.is_empty() else _random.randi_range(0, 3)
 		enemy.variant = int(enemy.appearance) % ZombieVisual.SHEETS.size()
-		enemy.art_scale = 3.5 if is_boss else 0.55 if kind == "small" else float(special.get("scale", 1.0))
+		enemy.art_scale = float(data.get("scale", 1.0)) if is_boss else 0.55 if kind == "small" else float(special.get("scale", 1.0)) + (_random.randi_range(0, 5) * 0.1 if not special.is_empty() else 0.0)
 		enemy.special = not special.is_empty()
 		enemy.air = SpecialEnemies.airborne(kind)
 		enemy.ability = float(special.get("period", 0.0))
@@ -2072,6 +2119,11 @@ func _update_enemies(delta: float) -> void:
 			e.erase("pending_step")
 		if (e.has("burn") or e.has("poison")) and _tick_enemy_status(e, i):
 			continue
+		if float(e.get("knock_left", 0.0)) > 0.0:
+			_update_knocked_enemy(e, step)
+		if maxf(float(e.get("down_until", 0.0)), float(e.get("frozen_until", 0.0))) > run_seconds:
+			e.moving = false
+			continue
 		var animated := e.has("variant")
 		var body_radius := PlayerProjectiles.enemy_radius(e)
 		if e.get("special", false) and _update_special(e, i, step):
@@ -2081,7 +2133,8 @@ func _update_enemies(delta: float) -> void:
 		if e.has("strike_remaining"):
 			_resolve_normal_strike(e, step)
 			continue
-		if bool(e.boss): _update_boss_pattern(e, step)
+		if bool(e.boss) and _update_boss_pattern(e, step):
+			continue
 		if String(e.kind) == "bomber":
 			var d_player: float = e.pos.distance_to(player_pos)
 			var d_hq: float = e.pos.distance_to(hq_pos)
@@ -2097,7 +2150,7 @@ func _update_enemies(delta: float) -> void:
 			continue
 		var d_to_player: float = e.pos.distance_squared_to(player_pos)
 		var d_to_hq: float = e.pos.distance_squared_to(hq_pos)
-		var target_player: bool = treatment_remaining <= 0.0 and d_to_player < d_to_hq and d_to_player < 440.0 * 440.0
+		var target_player: bool = treatment_remaining <= 0.0 and d_to_player < d_to_hq and d_to_player < (92.0 * 92.0 if e.kind == "S11" else 440.0 * 440.0)
 		e.target = "player" if target_player else "hq"
 		var target_pos: Vector2 = player_pos if target_player else hq_pos
 		var target_structure := -1 if target_player else hq_index
@@ -2145,13 +2198,28 @@ func _update_special(enemy: Dictionary, index: int, delta: float) -> bool:
 	if kind == "S09":
 		enemy.hp = minf(float(enemy.max_hp), float(enemy.hp) + delta * float(enemy.max_hp) * 0.055)
 	if kind == "S10" and enemy.get("underground", false):
-		if enemy.ability_cool <= 0.0 or distance <= 84.0:
-			enemy.underground = false
-		else:
-			enemy.pos = point.move_toward(hq, 112.0 * delta)
+		if enemy.has("burrow_warning"):
+			enemy.burrow_warning = maxf(0.0, float(enemy.burrow_warning) - delta)
+			if enemy.burrow_warning <= 0.0:
+				enemy.erase("burrow_warning")
+				_emerge_enemy(enemy, AMBUSH_RADIUS)
 			return true
-	if kind == "S05" and distance <= 53.0:
-		enemy.target = "player" if goal == player_pos else "hq"
+		if enemy.ability_cool <= 0.0 or distance <= 84.0:
+			var radius := PlayerProjectiles.enemy_radius(enemy)
+			for offset in [Vector2.ZERO, Vector2(65, 0), Vector2(-65, 0), Vector2(0, 65), Vector2(0, -65),
+					Vector2(100, 100), Vector2(-100, 100), Vector2(100, -100), Vector2(-100, -100)]:
+				var site: Vector2 = point + offset
+				if jeju_map.walkable(site, radius) and _blocking_structure(site, radius) < 0:
+					enemy.pos = site
+					enemy.burrow_warning = AMBUSH_WARNING
+					_play_burrow_sound(site, "enemy.burrow_rumble")
+					return true
+		enemy.pos = point.move_toward(hq, 112.0 * delta)
+		return true
+	if kind == "S05" and (distance <= 53.0 or float(enemy.charge) > 0.0):
+		if float(enemy.charge) <= 0.0:
+			enemy.target = "player" if goal == player_pos else "hq"
+		enemy.moving = false
 		enemy.charge = float(enemy.charge) + delta
 		if enemy.charge >= float(enemy.ability):
 			_explode_bomber(enemy)
@@ -2166,8 +2234,6 @@ func _update_special(enemy: Dictionary, index: int, delta: float) -> bool:
 		for nearby in enemies:
 			if nearby.pos.distance_squared_to(point) < 170.0 * 170.0:
 				nearby.rage_until = run_seconds + 4.0
-	elif kind == "S11" and point.distance_to(hq) < 410.0 and tunnel_routes.size() < 8:
-		tunnel_routes.append({"entry": point, "exit": hq + Vector2(56, 94), "life": 4.0, "cool": 0.0, "used": 0})
 	elif kind == "S12" and distance < 160.0:
 		var landing := point.move_toward(goal, 112.0)
 		if jeju_map.walkable(landing, 24.0) and _blocking_structure(landing, 21.0) < 0:
@@ -2180,27 +2246,18 @@ func _update_special(enemy: Dictionary, index: int, delta: float) -> bool:
 	return false
 
 
-func _update_tunnels(delta: float) -> void:
-	for i in range(tunnel_routes.size() - 1, -1, -1):
-		var route := tunnel_routes[i]
-		route.life -= delta
-		route.cool -= delta
-		if route.life <= 0.0 or route.used >= 4:
-			tunnel_routes.remove_at(i)
-			continue
-		if route.cool > 0.0:
-			continue
-		for nearby in enemies:
-			if nearby.kind != "normal" or nearby.pos.distance_squared_to(route.entry) >= 140.0 * 140.0:
-				continue
-			var exit: Vector2 = route.exit + Vector2(float(route.used) * 18.0, 0)
-			if _blocking_structure(exit, ZombieVisual.RADIUS) >= 0:
-				exit = route.exit + Vector2(-72, 42)
-			if _blocking_structure(exit, ZombieVisual.RADIUS) < 0:
-				nearby.pos = exit
-				route.used += 1
-				route.cool = 0.45
-			break
+func _emerge_enemy(enemy: Dictionary, radius: float) -> void:
+	enemy.underground = false
+	enemy.emerged_at = run_seconds
+	enemy.moving = false
+	var point: Vector2 = enemy.pos
+	effects.append({"a": point, "b": point, "time": 0.82, "seconds": 0.82, "burrow_debris": radius})
+	_play_burrow_sound(point, "enemy.burrow_break")
+
+
+func _play_burrow_sound(point: Vector2, cue: String) -> void:
+	if sound_on and point.distance_squared_to(player_pos) < 560.0 * 560.0:
+		AudioDirector.play_cue(cue)
 
 
 func _update_toxins(delta: float) -> void:
@@ -2283,7 +2340,7 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 		if _structure_overlap_depth(enemy.pos, target, width, body_radius + 5.0) >= 0.0:
 			_strike_structure(enemy, target_structure)
 			return
-	elif toward.length_squared() <= pow(_enemy_melee_reach(enemy), 2):
+	elif toward.length_squared() <= pow(_enemy_melee_reach(enemy, enemy.get("next_attack_is_bite", false)), 2):
 		if float(enemy.cool) <= 0.0:
 			if enemy.has("variant"):
 				_queue_normal_strike(enemy, toward)
@@ -2317,8 +2374,8 @@ func _update_melee_enemy(enemy: Dictionary, target: Vector2, target_structure: i
 		_strike_structure(enemy, blocker)
 
 
-func _enemy_melee_reach(enemy: Dictionary) -> float:
-	return 30.0 + maxf(0.0, float(enemy.get("art_scale", 1.0)) - 1.0) * 8.0
+func _enemy_melee_reach(enemy: Dictionary, bite := false) -> float:
+	return (26.0 if bite else 30.0) + maxf(0.0, float(enemy.get("art_scale", 1.0)) - 1.0) * 8.0
 
 
 func _enemy_attack_power(enemy: Dictionary) -> float:
@@ -2329,7 +2386,8 @@ func _enemy_attack_power(enemy: Dictionary) -> float:
 func _apply_enemy_melee_to_player(enemy: Dictionary) -> void:
 	var wall := -1 if enemy.get("air", false) else int(_first_wall_hit(enemy.pos, player_pos).index)
 	if wall >= 0:
-		_damage_structure(wall, float(enemy.attack))
+		var multiplier := SpecialEnemies.structure_damage_multiplier("S11") if enemy.get("kind", "") == "S11" else 1.0
+		_damage_structure(wall, float(enemy.attack) * multiplier)
 	else:
 		_player_take_damage(_enemy_attack_power(enemy), "적의 근접 공격")
 
@@ -2341,13 +2399,18 @@ func _strike_structure(enemy: Dictionary, index: int) -> void:
 	if enemy.has("variant"):
 		_queue_normal_strike(enemy, toward, structures[index])
 	else:
-		_damage_structure(index, _enemy_attack_power(enemy) * (1.85 if enemy.kind == "S04" else 1.0))
+		_damage_structure(index, _enemy_attack_power(enemy) * SpecialEnemies.structure_damage_multiplier(enemy.kind))
 	enemy.cool = 1.15
 
 
 func _queue_normal_strike(enemy: Dictionary, toward: Vector2, target: Variant = null) -> void:
 	enemy.strike_remaining = ZombieVisual.IMPACT_TIME
 	enemy.strike_target = target
+	var bite := false
+	if enemy.kind == "normal" and target == null:
+		bite = bool(enemy.get("next_attack_is_bite", false))
+		enemy.next_attack_is_bite = not bite
+	enemy.attack_is_bite = bite
 	_animate_zombie_attack(enemy, toward)
 
 
@@ -2360,7 +2423,7 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 	enemy.erase("strike_target")
 	if target == null:
 		var offset: Vector2 = player_pos - enemy.pos
-		if offset.length_squared() <= pow(_enemy_melee_reach(enemy), 2) and offset.dot(enemy.attack_direction) >= 0.0:
+		if offset.length_squared() <= pow(_enemy_melee_reach(enemy, enemy.get("attack_is_bite", false)), 2) and offset.dot(enemy.attack_direction) >= 0.0:
 			_apply_enemy_melee_to_player(enemy)
 		return
 	for index in range(structures.size()):
@@ -2370,7 +2433,7 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 		var width := 2 if kind == "hq" or _is_building(kind) else 1
 		if _structure_overlap_depth(enemy.pos, _entry_world_center(target), width, (24.0 if enemy.boss else PlayerProjectiles.enemy_radius(enemy)) + 5.0) >= 0.0:
 			var wall := -1 if enemy.get("air", false) else int(_first_wall_hit(enemy.pos, _entry_world_center(target)).index)
-			_damage_structure(wall if wall >= 0 else index, _enemy_attack_power(enemy) * (1.85 if enemy.kind == "S04" else 1.0))
+			_damage_structure(wall if wall >= 0 else index, _enemy_attack_power(enemy) * SpecialEnemies.structure_damage_multiplier(enemy.kind))
 		return
 
 
@@ -2398,28 +2461,85 @@ func _animate_zombie_attack(enemy: Dictionary, toward: Vector2) -> void:
 		AudioDirector.play_cue(_zombie_voice(enemy), 0.97 + float(int(enemy.spawn_id) % 7) * 0.035)
 
 
-func _update_boss_pattern(e: Dictionary, delta: float) -> void:
+func _update_boss_pattern(e: Dictionary, delta: float) -> bool:
+	var milestone := int(String(e.kind).trim_prefix("boss"))
+	if e.has("pattern_pos"):
+		e.pattern_windup -= delta
+		if e.pattern_windup > 0.0:
+			e.moving = false
+			return true
+		var point: Vector2 = e.pattern_pos
+		e.erase("pattern_pos")
+		_animate_zombie_attack(e, point - e.pos)
+		match milestone:
+			20:
+				for ally in enemies:
+					if not ally.boss and ally.pos.distance_squared_to(point) < 205.0 * 205.0:
+						ally.rage_until = run_seconds + 4.0
+			60, 80:
+				_enemy_ground_impact(e, point, _boss_pattern_radius(milestone), milestone == 80)
+			100:
+				for n in range(3):
+					if enemies.size() >= MAX_ENEMIES:
+						break
+					var spawn_at := jeju_map.nearest_land(point + Vector2.from_angle(n * TAU / 3.0) * 90.0, ZombieVisual.RADIUS)
+					if jeju_map.walkable(spawn_at, ZombieVisual.RADIUS) and _blocking_structure(spawn_at, ZombieVisual.RADIUS) < 0:
+						_spawn_enemy("normal", spawn_at, false)
+		return false
 	e.pattern_timer -= delta
-	if e.pattern_timer > 0.0: return
-	var current_stage := 40 if String(e.kind) == "boss40" else 80 if String(e.kind) == "boss80" else 100
-	e.pattern_timer = 4.0 if current_stage == 40 else 5.0
-	if current_stage == 40:
-		e.guard = 1.0
-		_show_toast("철갑 방어 태세 · 잠시 피해를 줄입니다.")
-	elif current_stage == 80:
-		var target := _nearest_structure(e.pos, 560.0, false)
-		if target >= 0:
-			var wall := int(_first_wall_hit(e.pos, _entry_world_center(structures[target])).index)
-			_damage_structure(wall if wall >= 0 else target, float(e.attack) * 2.0)
-			_show_toast("파쇄자 · 구조물에 강한 충격")
-	elif current_stage == 100:
-		for n in range(3):
-			var a := _random.randf_range(0, TAU)
-			_spawn_enemy("normal", jeju_map.nearest_land(e.pos + Vector2.from_angle(a) * 90.0, ZombieVisual.RADIUS), false)
-		_show_toast("군체 지배자 · 추가 개체 소환")
+	if e.pattern_timer > 0.0:
+		return false
+	e.pattern_timer = 5.0
+	match milestone:
+		40:
+			e.guard_until = run_seconds + 1.5
+			return false
+		60:
+			if treatment_remaining > 0.0 or e.pos.distance_squared_to(player_pos) > 360.0 * 360.0:
+				return false
+			e.pattern_pos = player_pos
+		80:
+			var target := _nearest_structure(e.pos, 560.0, false)
+			if target < 0:
+				return false
+			var point := _entry_world_center(structures[target])
+			var wall := int(_first_wall_hit(e.pos, point).index)
+			e.pattern_pos = _entry_world_center(structures[wall]) if wall >= 0 else point
+		_:
+			e.pattern_pos = e.pos
+	e.pattern_windup = 0.9
+	e.moving = false
+	return true
+
+
+func _boss_pattern_radius(milestone: int) -> float:
+	match milestone:
+		20: return 205.0
+		60: return 88.0
+		80: return 74.0
+		_: return 95.0
+
+
+func _enemy_ground_impact(enemy: Dictionary, point: Vector2, radius: float, hits_structures: bool) -> void:
+	var damage := float(enemy.attack)
+	if treatment_remaining <= 0.0 and point.distance_squared_to(player_pos) <= radius * radius and int(_first_wall_hit(point, player_pos).index) < 0:
+		_player_take_damage(damage, String(enemy.name))
+	if hits_structures:
+		var targets: Array[int] = []
+		for index in range(structures.size() - 1, -1, -1):
+			var center := _entry_world_center(structures[index])
+			if float(structures[index].hp) > 0.0 and point.distance_squared_to(center) <= radius * radius:
+				var wall := int(_first_wall_hit(point, center).index)
+				if wall == -1 or wall == index:
+					targets.append(index)
+		for index in targets:
+			_damage_structure(index, damage * (2.0 if enemy.boss else 1.0))
+	effects.append({"a": point, "b": point + Vector2(radius, 0), "time": 0.28, "color": enemy.color, "blast": true})
 
 
 func _launch_enemy_shot(enemy: Dictionary, target: Vector2) -> void:
+	if enemy.has("variant"):
+		_animate_zombie_attack(enemy, target - Vector2(enemy.pos))
 	var ptype := "acid" if String(enemy.kind) == "spitter" else "rock"
 	var direction: Vector2 = (target - enemy.pos).normalized()
 	enemy_shots.append({"pos": enemy.pos, "velocity": direction * (270.0 if ptype == "rock" else 235.0), "life": 2.2, "damage": float(enemy.attack), "type": ptype, "target": target, "color": PALETTE.red})
@@ -2450,7 +2570,9 @@ func _explode_bomber(enemy: Dictionary) -> void:
 
 func _apply_status(enemy: Dictionary, key: String, seconds: float, damage: float) -> void:
 	var effect: Dictionary = enemy.get(key, {})
-	enemy[key] = {"until": run_seconds + seconds, "tick": float(effect.get("tick", run_seconds + 0.45)), "damage": damage}
+	var started := float(effect.get("start", run_seconds)) if float(effect.get("until", 0.0)) > run_seconds else run_seconds
+	enemy[key] = {"start": started, "until": run_seconds + seconds,
+		"tick": float(effect.get("tick", run_seconds + 0.45)), "damage": damage}
 	_mark_csv_trigger(key)
 
 
@@ -2464,7 +2586,13 @@ func _tick_enemy_status(enemy: Dictionary, index: int) -> bool:
 		elif float(effect.tick) <= run_seconds:
 			effect.tick = run_seconds + 0.45
 			var spawn_id: int = enemy.spawn_id
+			var before := float(enemy.hp)
+			var point: Vector2 = enemy.pos
 			_damage_enemy(index, float(effect.damage), "status")
+			var lost := before - maxf(0.0, float(enemy.hp)) if int(enemy.spawn_id) == spawn_id else before
+			if lost > 0.0 and effects.size() < 80 and _zombie_on_screen(_world_to_screen(point)):
+				effects.append({"a": point, "b": point, "time": 0.46, "seconds": 0.46,
+					"dot_text": str(maxi(1, roundi(lost))), "color": Color("#ff665c") if element == "burn" else Color("#9ee05b")})
 			if float(enemy.hp) <= 0.0 or int(enemy.spawn_id) != spawn_id:
 				return true
 	return false
@@ -2483,7 +2611,7 @@ func _status_damage_bonus(enemy: Dictionary) -> float:
 
 
 func _apply_weapon_status(enemy: Dictionary, damage: float) -> void:
-	for key in ["burn", "poison", "shock", "explosion"]:
+	for key in ["burn", "poison", "shock", "freeze", "explosion"]:
 		var percent := _csv_bonus(key + "_chance")
 		if percent <= 0.0 or _random.randf() >= minf(0.8, percent / 100.0):
 			continue
@@ -2491,11 +2619,32 @@ func _apply_weapon_status(enemy: Dictionary, damage: float) -> void:
 			if pending_skill_blasts.size() < 20:
 				pending_skill_blasts.append({"pos": enemy.pos, "damage": damage * 0.3 * _csv_factor("blast_damage")})
 			_mark_csv_trigger(key)
+		elif key == "freeze":
+			_apply_cold(enemy, true)
 		elif key == "shock":
 			_apply_status(enemy, key, 2.0, 0.0)
 			enemy.hp = float(enemy.hp) - damage * 0.25 * _csv_factor("shock_damage")
 		else:
 			_apply_status(enemy, key, 2.5 * _csv_factor(key + "_time"), damage * 0.13 * _csv_factor(key + "_damage"))
+
+
+func _apply_cold(enemy: Dictionary, frozen: bool) -> void:
+	var duration := 2.2 * _csv_factor("freeze_time")
+	enemy.slow = maxf(duration, float(enemy.slow))
+	enemy.slow_factor = maxf(0.1, 0.48 - _csv_bonus("freeze_strength") / 100.0)
+	_apply_status(enemy, "freeze", duration, 0.0)
+	if frozen:
+		var hold := minf(duration, 0.48 if enemy.boss else 1.35)
+		enemy.frozen_until = maxf(float(enemy.get("frozen_until", 0.0)), run_seconds + hold)
+		_interrupt_enemy_attack(enemy)
+
+
+func _weapon_elements() -> int:
+	var mask := 0
+	for element in Elements.WEAPON_KEYS:
+		if _csv_bonus(element + "_chance") > 0.0:
+			mask |= int(Elements.WEAPON_KEYS[element])
+	return mask
 
 
 func _resolve_skill_blasts() -> void:
@@ -2529,23 +2678,22 @@ func _damage_enemy(index: int, amount: float, source: String, origin: Variant = 
 				amount *= 1.5 + _csv_bonus("crit_damage") / 100.0
 				last_crit_at = run_seconds
 		amount *= 1.0 + bonus / 100.0
-		if source != "drone" and (csv_passive.has("burn_chance") or csv_passive.has("poison_chance") or csv_passive.has("shock_chance") or csv_passive.has("explosion_chance")):
+		if source != "drone":
 			_apply_weapon_status(enemy, amount)
-	if bool(enemy.get("boss", false)) and float(enemy.get("guard", 0.0)) > 0.0:
+	if bool(enemy.get("boss", false)) and float(enemy.get("guard_until", 0.0)) > run_seconds:
 		amount *= 0.4
-		enemy.guard = maxf(0.0, float(enemy.guard) - 0.28)
 	enemy.hp = float(enemy.hp) - amount
 	var impact_origin: Vector2 = origin if origin is Vector2 else player_pos
 	var hit_style := _zombie_hit_style(source)
 	if amount > 0.0 and source != "status" and enemy.has("variant"):
 		enemy.hit_style = hit_style
 		enemy.hit_direction = impact_origin.direction_to(enemy.pos)
-	if amount > 0.0 and (shake_on or source == "chainsaw") and effects.size() < 80 and _zombie_on_screen(_world_to_screen(enemy.pos)):
+	if amount > 0.0 and source != "status" and (shake_on or source == "chainsaw" or source == "shield") and effects.size() < 80 and _zombie_on_screen(_world_to_screen(enemy.pos)):
 		var point: Vector2 = enemy.pos
 		var angle := impact_origin.angle_to_point(point)
 		effects.append({"a": point, "b": point, "time": HIT_SPARK_TIME, "hit_angle": angle,
-			"color": ZombieVisual.NormalVisual.IMPACTS[hit_style][0]})
-	if amount > 0.0 and source != "chainsaw" and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
+			"color": ZombieVisual.NormalVisual.IMPACTS[hit_style]})
+	if amount > 0.0 and source not in ["chainsaw", "status", "shield"] and sound_on and run_seconds >= impact_sound_at and player_pos.distance_squared_to(enemy.pos) < 440.0 * 440.0:
 		impact_sound_at = run_seconds + 0.10
 		AudioDirector.play_cue("enemy.impact", 1.18)
 	if float(enemy.hp) <= 0.0:
@@ -2629,8 +2777,11 @@ func _remove_enemy(index: int) -> void:
 	if index < 0 or index >= enemies.size(): return
 	var dead: Dictionary = enemies[index]
 	enemies.remove_at(index)
-	if dead.has("variant") and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_CORPSES:
-		var corpse := {"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds}
+	if float(dead.get("frozen_until", 0.0)) > run_seconds:
+		if effects.size() < 80 and _zombie_on_screen(_world_to_screen(dead.pos)):
+			effects.append({"a": dead.pos, "b": dead.pos, "time": 0.42, "seconds": 0.42, "ice_shatter": true})
+	elif dead.has("variant") and not dead.get("underground", false) and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_CORPSES:
+		var corpse := {"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds, "kind": dead.kind, "scale": dead.art_scale}
 		if dead.kind == "normal":
 			corpse.appearance = dead.appearance
 		zombie_corpses.append(corpse)
@@ -2745,42 +2896,46 @@ func _update_turrets(delta: float) -> void:
 			_explode_damage_center(target_pos, 82.0 * (_csv_factor("blast_radius") + _csv_bonus("rocket_radius") / 100.0), damage * 0.72 * _csv_factor("blast_damage"), "rocket")
 			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.22, "color": PALETTE.red, "blast": true})
 		elif kind == "electric":
-			_damage_enemy(target_index, damage, kind, pos)
-			var struck := target_pos
-			for jump in range(1 + mini(5, int(_csv_bonus("electric_targets")))):
-				var skip_index := target_index if target_index < enemies.size() and enemies[target_index].pos.distance_squared_to(struck) < 0.25 else -1
-				target_index = _nearest_enemy(struck, 94.0 * _csv_factor("electric_range"), skip_index)
-				if target_index < 0: break
-				var chain_origin := struck
-				struck = enemies[target_index].pos
-				_damage_enemy(target_index, damage * pow(0.55, jump + 1), "chain", chain_origin)
-			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.16, "color": PALETTE.blue})
+			var struck_ids: Dictionary = {}
+			var arc_start := pos
+			for jump in range(2 + mini(5, int(_csv_bonus("electric_targets")))):
+				if target_index < 0:
+					break
+				var target := enemies[target_index]
+				var struck: Vector2 = target.pos
+				struck_ids[target.spawn_id] = true
+				_apply_status(target, "shock", 2.0, 0.0)
+				_damage_enemy(target_index, damage * pow(0.55, jump), kind if jump == 0 else "chain", arc_start)
+				if effects.size() < 80:
+					effects.append({"a": arc_start, "b": struck, "time": 0.16, "element_mask": Elements.SHOCK})
+				arc_start = struck
+				target_index = _nearest_enemy(struck, 94.0 * _csv_factor("electric_range"), -1, false, struck_ids)
 		elif kind == "flame":
 			var direction := pos.direction_to(target_pos)
 			var threshold := cos(deg_to_rad(minf(78.0, 28.0 * _csv_factor("flame_angle"))))
 			for i in range(enemies.size() - 1, -1, -1):
 				var offset: Vector2 = enemies[i].pos - pos
 				if offset.length_squared() <= turret_range * turret_range and offset.normalized().dot(direction) >= threshold:
+					if enemies[i].get("underground", false):
+						continue
 					_apply_status(enemies[i], "burn", 2.0 * _csv_factor("burn_time"), damage * 0.15 * _csv_factor("burn_damage"))
 					_damage_enemy(i, damage, kind, pos)
-			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.12, "color": Color("#ef9154")})
+			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.15, "element_mask": Elements.FIRE, "color": Color("#ef9154"), "fire_cone": true})
 		else:
+			if kind == "freeze":
+				var freeze_chance := minf(0.8, 0.08 + _csv_bonus("freeze_chance") / 100.0)
+				_apply_cold(enemies[target_index], _random.randf() < freeze_chance)
 			_damage_enemy(target_index, damage, kind, pos)
-			if kind == "freeze" and target_index < enemies.size() and enemies[target_index].pos.distance_to(target_pos) < 0.5:
-				var cold := enemies[target_index]
-				cold.slow = 2.2 * _csv_factor("freeze_time")
-				_apply_status(cold, "freeze", cold.slow, 0.0)
-				cold.slow_factor = maxf(0.1, 0.48 - _csv_bonus("freeze_strength") / 100.0)
-				if _random.randf() < minf(0.8, 0.08 + _csv_bonus("freeze_chance") / 100.0):
-					cold.slow_factor = 0.0
-			if effects.size() < 80: effects.append({"a": pos, "b": target_pos, "time": 0.11, "color": def.get("color", PALETTE.gold)})
+			if effects.size() < 80:
+				effects.append({"a": pos, "b": target_pos, "time": 0.13,
+					"color": def.get("color", PALETTE.gold), "element_mask": Elements.ICE if kind == "freeze" else 0})
 
 
-func _nearest_enemy(pos: Vector2, range: float, skip := -1, air_only := false) -> int:
+func _nearest_enemy(pos: Vector2, range: float, skip := -1, air_only := false, exclude: Dictionary = {}) -> int:
 	var nearest := -1
 	var nearest_dist := range
 	for i in range(enemies.size()):
-		if i == skip or enemies[i].hp <= 0.0 or enemies[i].get("underground", false) or (air_only and not enemies[i].get("air", false)): continue
+		if i == skip or exclude.has(enemies[i].spawn_id) or enemies[i].hp <= 0.0 or enemies[i].get("underground", false) or (air_only and not enemies[i].get("air", false)): continue
 		var dist: float = pos.distance_to(enemies[i].pos)
 		if dist <= range and (nearest < 0 or dist < nearest_dist):
 			nearest_dist = dist
@@ -3387,7 +3542,14 @@ func _save_all() -> void:
 			structure_rows.append({"kind": String(s.kind), "x": cell.x, "y": cell.y, "hp": float(s.hp), "max_hp": float(s.max_hp), "level": int(s.level)})
 		var enemy_rows: Array[Dictionary] = []
 		for e in enemies:
-			enemy_rows.append({"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))})
+			var row := {"kind": String(e.kind), "x": float(e.pos.x), "y": float(e.pos.y), "hp": float(e.hp), "cool": float(e.cool), "boss": bool(e.boss), "variant": int(e.get("variant", -1)), "appearance": int(e.get("appearance", 0))}
+			if e.has("art_scale"):
+				row.art_scale = e.art_scale
+			if e.kind == "S10":
+				row.underground = e.underground
+				if e.has("burrow_warning"):
+					row.burrow_warning = e.burrow_warning
+			enemy_rows.append(row)
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
 		saved_run["operator_skill"] = {"ready": skill_ready_at, "active": skill_active_until,
 			"heat": saw_heat, "overheated": saw_overheated, "repair_kills": saw_repair_kills}
@@ -3518,8 +3680,10 @@ func _draw_world() -> void:
 	draw_set_transform_matrix(camera)
 	if build_open or build_mode:
 		_draw_build_grid()
-	for route in tunnel_routes:
-		draw_arc(_world_to_screen(route.exit), 23.0, 0.0, TAU, 18, Color("#a78d6779"), 2.0)
+	for effect in effects:
+		if effect.get("burrow_debris", 0.0) == AMBUSH_RADIUS:
+			var remaining := clampf(float(effect.time) / float(effect.seconds), 0.0, 1.0)
+			BurrowVisual.ground(self, _world_to_screen(effect.a), float(effect.burrow_debris), remaining, remaining, run_seconds)
 	for zone in toxin_zones:
 		draw_circle(_world_to_screen(zone.pos), 52.0, Color("#84ae5549"))
 	_draw_world_depth(camera)
@@ -3534,6 +3698,9 @@ func _draw_world() -> void:
 		var tail_offset := offset * maxf(0.0, 1.0 - (traveled - tail_length) / 82.0)
 		var tail: Vector2 = _world_to_screen(shot.pos - shot.direction * tail_length + tail_offset)
 		draw_line(tail, tip, shot.color, 2.0)
+		var mask := int(shot.get("element_mask", 0))
+		if mask != 0:
+			Elements.trail(self, tail, tip, mask, run_seconds)
 	if repair_drone_level > 0:
 		_draw_repair_drone()
 	for effect in effects: _draw_effect(effect)
@@ -3548,15 +3715,27 @@ func _draw_world() -> void:
 		draw_rect(view, Color(0.025, 0.035, 0.035, 0.16 if screen == "augment" else 0.42))
 
 
+func _tactical_drone_side() -> float:
+	if absf(player_motion.x) > maxf(6.0, absf(player_motion.y)):
+		return signf(player_motion.x)
+	return 0.0
+
+
 func _draw_tactical_drone(camera: Transform2D) -> void:
 	var elapsed := run_seconds - combat_drone_fire_at
 	var firing := combat_drone_fire_at >= 0.0 and elapsed < 0.21
-	var frame := (2 if elapsed < 0.075 else 3) if firing else int(run_seconds * 12.0) % 2
 	var point := _world_to_screen(combat_drone_position)
-	var tilt := combat_drone_facing.x * 0.21 if firing else sin(run_seconds * 2.4) * 0.10
-	var recoil := -combat_drone_facing * maxf(0.0, 4.0 - elapsed * 32.0) if firing else Vector2.ZERO
-	draw_set_transform_matrix(camera * Transform2D(tilt, point + recoil))
-	draw_texture_rect_region(TACTICAL_DRONE, Rect2(-23, -17, 46, 34), Rect2(frame * 64, 0, 64, 48))
+	var recoil := -combat_drone_facing * maxf(0.0, 3.0 - elapsed * 24.0) if firing else Vector2.ZERO
+	var side := _tactical_drone_side()
+	var frame_rect := Rect2(-16, -12, 32, 24)
+	if side == 0.0:
+		var frame := (2 if elapsed < 0.075 else 3) if firing else int(run_seconds * 12.0) % 2
+		draw_set_transform_matrix(camera * Transform2D(0.0, point + recoil))
+		draw_texture_rect_region(TACTICAL_DRONE, frame_rect, Rect2(frame * 64, 0, 64, 48))
+	else:
+		var tint := Color(1.16, 1.04, 1.22) if firing and elapsed < 0.07 else Color.WHITE
+		draw_set_transform_matrix(camera * Transform2D(0.0, Vector2(side, 1.0), 0.0, point + recoil))
+		draw_texture_rect(TACTICAL_DRONE_SIDE, frame_rect, false, tint)
 	draw_set_transform_matrix(camera)
 
 
@@ -3569,7 +3748,7 @@ func _draw_world_depth(camera: Transform2D) -> void:
 		if _zombie_on_screen(_world_to_screen(corpse.pos)):
 			layers.append([corpse.pos.y + 40.0, 2, corpse])
 	for enemy in enemies:
-		if _zombie_on_screen(_world_to_screen(enemy.pos), 100.0):
+		if enemy.has("pattern_pos") or _zombie_on_screen(_world_to_screen(enemy.pos), 240.0 if enemy.boss else 100.0):
 			layers.append([enemy.pos.y + 40.0, 3, enemy])
 	if treatment_remaining <= 0.0 and (screen != "landing" or landing.player_visible()):
 		layers.append([player_pos.y + 40.0 / _view_zoom(), 4, {}])
@@ -3706,11 +3885,29 @@ func _draw_structure_sprite(texture: Texture2D, column: int, row: int, feet: Vec
 func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 	var p := _world_to_screen(enemy.pos)
 	var boss := bool(enemy.get("boss", false))
+	if enemy.has("pattern_pos"):
+		var point := _world_to_screen(enemy.pattern_pos)
+		var warning_radius := _boss_pattern_radius(int(String(enemy.kind).trim_prefix("boss")))
+		draw_circle(point, warning_radius, Color(enemy.color, 0.15))
+		draw_arc(point, warning_radius, 0.0, TAU, 36, Color(enemy.color, 0.9), 3.0)
+	elif enemy.kind == "S05" and float(enemy.charge) > 0.0:
+		var buildup := clampf(float(enemy.charge) / float(enemy.ability), 0.0, 1.0)
+		draw_circle(p, 120.0, Color(1.0, 0.34, 0.13, 0.09))
+		draw_arc(p, 120.0, 0.0, TAU, 40, Color("#dd7949"), 2.0)
+		draw_arc(p, 120.0 * buildup, 0.0, TAU, 40, Color("#ffc88d"), 2.0)
+	elif enemy.has("warn_pos") and enemy.ranged and float(enemy.charge) > 0.0:
+		var target := _world_to_screen(enemy.warn_pos)
+		draw_line(p, target, Color(enemy.color, 0.64), 2.0)
+		draw_arc(target, 19.0, 0.0, TAU, 20, Color(enemy.color, 0.86), 2.0)
+	if float(enemy.get("guard_until", 0.0)) > run_seconds:
+		draw_arc(p, 57.0, 0.0, TAU, 36, Color("#b5bbc5"), 3.0)
 	var radius := PlayerProjectiles.enemy_radius(enemy)
 	if enemy.has("variant"):
-		if not _zombie_on_screen(p): return
+		if not _zombie_on_screen(p, 240.0 if boss else 100.0): return
 		if enemy.get("underground", false):
-			draw_arc(p, 18.0, 0.0, TAU, 16, Color("#a98b6270"), 2.0)
+			if enemy.has("burrow_warning"):
+				var progress := 1.0 - float(enemy.burrow_warning) / AMBUSH_WARNING
+				BurrowVisual.ground(self, p, AMBUSH_RADIUS, progress, 0.0, run_seconds)
 			return
 		var art_scale := float(enemy.get("art_scale", 1.0))
 		var lift := -30.0 if enemy.get("air", false) else 0.0
@@ -3718,13 +3915,28 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		var visual_camera := camera * transform
 		draw_set_transform_matrix(visual_camera)
 		var tint := Color.WHITE
-		if enemy.get("special", false) or boss:
-			tint = Color.WHITE.lerp(enemy.color, 0.42)
+		if enemy.get("special", false):
+			tint = [Color.WHITE, Color("#e2debb"), Color("#c0cbd8"), Color("#d9b9aa")][int(enemy.appearance) % 4]
 		elif enemy.kind != "normal" and int(enemy.get("appearance", 0)) >= 8:
 			tint = Color.WHITE.lerp(Color.from_hsv(float(int(enemy.appearance) / 8) / 7.0, 0.35, 0.91), 0.34)
 		if enemy.kind == "S17": tint.a = 0.42
+		if enemy.kind == "S05" and float(enemy.charge) > 0.0:
+			tint = tint.lerp(Color("#ff9560"), 0.35 + sin(run_seconds * 35.0) * 0.22)
+		var frozen := float(enemy.get("frozen_until", 0.0)) > run_seconds
+		var frost: Dictionary = enemy.get("freeze", {})
+		if float(frost.get("until", 0.0)) > run_seconds:
+			var coverage := clampf((run_seconds - float(frost.get("start", run_seconds))) / 1.5, 0.0, 1.0)
+			tint = tint.lerp(Color("#80d4ef"), 0.75 if frozen else 0.16 + coverage * 0.24)
+		if float(enemy.get("down_until", 0.0)) > run_seconds:
+			var axis: Vector2 = enemy.knock_direction
+			var angle := (-1.0 if axis.x < 0.0 else 1.0) * lerpf(0.0, 1.28, clampf((float(enemy.down_until) - run_seconds) / 0.16, 0.0, 1.0))
+			var tip := Transform2D(angle, Vector2.ZERO)
+			var anchor := p + Vector2(0, 28)
+			visual_camera = visual_camera * Transform2D(tip.x, tip.y, anchor - tip * anchor)
+			draw_set_transform_matrix(visual_camera)
 		ZombieVisual.draw_alive(self, enemy, p, run_seconds, visual_camera, tint, enemies.size() >= 500)
 		draw_set_transform_matrix(camera)
+		_draw_enemy_elements(enemy, p + Vector2(0, lift), frozen)
 		if float(enemy.hp) < float(enemy.max_hp):
 			var ratio := clampf(float(enemy.hp) / float(enemy.max_hp), 0.0, 1.0)
 			draw_rect(Rect2(p.x - 12, p.y - 47.0 * float(enemy.get("art_scale", 1.0)) + lift, 24, 3), Color(0, 0, 0, 0.65))
@@ -3735,6 +3947,10 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		draw_arc(p, pulse, 0, TAU, 44, Color(PALETTE.red, 0.92), 3.0)
 		_draw_cross(p, 8, PALETTE.red)
 	var c: Color = enemy.get("color", PALETTE.red)
+	var frozen := float(enemy.get("frozen_until", 0.0)) > run_seconds
+	if frozen:
+		c = c.lerp(Elements.FROST, 0.65)
+	_draw_enemy_elements(enemy, p, frozen)
 	draw_circle(p + Vector2(0, 5), radius + 2.0, Color(0, 0, 0, 0.28))
 	draw_circle(p, radius, c)
 	draw_circle(p + Vector2(0, -radius * 0.58), radius * 0.46, c.lightened(0.16))
@@ -3762,6 +3978,16 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		draw_circle(_world_to_screen(warn), 4, Color(PALETTE.red, 0.55))
 
 
+func _draw_enemy_elements(enemy: Dictionary, p: Vector2, frozen: bool) -> void:
+	var phase := run_seconds + float(enemy.get("spawn_id", 0)) * 0.17
+	if float(enemy.get("burn", {}).get("until", 0.0)) > run_seconds:
+		Elements.flame(self, p + Vector2(0, -9), Vector2.UP, phase, 0.8)
+	if float(enemy.get("poison", {}).get("until", 0.0)) > run_seconds:
+		Elements.trail(self, p + Vector2(-7, 5), p + Vector2(6, -9), Elements.POISON, phase)
+	if frozen or float(enemy.get("freeze", {}).get("until", 0.0)) > run_seconds:
+		Elements.crystals(self, p, 0.95 if frozen else 0.42)
+
+
 func _draw_enemy_projectile(shot: Dictionary) -> void:
 	var p := _world_to_screen(shot.pos)
 	var c: Color = shot.get("color", PALETTE.red)
@@ -3774,7 +4000,26 @@ func _draw_effect(effect: Dictionary) -> void:
 	var b := _world_to_screen(effect.b)
 	var alpha := clampf(float(effect.time) / 0.25, 0.0, 1.0)
 	var c: Color = effect.get("color", PALETTE.gold)
-	if effect.has("debris"):
+	if effect.has("burrow_debris"):
+		var age := 1.0 - clampf(float(effect.time) / float(effect.seconds), 0.0, 1.0)
+		BurrowVisual.burst(self, a, float(effect.burrow_debris), age)
+	elif effect.has("dot_text"):
+		var weight := clampf(float(effect.time) / float(effect.seconds), 0.0, 1.0)
+		var point := a + Vector2(-8, -53 - 18.0 * (1.0 - weight)) + Vector2(0 if c.g < 0.6 else 10, 0)
+		draw_string_outline(ThemeDB.fallback_font, point, effect.dot_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, 3, Color("#202220"))
+		draw_string(ThemeDB.fallback_font, point, effect.dot_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(c, weight))
+	elif effect.has("ice_shatter"):
+		Elements.shatter(self, a, 1.0 - clampf(float(effect.time) / float(effect.seconds), 0.0, 1.0))
+	elif effect.get("fire_cone", false):
+		var forward := a.direction_to(b)
+		for i in range(1, 6):
+			var fuzz := forward.orthogonal() * sin(run_seconds * 37.0 + i * 2.0) * i * 1.7
+			Elements.flame(self, a.lerp(b, float(i) / 6.0) + fuzz, forward, run_seconds + i, 1.0 + float(i) * 0.13)
+	elif int(effect.get("element_mask", 0)) == Elements.SHOCK:
+		Elements.spark(self, a, b, minf(1.0, alpha * 1.7))
+	elif int(effect.get("element_mask", 0)) != 0:
+		Elements.trail(self, a, b, int(effect.element_mask), run_seconds)
+	elif effect.has("debris"):
 		var progress := 1.0 - clampf(float(effect.time) / 0.32, 0.0, 1.0)
 		for i in range(7):
 			var rubble := a + Vector2.from_angle(float(i) * TAU / 7.0) * (7.0 + 29.0 * progress)
@@ -3801,9 +4046,15 @@ func _draw_player(p: Vector2) -> void:
 		var opacity := 0.46 * clampf((float(sample.until) - run_seconds) / DASH_ECHO_LIFE, 0.0, 1.0)
 		if opacity > 0.0:
 			var direction: Vector2 = sample.direction
-			_draw_operator_sprite(point, direction, direction * 225.0, false, opacity)
+			if sample.get("shield", false):
+				_infantry_visual.draw_shield_charge(self, point, direction, Color(0.55, 0.86, 0.96, opacity))
+			else:
+				_draw_operator_sprite(point, direction, direction * 225.0, false, opacity)
 	var dir := player_facing.normalized()
-	_draw_operator_sprite(p, dir, player_motion, dash_timer > 0.0)
+	if shield_dash and dash_timer > 0.0:
+		_infantry_visual.draw_shield_charge(self, p, dash_direction, Color.WHITE)
+	else:
+		_draw_operator_sprite(p, dir, player_motion, dash_timer > 0.0)
 	if screen == "play" and manual_attack and not build_mode:
 		var color := Color(PALETTE.gold, 0.55)
 		var aim_length := p.distance_to(aim_screen)
@@ -3820,7 +4071,7 @@ func _draw_operator_sprite(p: Vector2, dir: Vector2, motion: Vector2, dashing: b
 				reload_progress = 1.0 - player_reload_timer / float(Data.CHARACTERS[player_index].reload)
 			_harin_visual.draw(self, p, dir, motion, dashing, reload_progress, echo)
 		"yujin":
-			_yujin_visual.draw(self, p, dir, motion, dashing, echo)
+			_yujin_visual.draw(self, p, dir, motion, dashing, echo, _weapon_elements() if echo == 0.0 else 0, run_seconds)
 		_:
 			_infantry_visual.draw(self, p, kind, dir, motion, dashing, echo)
 

@@ -24,11 +24,11 @@ const ENEMIES: Dictionary = {
 }
 
 const BOSSES: Dictionary = {
-	20: {"name": "감염 지휘체", "hp": 5100.0, "speed": 41.0, "attack": 19.0, "color": Color("#a78669"), "pattern": "추격"},
-	60: {"name": "변이 수호체", "hp": 13000.0, "speed": 34.0, "attack": 28.0, "color": Color("#9a8aaf"), "pattern": "추격"},
-	40: {"name": "철갑 포식자", "hp": 9500.0, "speed": 37.0, "attack": 24.0, "color": Color("#9d6575"), "pattern": "방어"},
-	80: {"name": "파쇄자", "hp": 18000.0, "speed": 32.0, "attack": 34.0, "color": Color("#c27854"), "pattern": "철거"},
-	100: {"name": "군체 지배자", "hp": 30000.0, "speed": 30.0, "attack": 45.0, "color": Color("#b24962"), "pattern": "군체"}
+	20: {"name": "감염 지휘체", "hp": 5100.0, "speed": 41.0, "attack": 19.0, "color": Color("#a78669"), "pattern": "포효", "scale": 2.3},
+	60: {"name": "변이 수호체", "hp": 13000.0, "speed": 34.0, "attack": 28.0, "color": Color("#9a8aaf"), "pattern": "충격", "scale": 3.0},
+	40: {"name": "철갑 포식자", "hp": 9500.0, "speed": 37.0, "attack": 24.0, "color": Color("#9d6575"), "pattern": "방어", "scale": 2.8},
+	80: {"name": "파쇄자", "hp": 18000.0, "speed": 32.0, "attack": 34.0, "color": Color("#c27854"), "pattern": "철거", "scale": 3.4},
+	100: {"name": "군체 지배자", "hp": 30000.0, "speed": 30.0, "attack": 45.0, "color": Color("#b24962"), "pattern": "군체", "scale": 3.8}
 }
 
 const TURRET_CAP := 10
