@@ -561,7 +561,6 @@ func _test_jeju_battlefield(game: Control) -> void:
 		game.call("_choose_specialization", Paths.PATHS[Data.CHARACTERS[hero].id][0].id)
 		var intro: Control = game.get("flow_prologue")
 		intro.call("_process", 4.0)
-		intro.call("_process", 4.0)
 		_check(game.get("screen") == "landing", "each operator reaches the real-map landing")
 		game.call("_update_landing", 3.5)
 		var landing: RefCounted = game.get("landing")

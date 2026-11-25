@@ -981,7 +981,7 @@ func _choose_specialization(id: String) -> void:
 	specialization_id = id
 	intro_index = 0
 	_show_screen("intro")
-	flow_prologue.start(player_index, LANDING_ZONE)
+	flow_prologue.start()
 func _finish_boot() -> void:
 	_show_screen("menu")
 func _on_menu_start() -> void:
