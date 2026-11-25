@@ -1,6 +1,7 @@
 extends SceneTree
 
 const ZombieVisual = preload("res://scripts/reclaim/zombie_visual.gd")
+const Paths = preload("res://scripts/reclaim/specializations.gd")
 const Data = preload("res://scripts/reclaim/data.gd")
 var failures: Array[String] = []
 
@@ -25,7 +26,9 @@ func _run() -> void:
 	game.call("_choose_character", 2)
 	_check(game.get("screen") == "difficulty", "character choice opens difficulty selection")
 	game.call("_choose_difficulty", 4)
-	_check(game.get("screen") == "intro" and game.get("difficulty_index") == 4, "difficulty choice opens the prologue")
+	_check(game.get("screen") == "specialization" and game.get("difficulty_index") == 4, "difficulty choice opens specialization")
+	game.call("_choose_specialization", "ricochet")
+	_check(game.get("screen") == "intro", "confirming an owned specialization opens the prologue")
 	_check(Data.CHARACTERS.size() == 4, "four selectable operators in data")
 	_check(Data.ENEMIES.size() == 5, "five enemy families in data")
 	_check(Data.TURRETS.size() == 7, "seven turret families including anti-air")
@@ -261,9 +264,78 @@ func _run() -> void:
 	_test_repair_drone(resumed)
 	_test_integrated_progression(resumed)
 	_test_jeju_encounters(resumed)
+	_test_specializations(resumed)
 	resumed.queue_free()
 	await process_frame
 	_finish()
+
+
+func _test_specializations(game: Control) -> void:
+	for hero: Dictionary in Data.CHARACTERS:
+		var paths: Array = Paths.PATHS[hero.id]
+		_check(paths.size() == 3, "%s has three specialization choices" % hero.id)
+		for path: Dictionary in paths:
+			var previous := {}
+			for level in Paths.LEVELS:
+				var current := Paths.bonuses(path, level)
+				_check(current != previous, "%s gains an effect at level %s" % [path.id, level])
+				previous = current
+	game.set("player_index", 2)
+	game.set("specialization_id", "ricochet")
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	var shots: Array = game.get("player_projectiles").shots
+	game.call("_attack_player")
+	_check(shots.size() == 1 and int(game.call("_path_bonus", "ricochet")) == 1, "Harin starts with a ricochet specialization")
+	game.set("player_level", 7)
+	game.call("_refresh_specialization")
+	_check(game.call("_path_bonus", "active_ricochet") == 0.0, "level eight Q bonus remains locked at seven")
+	game.set("player_xp", 200.0)
+	game.call("_check_level_up")
+	_check(game.get("player_level") >= 8 and game.call("_path_bonus", "active_ricochet") == 1.0, "earned level eight unlocks the Q bonus")
+	game.call("_show_screen", "play")
+	game.call("_use_operator_skill")
+	shots.clear()
+	game.call("_attack_player")
+	var enhanced: int = shots[0].ricochets
+	_check(enhanced == 2, "the level eight Q bonus increases ricochet on the actual projectile")
+	game.call("_save_all")
+	game.set("specialization_id", "")
+	game.call("_load_saved_run")
+	_check(game.get("specialization_id") == "ricochet" and game.call("_path_bonus", "active_ricochet") == 1.0, "continue restores the chosen path and unlocked effects")
+	game.set("player_index", 0)
+	game.set("specialization_id", "defense")
+	game.call("_reset_run")
+	game.call("_show_screen", "play")
+	game.set("player_level", 8)
+	game.call("_refresh_specialization")
+	var hq: Dictionary = game.get("structures")[0]
+	hq.hp -= 150.0
+	var hurt_hq := float(hq.hp)
+	game.call("_use_operator_skill")
+	_check(is_equal_approx(float(hq.hp) - hurt_hq, float(hq.max_hp) * 0.06), "defense Q restores damaged headquarters health")
+	game.set("player_index", 1)
+	game.set("specialization_id", "reload")
+	game.call("_reset_run")
+	game.set("player_level", 8)
+	game.call("_refresh_specialization")
+	game.set("player_magazine", 0)
+	game.set("player_reload_timer", 1.0)
+	game.call("_use_operator_skill")
+	_check(game.get("player_magazine") == game.call("_magazine_capacity") and float(game.get("player_reload_timer")) == 0.0,
+		"reload Q fills and cancels the current reload")
+	game.set("player_index", 3)
+	game.set("specialization_id", "endurance")
+	game.call("_reset_run")
+	game.set("player_level", 8)
+	game.call("_refresh_specialization")
+	game.set("saw_heat", 70.0)
+	game.call("_use_operator_skill")
+	game.call("_attack_player")
+	_check(float(game.get("saw_heat")) == 0.0 and float(game.get("skill_active_until")) == 3.0,
+		"endurance Q removes heat and suppresses the next cut's heat")
+	game.set("specialization_id", "")
+	game.call("_refresh_specialization")
 
 
 func _test_jeju_encounters(game: Control) -> void:
@@ -486,6 +558,7 @@ func _test_jeju_battlefield(game: Control) -> void:
 	for hero in range(Data.CHARACTERS.size()):
 		game.call("_choose_character", hero)
 		game.call("_choose_difficulty", 1)
+		game.call("_choose_specialization", Paths.PATHS[Data.CHARACTERS[hero].id][0].id)
 		var intro: Control = game.get("flow_prologue")
 		intro.call("_process", 4.0)
 		intro.call("_process", 4.0)
@@ -499,9 +572,12 @@ func _test_jeju_battlefield(game: Control) -> void:
 			"natural landing hands control to each selected operator with HQ only")
 		game.call("_choose_character", hero)
 		game.call("_choose_difficulty", 1)
+		game.call("_choose_specialization", Paths.PATHS[Data.CHARACTERS[hero].id][1].id)
 		intro.call("skip")
 		_check(game.get("screen") == "play" and landing.call("heli_visible") == false and game.get("hq_build_ratio") == 1.0,
 			"skipping leaves every operator in the same playable state")
+	game.set("specialization_id", "")
+	game.call("_refresh_specialization")
 
 
 func _test_enemy_wall_cover(game: Control) -> void:

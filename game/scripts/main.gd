@@ -31,6 +31,8 @@ const FlatArena = preload("res://scripts/reclaim/flat_arena.gd")
 const BootScreen = preload("res://scripts/reclaim/flow/boot_screen.gd")
 const MainMenuScreen = preload("res://scripts/reclaim/flow/main_menu_screen.gd")
 const CharacterSelectScreen = preload("res://scripts/reclaim/flow/character_select_screen.gd")
+const Paths = preload("res://scripts/reclaim/specializations.gd")
+const SpecializationScreen = preload("res://scripts/reclaim/flow/specialization_screen.gd")
 const DifficultyScreen = preload("res://scripts/reclaim/flow/difficulty_screen.gd")
 const PrologueScreen = preload("res://scripts/reclaim/flow/prologue_screen.gd")
 const LandingSequence = preload("res://scripts/reclaim/flow/landing_sequence.gd")
@@ -215,6 +217,10 @@ var boot_screen: Control
 var flow_menu: Control
 var flow_character: Control
 var flow_difficulty: Control
+var specialization_screen: Control
+var specialization_id := ""
+var specialization: Dictionary = {}
+var specialization_bonuses: Dictionary = {}
 var flow_prologue: Control
 var flow_sfx: Node
 var landing = LandingSequence.new()
@@ -387,6 +393,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			skip_landing()
 			get_viewport().set_input_as_handled()
 			return
+		if code == KEY_ESCAPE and screen == "specialization":
+			_show_screen("difficulty")
+			get_viewport().set_input_as_handled()
+			return
 		if code == pause_key:
 			if screen == "play":
 				_toggle_pause()
@@ -451,6 +461,11 @@ func _build_ui() -> void:
 	_build_character_screen()
 	difficulty_screen = _new_screen()
 	_build_difficulty_screen()
+	specialization_screen = SpecializationScreen.new()
+	specialization_screen.hide()
+	add_child(specialization_screen)
+	specialization_screen.chosen.connect(_choose_specialization)
+	specialization_screen.back_pressed.connect(func(): _ui_sound(); _show_screen("difficulty"))
 	intro_screen = _new_screen()
 	_build_intro_screen()
 	settings_screen = _new_screen()
@@ -907,6 +922,7 @@ func _show_screen(which: String) -> void:
 	screen = which
 	operator_info.visible = which == "info"
 	boot_screen.visible = which == "boot"
+	specialization_screen.visible = which == "specialization"
 	for c in [menu_screen, character_screen, difficulty_screen, intro_screen, settings_screen, perk_screen, game_ui, pause_screen, result_screen, augment_screen]:
 		c.visible = false
 	match which:
@@ -954,6 +970,15 @@ func _choose_character(index: int) -> void:
 func _choose_difficulty(index: int) -> void:
 	_ui_sound(true)
 	difficulty_index = clampi(index, 0, Data.DIFFICULTIES.size() - 1)
+	specialization_screen.setup(player_index)
+	_show_screen("specialization")
+
+
+func _choose_specialization(id: String) -> void:
+	if screen != "specialization" or Paths.find_path(Data.CHARACTERS[player_index].id, id).is_empty():
+		return
+	_ui_sound(true)
+	specialization_id = id
 	intro_index = 0
 	_show_screen("intro")
 	flow_prologue.start(player_index, LANDING_ZONE)
@@ -1055,6 +1080,7 @@ func _reset_run() -> void:
 	dead_count = 0
 	player_xp = 0.0
 	player_level = 1
+	_refresh_specialization()
 	augments_taken = 0
 	augment_reroll_used = 0
 	picked_augment_ids.clear()
@@ -1172,6 +1198,8 @@ func _load_saved_run() -> void:
 	money = int(state.get("money", 0))
 	kills = int(state.get("kills", 0))
 	player_level = int(state.get("level", 1))
+	specialization_id = String(state.get("specialization", ""))
+	_refresh_specialization()
 	player_xp = float(state.get("xp", 0.0))
 	boss_kills = int(state.get("boss_kills", 0))
 	var hero: Dictionary = Data.CHARACTERS[player_index]
@@ -1813,11 +1841,22 @@ func _update_combat_drone(delta: float) -> void:
 	var damage := 24.0 * drone_level * player_mod_damage * _csv_factor("combat_drone_damage")
 	if run_seconds - last_dash_at < 5.0:
 		damage *= _csv_factor("after_dash_drone")
+	var slow_time := _path_bonus("drone_slow")
+	if slow_time > 0.0 and player_pos.distance_squared_to(target_pos) <= 155.0 * 155.0:
+		if run_seconds < skill_active_until:
+			slow_time += _path_bonus("drone_active_slow")
+		_apply_specialization_slow(enemies[drone_target], slow_time, 0.8)
 	_damage_enemy(drone_target, damage, "drone", origin)
 	var side := _tactical_drone_side()
 	var muzzle := Vector2(0, 8) if side == 0.0 else Vector2(8.0 * side, 6.0)
 	var emitter := origin + muzzle if harin else origin
 	effects.append({"a": emitter, "b": target_pos, "time": 0.15, "color": Color("#b88dfb") if harin else PALETTE.blue})
+
+
+func _apply_specialization_slow(enemy: Dictionary, duration: float, speed_factor: float) -> void:
+	var existing := float(enemy.get("slow_factor", 1.0)) if float(enemy.slow) > 0.0 else 1.0
+	enemy.slow = maxf(float(enemy.slow), duration)
+	enemy.slow_factor = minf(existing, speed_factor)
 
 
 func _use_operator_skill() -> void:
@@ -1837,15 +1876,24 @@ func _use_operator_skill() -> void:
 			dash_cooldown = maxf(dash_cooldown, dash_timer)
 			shield_dash = true
 			shield_targets.clear()
+			var repair := _path_bonus("shield_repair")
+			var hq_index := _hq_index()
+			if repair > 0.0 and hq_index >= 0 and player_pos.distance_squared_to(_hq_position()) <= 264.0 * 264.0:
+				var hq := structures[hq_index]
+				hq.hp = minf(float(hq.max_hp), float(hq.hp) + float(hq.max_hp) * repair / 100.0)
 			if sound_on:
 				AudioDirector.play_shield_windup()
-			skill_ready_at = run_seconds + Skills.SHIELD_COOLDOWN
+			skill_ready_at = run_seconds + Skills.SHIELD_COOLDOWN - _path_bonus("skill_cooldown")
 		"si":
-			skill_active_until = run_seconds + Skills.FOCUS_DURATION
-			skill_ready_at = run_seconds + Skills.FOCUS_COOLDOWN
+			skill_active_until = run_seconds + Skills.FOCUS_DURATION + _path_bonus("skill_duration")
+			if _path_bonus("focus_refill") > 0.0:
+				player_magazine = _magazine_capacity()
+				player_reload_timer = 0.0
+				last_reload_at = run_seconds
+			skill_ready_at = run_seconds + Skills.FOCUS_COOLDOWN - _path_bonus("skill_cooldown")
 		"harin":
-			skill_active_until = run_seconds + Skills.DRONE_DURATION
-			skill_ready_at = run_seconds + Skills.DRONE_COOLDOWN
+			skill_active_until = run_seconds + Skills.DRONE_DURATION + _path_bonus("skill_duration")
+			skill_ready_at = run_seconds + Skills.DRONE_COOLDOWN - _path_bonus("skill_cooldown")
 			drone_timer = 0.0
 		"yujin":
 			if saw_heat <= 0.0:
@@ -1853,7 +1901,10 @@ func _use_operator_skill() -> void:
 				return
 			saw_heat = 0.0
 			saw_overheated = false
-			skill_ready_at = run_seconds + Skills.VENT_COOLDOWN
+			skill_active_until = run_seconds + maxf(_path_bonus("cooling_window"), _path_bonus("sweep_window"))
+			if _path_bonus("vent_repair") > 0.0:
+				_emergency_repair()
+			skill_ready_at = run_seconds + Skills.VENT_COOLDOWN - _path_bonus("skill_cooldown")
 	_show_toast(Skills.PROFILES[hero][0])
 
 
@@ -1865,7 +1916,7 @@ func _resolve_shield_dash(previous: Vector2) -> void:
 		if target.get("air", false) or target.get("underground", false) or shield_targets.has(target.spawn_id):
 			continue
 		var closest := Geometry2D.get_closest_point_to_segment(target.pos, previous, player_pos)
-		if closest.distance_squared_to(target.pos) <= 31.0 * 31.0:
+		if closest.distance_squared_to(target.pos) <= pow(31.0 + _path_bonus("shield_width"), 2):
 			if shield_targets.is_empty():
 				AudioDirector.stop_shield_windup()
 				if sound_on:
@@ -1874,9 +1925,9 @@ func _resolve_shield_dash(previous: Vector2) -> void:
 			var push: Vector2 = (dash_direction + (Vector2(target.pos) - closest).limit_length(24.0) / 36.0).normalized()
 			target.knock_direction = push
 			target.knock_left = 0.11 if target.boss else 0.22
-			target.down_until = run_seconds + (0.18 if target.boss else 0.55)
+			target.down_until = run_seconds + (0.18 if target.boss else 0.55 + _path_bonus("shield_down"))
 			_interrupt_enemy_attack(target)
-			_damage_enemy(i, Skills.SHIELD_DAMAGE, "shield", previous)
+			_damage_enemy(i, Skills.SHIELD_DAMAGE * (1.0 + _path_bonus("shield_damage") / 100.0), "shield", previous)
 
 
 func _interrupt_enemy_attack(enemy: Dictionary) -> void:
@@ -1947,18 +1998,20 @@ func _attack_player() -> void:
 	var interval := _weapon_interval(hero, player_mod_rate * (_csv_factor("rate") + _recent_combat_bonus("crit_rate", "kill_rate") / 100.0))
 	if kind == "yujin":
 		saw_last_cut = run_seconds
-		if not saw_overheated:
-			saw_heat = minf(100.0, saw_heat + interval * Skills.SAW_HEAT_PER_SECOND)
+		if not saw_overheated and (run_seconds >= skill_active_until or _path_bonus("cooling_window") == 0.0):
+			saw_heat = minf(100.0, saw_heat + interval * Skills.SAW_HEAT_PER_SECOND * (1.0 - _path_bonus("saw_heat") / 100.0))
 			saw_overheated = saw_heat >= 100.0
 		_yujin_visual.attack(interval, player_facing)
 		player_attack_timer = interval
 		var direction := player_facing.normalized()
 		var reach := _weapon_range(hero)
+		var sweep := 0.35 if run_seconds < skill_active_until and _path_bonus("sweep_window") > 0.0 else 0.0
+		var cone := cos(deg_to_rad(minf(85.0, 45.0 * (_csv_factor("saw_angle") + sweep))))
 		var made_contact := false
 		for i in range(enemies.size() - 1, -1, -1):
 			var target_pos: Vector2 = enemies[i].pos
 			var toward := target_pos - player_pos
-			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > cos(deg_to_rad(minf(85.0, 45.0 * _csv_factor("saw_angle"))))):
+			if toward.length() <= reach and (toward.is_zero_approx() or direction.dot(toward.normalized()) > cone):
 				_damage_enemy(i, _weapon_damage(hero, player_mod_damage), "chainsaw")
 				saw_chain = mini(6, saw_chain + 1)
 				made_contact = true
@@ -1985,9 +2038,12 @@ func _attack_player() -> void:
 	var damage := _weapon_damage(hero, player_mod_damage) / float(pellets)
 	var color: Color = PALETTE.gold if kind == "tae" else PALETTE.blue
 	var element_mask := _weapon_elements()
+	var skill_active := run_seconds < skill_active_until
+	var pierce := int(_csv_bonus("pierce") + (_path_bonus("active_pierce") if skill_active else 0.0))
+	var ricochet := int(_csv_bonus("ricochet") + (_path_bonus("active_ricochet") if skill_active else 0.0))
 	for pellet in range(pellets):
-		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 * _csv_reduction("pellet_focus") if kind == "tae" else 0.0)
-		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + int(_csv_bonus("pierce"))), color, _csv_factor("projectile_speed"), int(_csv_bonus("ricochet")), tracer_offset, element_mask)
+		var spread := (float(pellet) - float(pellets - 1) * 0.5) * (0.105 * _csv_reduction("pellet_focus") * (1.0 + _path_bonus("shotgun_spread") / 100.0) if kind == "tae" else 0.0)
+		player_projectiles.fire(muzzle, direction.rotated(spread), max_range, damage, maxi(1, player_pierce + 1 + pierce), color, _csv_factor("projectile_speed"), ricochet, tracer_offset, element_mask)
 
 
 func _play_saw_attack(made_contact: bool) -> void:
@@ -2707,6 +2763,8 @@ func _damage_enemy(index: int, amount: float, source: String, origin: Variant = 
 				amount *= 1.5 + _csv_bonus("crit_damage") / 100.0
 				last_crit_at = run_seconds
 		amount *= 1.0 + bonus / 100.0
+		if source == "player" and _path_bonus("shotgun_slow") > 0.0:
+			_apply_specialization_slow(enemy, _path_bonus("shotgun_slow"), 0.75)
 		if source != "drone":
 			_apply_weapon_status(enemy, amount)
 	if bool(enemy.get("boss", false)) and float(enemy.get("guard_until", 0.0)) > run_seconds:
@@ -2737,7 +2795,7 @@ func _damage_enemy(index: int, amount: float, source: String, origin: Variant = 
 				player_hp = minf(_effective_player_max_hp(), player_hp + _effective_player_max_hp() * 0.04 * _csv_factor("heal"))
 			if source == "chainsaw":
 				saw_repair_kills += 1
-				if saw_repair_kills >= Skills.SAW_REPAIR_KILLS:
+				if saw_repair_kills >= Skills.SAW_REPAIR_KILLS - int(_path_bonus("repair_kills")):
 					saw_repair_kills = 0
 					_emergency_repair()
 				player_hp = minf(_effective_player_max_hp(), player_hp + _csv_bonus("saw_kill_heal") / 100.0 * amount)
@@ -2769,14 +2827,14 @@ func _emergency_repair() -> void:
 	var closest := 330.0 * 330.0
 	var damaged: Dictionary = {}
 	for facility in structures:
-		if facility.kind == "hq" or float(facility.hp) <= 0.0 or float(facility.hp) >= float(facility.max_hp):
+		if (facility.kind == "hq" and _path_bonus("repair_hq") == 0.0) or float(facility.hp) <= 0.0 or float(facility.hp) >= float(facility.max_hp):
 			continue
 		var distance := player_pos.distance_squared_to(_entry_world_center(facility))
 		if distance < closest:
 			closest = distance
 			damaged = facility
 	if not damaged.is_empty():
-		damaged.hp = minf(float(damaged.max_hp), float(damaged.hp) + float(damaged.max_hp) * 0.06)
+		damaged.hp = minf(float(damaged.max_hp), float(damaged.hp) + float(damaged.max_hp) * (0.06 + _path_bonus("repair_percent") / 100.0))
 
 
 func _zombie_hit_style(source: String) -> String:
@@ -3105,6 +3163,7 @@ func _update_progress(_delta: float) -> void:
 
 
 func _check_level_up() -> void:
+	var prior_level := player_level
 	while augments_taken < MAX_XP_CHOICES:
 		var required := 16.0 + player_level * 9.0 + pow(float(player_level), 1.35) * 2.2
 		if player_xp < required:
@@ -3113,13 +3172,33 @@ func _check_level_up() -> void:
 		player_level += 1
 		augments_taken += 1
 		augment_queue += 1
+	if prior_level < player_level:
+		_refresh_specialization()
+		if not specialization.is_empty():
+			var unlocked: PackedStringArray = []
+			for i in range(Paths.LEVELS.size()):
+				if prior_level < int(Paths.LEVELS[i]) and player_level >= int(Paths.LEVELS[i]):
+					unlocked.append(String(specialization.tiers[i][0]))
+			if not unlocked.is_empty():
+				_show_toast("특화 해금 · %s" % " / ".join(unlocked))
 	if augment_queue > 0 and screen == "play":
 		augment_reroll_used = 0
 		_offer_augments()
 
 
+func _refresh_specialization() -> void:
+	specialization = Paths.find_path(Data.CHARACTERS[player_index].id, specialization_id)
+	if specialization.is_empty():
+		specialization_id = ""
+	specialization_bonuses = Paths.bonuses(specialization, player_level)
+
+
+func _path_bonus(key: String) -> float:
+	return float(specialization_bonuses.get(key, 0.0))
+
+
 func _csv_bonus(key: String) -> float:
-	var amount := float(csv_passive.get(key, 0.0))
+	var amount := float(csv_passive.get(key, 0.0)) + _path_bonus(key)
 	if not csv_conditional.has(key):
 		return amount
 	var timed: Dictionary = csv_conditional[key]
@@ -3335,7 +3414,7 @@ func _weapon_range(hero: Dictionary) -> float:
 
 
 func _weapon_interval(hero: Dictionary, rate: float) -> float:
-	var focus := Skills.FOCUS_RATE if hero.id == "si" and run_seconds < skill_active_until else 1.0
+	var focus := Skills.FOCUS_RATE + _path_bonus("focus_rate") / 100.0 if hero.id == "si" and run_seconds < skill_active_until else 1.0
 	return maxf(0.08 if hero.id == "yujin" else 0.05, float(hero.rate) / (rate * focus))
 
 
@@ -3552,11 +3631,25 @@ func _refresh_hud() -> void:
 			var active := maxf(0.0, skill_active_until - run_seconds)
 			var state_text := "작동 %d초" % ceili(active) if active > 0.0 else "%d초" % ceili(cooldown) if cooldown > 0.0 else ("열기 없음" if hero_id == "yujin" and saw_heat <= 0.0 else "준비")
 			skill_button.text = "%s [Q] · %s" % [profile[0], state_text]
-			skill_button.tooltip_text = String(profile[1])
+			var tip := String(profile[1])
+			if not specialization.is_empty():
+				tip += "\n%s · Lv.%d" % [specialization.name, player_level]
+				for i in range(Paths.LEVELS.size()):
+					if player_level < int(Paths.LEVELS[i]):
+						tip += "\n다음 해금 · Lv.%d %s" % [Paths.LEVELS[i], specialization.tiers[i][0]]
+						break
+			skill_button.tooltip_text = tip
 			skill_button.disabled = screen != "play" or treatment_remaining > 0.0 or cooldown > 0.0 or (hero_id == "yujin" and saw_heat <= 0.0)
 			dash_status.text = "대시 [%s]  %s" % [OS.get_keycode_string(dash_key), "%d초" % ceili(dash_cooldown) if dash_cooldown > 0.0 else "준비"]
 		combat_label.text = "%s [Tab]  ·  %s" % ["수동" if manual_attack else "자동", ammo]
-		status_label.text = "치료 중 · %d초 남음" % ceili(treatment_remaining) if treatment_remaining > 0.0 else ("좌클릭 유지: 사격" if manual_attack and not build_open else "")
+		var combat_hint := "좌클릭 유지: 사격" if manual_attack and not build_open else ""
+		if combat_hint.is_empty() and not specialization.is_empty():
+			combat_hint = "%s · Lv.%d" % [specialization.name, player_level]
+			for threshold: int in Paths.LEVELS:
+				if player_level < threshold:
+					combat_hint += " · 다음 해금 Lv.%d" % threshold
+					break
+		status_label.text = "치료 중 · %d초 남음" % ceili(treatment_remaining) if treatment_remaining > 0.0 else combat_hint
 		var inspector := run_hud.find_child("Inspector", true, false) as Control
 		if inspector.visible and selected_entity >= 0 and selected_entity < structures.size():
 			var facility := structures[selected_entity]
@@ -3582,6 +3675,7 @@ func _save_all() -> void:
 					row.burrow_warning = e.burrow_warning
 			enemy_rows.append(row)
 		saved_run = {"hero": player_index, "difficulty": difficulty_index, "stage": stage, "stage_elapsed": stage_elapsed, "run_seconds": run_seconds, "money": money, "kills": kills, "level": player_level, "xp": player_xp, "boss_kills": boss_kills, "player_hp": player_hp, "player_max_hp": player_max_hp, "player_pos": [player_pos.x, player_pos.y], "structures": structure_rows, "enemies": enemy_rows, "mods": {"damage": player_mod_damage, "rate": player_mod_rate, "speed": player_mod_speed, "range": player_mod_range, "armor": player_mod_armor, "xp": player_mod_xp, "salvage": player_mod_salvage, "build": player_mod_build, "building_hp": player_mod_building_hp, "turret_damage": player_mod_turret_damage, "turret_rate": player_mod_turret_rate, "pellets": player_extra_pellets, "pierce": player_pierce, "drone": player_drone_level, "augments": augments_taken, "picked": picked_augment_ids}}
+		saved_run["specialization"] = specialization_id
 		saved_run["operator_skill"] = {"ready": skill_ready_at, "active": skill_active_until,
 			"heat": saw_heat, "overheated": saw_overheated, "repair_kills": saw_repair_kills}
 		saved_run["boss_flags"] = boss_spawned.keys()
