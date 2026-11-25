@@ -3639,6 +3639,11 @@ func _world_to_screen(point: Vector2) -> Vector2:
 	return point - jeju_map.camera_center(player_pos, size, _view_zoom()) + size * 0.5
 
 
+func _world_to_viewport(point: Vector2) -> Vector2:
+	var center := jeju_map.camera_center(player_pos, size, _view_zoom())
+	return size * 0.5 + (point - center) * _view_zoom()
+
+
 func _view_zoom() -> float:
 	return 1.0 if screen == "landing" else camera_zoom
 
@@ -3721,17 +3726,17 @@ func _tactical_drone_side() -> float:
 func _draw_tactical_drone(camera: Transform2D) -> void:
 	var elapsed := run_seconds - combat_drone_fire_at
 	var firing := combat_drone_fire_at >= 0.0 and elapsed < 0.21
-	var point := _world_to_screen(combat_drone_position)
+	var point := _world_to_viewport(combat_drone_position)
 	var recoil := -combat_drone_facing * maxf(0.0, 3.0 - elapsed * 24.0) if firing else Vector2.ZERO
 	var side := _tactical_drone_side()
 	var frame_rect := Rect2(-16, -12, 32, 24)
 	if side == 0.0:
 		var frame := (2 if elapsed < 0.075 else 3) if firing else int(run_seconds * 12.0) % 2
-		draw_set_transform_matrix(camera * Transform2D(0.0, point + recoil))
+		draw_set_transform_matrix(Transform2D(0.0, (point + recoil).round()))
 		draw_texture_rect_region(TACTICAL_DRONE, frame_rect, Rect2(frame * 64, 0, 64, 48))
 	else:
 		var tint := Color(1.16, 1.04, 1.22) if firing and elapsed < 0.07 else Color.WHITE
-		draw_set_transform_matrix(camera * Transform2D(0.0, Vector2(side, 1.0), 0.0, point + recoil))
+		draw_set_transform_matrix(Transform2D(0.0, Vector2(side, 1.0), 0.0, (point + recoil).round()))
 		draw_texture_rect(TACTICAL_DRONE_SIDE, frame_rect, false, tint)
 	draw_set_transform_matrix(camera)
 
@@ -3758,7 +3763,7 @@ func _draw_world_depth(camera: Transform2D) -> void:
 			4:
 				# Draw at the camera focus point in screen pixels, then restore the world transform.
 				draw_set_transform(Vector2.ZERO)
-				_draw_player(camera * _world_to_screen(player_pos))
+				_draw_player(_world_to_viewport(player_pos).round())
 				draw_set_transform_matrix(camera)
 
 
@@ -4039,7 +4044,7 @@ func _draw_effect(effect: Dictionary) -> void:
 
 func _draw_player(p: Vector2) -> void:
 	for sample in dash_echoes:
-		var point := size * 0.5 + (_world_to_screen(sample.pos) - size * 0.5) * _view_zoom()
+		var point := _world_to_viewport(sample.pos).round()
 		var opacity := 0.46 * clampf((float(sample.until) - run_seconds) / DASH_ECHO_LIFE, 0.0, 1.0)
 		if opacity > 0.0:
 			var direction: Vector2 = sample.direction

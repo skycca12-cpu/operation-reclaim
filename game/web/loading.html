@@ -54,6 +54,10 @@
       const pct = document.getElementById('loading-pct');
       // keyboard focus for WASD: clicking anywhere focuses the game canvas
       canvas.addEventListener('pointerdown', () => canvas.focus());
+      canvas.addEventListener('wheel', (event) => {
+        // Ctrl/Command-wheel over the game belongs to the battlefield camera.
+        if (event.ctrlKey || event.metaKey) event.preventDefault();
+      }, { passive: false });
       retry.addEventListener('click', () => window.location.reload());
       let failed = false;
       let ready = false;
