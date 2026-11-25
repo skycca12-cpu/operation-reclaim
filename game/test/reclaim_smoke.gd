@@ -267,6 +267,9 @@ func _run() -> void:
 
 
 func _test_jeju_encounters(game: Control) -> void:
+	_check(ZombieVisual.death_facing({"row": 3}, 1.0) == 3
+		and ZombieVisual.death_facing({"row": 3, "attack_until": 2.0, "attack_direction": Vector2.LEFT}, 1.0) == 1,
+		"death keeps movement facing or the active attack facing")
 	game.call("_reset_run")
 	game.call("_show_screen", "play")
 	var enemies: Array = game.get("enemies")
@@ -551,8 +554,8 @@ func _test_character_augments(game: Control) -> void:
 	game.set("player_index", 3)
 	game.call("_reset_run")
 	var options: Array = game.call("_eligible_augments")
-	_check(options.any(func(card): return card.hero == "yujin") and not options.any(func(card): return card.hero == "harin" or card.key == "magazine"),
-		"Yujin sees her exclusive cards and excludes magazine upgrades")
+	_check(not options.is_empty() and options.all(func(card): return Catalog.PLAYTEST_IDS.has(card.id) and card.key != "magazine"),
+		"Yujin only sees cards from the first playtest rotation and excludes magazine upgrades")
 	game.set("player_index", 2)
 	game.call("_reset_run")
 	options = game.call("_eligible_augments")
@@ -862,7 +865,8 @@ func _test_normal_zombies(game: Node, enemy: Dictionary) -> void:
 
 func _test_operator_skills(game: Control) -> void:
 	for cue in ["player.shotgun", "player.m4", "player.chainsaw", "player.chainsaw_rev", "enemy.low",
-			"enemy.high", "enemy.elderly", "enemy.boss_arrival", "player.shield_impact"]:
+			"enemy.high", "enemy.elderly", "enemy.boss_arrival", "player.shield_impact",
+			"enemy.special_air", "enemy.special_heavy", "enemy.special_mutant"]:
 		_check(game.get_node("/root/AudioDirector").play_cue(cue), "imported combat cue is loaded: %s" % cue)
 	game.set("player_index", 0)
 	game.call("_reset_run")
@@ -870,7 +874,10 @@ func _test_operator_skills(game: Control) -> void:
 	game.set("player_facing", Vector2.RIGHT)
 	var starting_point: Vector2 = game.get("player_pos")
 	var zombie := _spawn_test_zombie(game, starting_point + Vector2(38, 0), 600.0)
-	game.call("_use_operator_skill")
+	var skill_input := InputEventKey.new()
+	skill_input.physical_keycode = KEY_Q
+	skill_input.pressed = true
+	game.call("_input", skill_input)
 	for step in range(5):
 		game.call("_update_player", 0.03)
 	_check(zombie.hp == 555.0 and game.get("shield_targets").size() == 1,

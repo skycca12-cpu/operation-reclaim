@@ -325,6 +325,11 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if screen == "play" and awaiting_binding.is_empty() and event is InputEventKey and (event.physical_keycode == KEY_Q or event.keycode == KEY_Q):
+		get_viewport().set_input_as_handled()
+		if event.pressed and not event.echo:
+			_use_operator_skill()
+		return
 	if screen == "play" and awaiting_binding.is_empty() and event is InputEventKey:
 		var code: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
 		if BUILD_SHORTCUTS.has(code) or code in [KEY_U, KEY_F6]:
@@ -398,9 +403,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		if screen == "play":
 			if code == KEY_B:
 				_toggle_build_panel()
-				get_viewport().set_input_as_handled()
-			elif code == KEY_Q:
-				_use_operator_skill()
 				get_viewport().set_input_as_handled()
 			elif code == dash_key:
 				_try_dash()
@@ -1819,7 +1821,10 @@ func _update_combat_drone(delta: float) -> void:
 
 
 func _use_operator_skill() -> void:
-	if screen != "play" or treatment_remaining > 0.0 or run_seconds < skill_ready_at:
+	if screen != "play" or treatment_remaining > 0.0:
+		return
+	if run_seconds < skill_ready_at:
+		_show_toast("고유 스킬 재사용까지 %d초" % ceili(skill_ready_at - run_seconds))
 		return
 	var hero: String = Data.CHARACTERS[player_index].id
 	match hero:
@@ -1844,6 +1849,7 @@ func _use_operator_skill() -> void:
 			drone_timer = 0.0
 		"yujin":
 			if saw_heat <= 0.0:
+				_show_toast("전기톱에 제거할 열기가 없습니다.")
 				return
 			saw_heat = 0.0
 			saw_overheated = false
@@ -2114,6 +2120,7 @@ func _update_enemies(delta: float) -> void:
 		if crowd and not e.get("special", false) and not e.boss and not e.has("strike_remaining") and previous_pos.distance_squared_to(player_pos) > 120.0 * 120.0 and previous_pos.distance_squared_to(hq_pos) > 115.0 * 115.0 and int(e.spawn_id) % 4 != enemy_update_group:
 			e.pending_step = step
 			continue
+		e.moving = false
 		if e.has("pending_step"):
 			e.erase("pending_step")
 		if (e.has("burn") or e.has("poison")) and _tick_enemy_status(e, i):
@@ -2194,6 +2201,19 @@ func _update_special(enemy: Dictionary, index: int, delta: float) -> bool:
 	var goal := player_pos if point.distance_squared_to(player_pos) < point.distance_squared_to(hq) and treatment_remaining <= 0.0 else hq
 	var distance := point.distance_to(goal)
 	enemy.ability_cool = maxf(0.0, float(enemy.ability_cool) - delta)
+	if enemy.has("leap_target"):
+		var target: Vector2 = enemy.leap_target
+		var next: Vector2 = point.move_toward(target, delta * 420.0)
+		if next.is_equal_approx(target):
+			enemy.erase("leap_target")
+			if _blocking_structure(next, 21.0) >= 0:
+				enemy.pos = enemy.leap_origin
+				return true
+		enemy.row = ZombieVisual.facing_row(target - point)
+		enemy.moving = true
+		enemy.walk_distance += point.distance_to(next)
+		enemy.pos = next
+		return true
 	if kind == "S09":
 		enemy.hp = minf(float(enemy.max_hp), float(enemy.hp) + delta * float(enemy.max_hp) * 0.055)
 	if kind == "S10" and enemy.get("underground", false):
@@ -2230,13 +2250,17 @@ func _update_special(enemy: Dictionary, index: int, delta: float) -> bool:
 		if toxin_zones.size() < 24:
 			toxin_zones.append({"pos": goal, "life": 3.5, "tick": 0.0, "damage": float(enemy.attack) * 0.32, "slime": kind == "S19"})
 	elif kind == "S08":
+		_animate_zombie_attack(enemy, goal - point)
 		for nearby in enemies:
 			if nearby.pos.distance_squared_to(point) < 170.0 * 170.0:
 				nearby.rage_until = run_seconds + 4.0
 	elif kind == "S12" and distance < 160.0:
 		var landing := point.move_toward(goal, 112.0)
 		if jeju_map.walkable(landing, 24.0) and _blocking_structure(landing, 21.0) < 0:
-			enemy.pos = landing
+			enemy.leap_target = landing
+			enemy.leap_origin = point
+			if sound_on and point.distance_squared_to(player_pos) < 400.0 * 400.0:
+				AudioDirector.play_cue(_zombie_voice(enemy))
 	elif kind == "S16":
 		for structure in structures:
 			if _is_turret(structure.kind) and _entry_world_center(structure).distance_squared_to(point) < 175.0 * 175.0:
@@ -2437,6 +2461,12 @@ func _resolve_normal_strike(enemy: Dictionary, delta: float) -> void:
 
 
 func _zombie_voice(enemy: Dictionary) -> String:
+	if enemy.get("special", false) or enemy.get("boss", false):
+		if enemy.get("air", false):
+			return "enemy.special_air"
+		if enemy.kind in ["S02", "S03", "S04", "S08", "S11", "S20"] or enemy.boss:
+			return "enemy.special_heavy"
+		return "enemy.special_mutant"
 	var body := int(enemy.get("variant", 0))
 	if body == 7:
 		return "enemy.elderly"
@@ -2780,7 +2810,7 @@ func _remove_enemy(index: int) -> void:
 		if effects.size() < 80 and _zombie_on_screen(_world_to_screen(dead.pos)):
 			effects.append({"a": dead.pos, "b": dead.pos, "time": 0.42, "seconds": 0.42, "ice_shatter": true})
 	elif dead.has("variant") and not dead.get("underground", false) and _zombie_on_screen(_world_to_screen(dead.pos)) and zombie_corpses.size() < MAX_CORPSES:
-		var corpse := {"pos": dead.pos, "variant": dead.variant, "row": dead.row, "start": run_seconds, "kind": dead.kind, "scale": dead.art_scale}
+		var corpse := {"pos": dead.pos, "variant": dead.variant, "row": ZombieVisual.death_facing(dead, run_seconds), "start": run_seconds, "kind": dead.kind, "scale": dead.art_scale}
 		if dead.kind == "normal":
 			corpse.appearance = dead.appearance
 		zombie_corpses.append(corpse)
@@ -3148,11 +3178,15 @@ func _eligible_augments() -> Array[Dictionary]:
 	var equipment := {"기본 포탑": "basic", "중기관총": "heavy", "로켓": "rocket", "전기 포탑": "electric", "화염 포탑": "flame", "냉기": "freeze", "냉각 포탑": "freeze",
 		"대공": "aa", "의료": "clinic", "파견": "supply"}
 	for card in AugmentCatalog.cards():
+		if not AugmentCatalog.PLAYTEST_IDS.has(card.id):
+			continue
 		if card.key == "" or (card.hero != "" and card.hero != hero.id):
 			continue
 		if int(acquired_augments.get(card.id, {}).get("count", 0)) >= int(card.limit):
 			continue
 		if int(acquired_augments.get(card.requires, {}).get("count", 0)) < int(card.required_count):
+			continue
+		if card.key == "blast_radius" and not built.has("rocket") and _csv_bonus("kill_blast") <= 0.0:
 			continue
 		if int(hero.magazine) == 0 and card.family == "탄약":
 			continue
@@ -3758,7 +3792,7 @@ func _draw_world_depth(camera: Transform2D) -> void:
 	for item in layers:
 		match item[1]:
 			1: _draw_structure(item[2], camera)
-			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds, camera)
+			2: ZombieVisual.draw_dead(self, item[2], _world_to_screen(item[2].pos), run_seconds, camera, _view_zoom())
 			3: _draw_enemy(item[2], camera)
 			4:
 				# Draw at the camera focus point in screen pixels, then restore the world transform.
@@ -3903,7 +3937,7 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 		draw_arc(target, 19.0, 0.0, TAU, 20, Color(enemy.color, 0.86), 2.0)
 	if float(enemy.get("guard_until", 0.0)) > run_seconds:
 		draw_arc(p, 57.0, 0.0, TAU, 36, Color("#b5bbc5"), 3.0)
-	var radius := PlayerProjectiles.enemy_radius(enemy) * ZombieVisual.DRAW_SCALE
+	var radius := PlayerProjectiles.enemy_radius(enemy) * ZombieVisual.DRAW_SCALE / _view_zoom()
 	if enemy.has("variant"):
 		if not _zombie_on_screen(p, 240.0 if boss else 100.0): return
 		if enemy.get("underground", false):
@@ -3911,7 +3945,7 @@ func _draw_enemy(enemy: Dictionary, camera: Transform2D) -> void:
 				var progress := 1.0 - float(enemy.burrow_warning) / AMBUSH_WARNING
 				BurrowVisual.ground(self, p, AMBUSH_RADIUS, progress, 0.0, run_seconds)
 			return
-		var art_scale := ZombieVisual.DRAW_SCALE * float(enemy.get("art_scale", 1.0))
+		var art_scale := ZombieVisual.DRAW_SCALE * float(enemy.get("art_scale", 1.0)) / _view_zoom()
 		var lift := -30.0 if enemy.get("air", false) else 0.0
 		var transform := Transform2D(0.0, Vector2.ONE * art_scale, 0.0, p * (1.0 - art_scale) + Vector2(0, lift))
 		var visual_camera := camera * transform

@@ -2,6 +2,10 @@ extends RefCounted
 
 const PATH := "res://config/augments_500.json"
 const RARITIES := ["일반", "고급", "희귀", "영웅", "전설", "신화"]
+# First Jeju playtest rotation. The archive and existing acquisitions keep their original IDs.
+const PLAYTEST_IDS := ["A001", "A003", "A011", "A021", "A022", "A023", "A027", "A028",
+	"A029", "A030", "A035", "A047", "A053", "A063", "A073", "A077", "A078",
+	"A081", "A085", "A091", "A101"]
 static var _cards: Array[Dictionary] = []
 
 

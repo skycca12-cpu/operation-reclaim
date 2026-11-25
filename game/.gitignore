@@ -30,3 +30,5 @@ node_modules/
 !/assets/reclaim/zombies/jeju/**/*.png
 !/assets/reclaim/audio/burrow_rumble.ogg
 !/assets/reclaim/audio/burrow_break.ogg
+
+!/assets/reclaim/audio/zombie_special_*.ogg

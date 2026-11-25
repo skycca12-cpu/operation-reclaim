@@ -139,7 +139,7 @@ static func _draw_armored(canvas: CanvasItem, enemy: Dictionary, center: Vector2
 			frame = 3
 	elif enemy.moving:
 		const STEPS := [1, 0, 2, 0]
-		frame = STEPS[int(fposmod(float(enemy.walk_distance), 38.0) / 9.5)]
+		frame = STEPS[int(fposmod(float(enemy.walk_distance), 26.0) / 6.5)]
 	var tier := injury_tier(float(enemy.hp), float(enemy.max_hp))
 	_pose_frame(canvas, ARMORED_POSES, ARMORED_CELL, frame, tier * 4 + row, center + Vector2(0, 30), tint)
 
@@ -152,7 +152,7 @@ static func _draw_siege(canvas: CanvasItem, enemy: Dictionary, center: Vector2, 
 		if not enemy.has("strike_remaining") and now < float(enemy.attack_until) - 0.10:
 			frame = 2
 	elif enemy.moving:
-		frame = int(fposmod(float(enemy.walk_distance), 36.0) / 18.0)
+		frame = int(fposmod(float(enemy.walk_distance), 24.0) / 12.0)
 	var feet := center + Vector2(0, 30)
 	if flip:
 		canvas.draw_set_transform_matrix(camera * Transform2D(0.0, Vector2(-1, 1), 0.0, Vector2(feet.x * 2.0, 0.0)))
@@ -169,7 +169,7 @@ static func _pose_frame(canvas: CanvasItem, texture: Texture2D, cell: Vector2, c
 
 static func _draw_jeju(canvas: CanvasItem, enemy: Dictionary, center: Vector2, now: float, camera: Transform2D, tint: Color) -> void:
 	var texture: Texture2D = JEJU_MOTION[enemy.kind]
-	var phase := float(enemy.walk_distance) / 49.0
+	var phase := float(enemy.walk_distance) / 28.0
 	var continuous: bool = bool(enemy.get("air", false))
 	if continuous:
 		phase = now * 2.7
@@ -177,6 +177,11 @@ static func _draw_jeju(canvas: CanvasItem, enemy: Dictionary, center: Vector2, n
 	var gait := int(fposmod(phase, 1.0) * 8.0) if animation_active else 0
 	var facing_left := int(enemy.row) == 1
 	var bob := -absf(sin(phase * TAU)) * 0.85 if enemy.moving else 0.0
+	if enemy.has("leap_target"):
+		var origin: Vector2 = enemy.leap_origin
+		var landing: Vector2 = enemy.leap_target
+		var progress := origin.distance_to(enemy.pos) / maxf(1.0, origin.distance_to(landing))
+		bob -= sin(clampf(progress, 0.0, 1.0) * PI) * 24.0
 	var tilt := 0.0
 	var stretch := Vector2.ONE
 	if enemy.has("pattern_pos"):
@@ -264,22 +269,40 @@ static func _draw_attack(canvas: CanvasItem, enemy: Dictionary, center: Vector2,
 	NormalVisual.frame(canvas, int(enemy.get("appearance", enemy.variant)), column, center, tint)
 
 
-static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float, camera: Transform2D) -> void:
-	if JEJU_ENEMIES.has(corpse.get("kind", "")):
-		var texture: Texture2D = JEJU_ENEMIES[corpse.kind]
-		var age := clampf((now - float(corpse.start)) / DEATH_TIME, 0.0, 1.0)
-		var extent := texture.get_size() * (82.0 * DRAW_SCALE * float(corpse.scale) / texture.get_height())
-		extent.y *= 1.0 - age * 0.75
-		var feet := center + Vector2(0, 30.0 * DRAW_SCALE * float(corpse.scale))
-		canvas.draw_texture_rect(texture, Rect2(feet - Vector2(extent.x * 0.5, extent.y), extent), false, Color(1, 1, 1, 1.0 - age))
-		return
-	var shrink := Transform2D(0.0, Vector2.ONE * DRAW_SCALE, 0.0, center * (1.0 - DRAW_SCALE))
-	canvas.draw_set_transform_matrix(camera * shrink)
-	var frame := clampi(int((now - float(corpse.start)) * DEATH_FPS), 0, DEATH_FRAMES - 1)
-	if corpse.has("appearance"):
-		NormalVisual.frame(canvas, corpse.appearance, 6 + frame, center, Color.WHITE, corpse.row == 1)
+static func death_facing(enemy: Dictionary, now: float) -> int:
+	if now < float(enemy.get("attack_until", 0.0)) and enemy.has("attack_direction"):
+		return facing_row(enemy.attack_direction)
+	return int(enemy.row)
+
+
+static func draw_dead(canvas: CanvasItem, corpse: Dictionary, center: Vector2, now: float, camera: Transform2D, zoom: float) -> void:
+	var age := clampf((now - float(corpse.start)) / DEATH_TIME, 0.0, 1.0)
+	var row := int(corpse.row)
+	var fallen := smoothstep(0.0, 0.72, age)
+	var sideways := row == 1 or row == 2
+	var tilt := (-1.0 if row == 1 else 1.0) * fallen * 1.25 if sideways else 0.0
+	var squeeze := lerpf(1.0, 0.30 if sideways else 0.18, fallen)
+	var sprite_scale := DRAW_SCALE * float(corpse.scale) / zoom
+	var feet := center + Vector2(0.0, (30.0 if JEJU_ENEMIES.has(corpse.kind) else 41.0) * sprite_scale)
+	feet += [Vector2.DOWN, Vector2.LEFT, Vector2.RIGHT, Vector2.UP][row] * fallen * 6.0 / zoom
+	var tint := Color(1, 1, 1, 1.0 - age)
+	if JEJU_ENEMIES.has(corpse.kind):
+		var flip := -1.0 if row == 1 and corpse.kind != "S02" else 1.0
+		canvas.draw_set_transform_matrix(camera * Transform2D(tilt, Vector2(flip, squeeze) * sprite_scale, 0.0, feet))
+		if corpse.kind == "S02":
+			_pose_frame(canvas, ARMORED_POSES, ARMORED_CELL, 0, 8 + row, Vector2.ZERO, tint)
+		elif corpse.kind == "S11":
+			_pose_frame(canvas, JEJU_MOTION.S11, SIEGE_CELL, 0, 2, Vector2.ZERO, tint)
+		else:
+			var texture: Texture2D = JEJU_ENEMIES[corpse.kind]
+			var extent := texture.get_size() * (82.0 / texture.get_height())
+			canvas.draw_texture_rect(texture, Rect2(Vector2(-extent.x * 0.5, -extent.y), extent), false, tint)
 	else:
-		_draw_frame(canvas, corpse.variant, corpse.row, 22 + frame, center)
+		canvas.draw_set_transform_matrix(camera * Transform2D(tilt, Vector2(1.0, squeeze) * sprite_scale, 0.0, feet))
+		if corpse.has("appearance"):
+			NormalVisual.frame(canvas, corpse.appearance, 39 + row * 4, Vector2(0, -41), tint)
+		else:
+			_draw_frame(canvas, corpse.variant, row, 4, Vector2(0, -41), tint)
 	canvas.draw_set_transform_matrix(camera)
 
 
