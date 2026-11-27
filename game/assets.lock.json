@@ -1,0 +1,316 @@
+{
+  "version": 2,
+  "groups": {
+    "characters": {
+      "name": "서하린 캐릭터",
+      "order": 41
+    },
+    "fonts": {
+      "name": "Fonts",
+      "order": 20
+    },
+    "jeju-world": {
+      "name": "제주 도심 지형",
+      "order": 42
+    },
+    "reclaim": {
+      "name": "Reclaim",
+      "order": 60
+    },
+    "share": {
+      "name": "Share",
+      "order": 30
+    },
+    "template": {
+      "name": "Template",
+      "order": 0
+    },
+    "title-ui": {
+      "name": "로딩·메인 메뉴 UI",
+      "order": 43
+    },
+    "portraits": {
+      "name": "캐릭터 선택 입상",
+      "order": 44
+    },
+    "flow-audio": {
+      "name": "프롤로그 효과음(임시)",
+      "order": 45
+    }
+  },
+  "bundles": {},
+  "assets": {
+    "assets/fonts/NotoSansKR-subset.ttf": {
+      "path": "/manus-storage/game/sha256/8f131bc45e3e146f6bf1f181bad055ee326a5157fb55d92aedff74ff4c453da3.ttf",
+      "sha256": "sha256:8f131bc45e3e146f6bf1f181bad055ee326a5157fb55d92aedff74ff4c453da3",
+      "size": 4718408,
+      "assetType": "font",
+      "groupId": "fonts",
+      "used": true
+    },
+    "assets/reclaim/audio/hq_build.wav": {
+      "path": "/manus-storage/game/sha256/775113663edc8fe9b821fe0ec9a0a5ad57e2bcda667dab9cf6289052e60c4be9.wav",
+      "sha256": "sha256:775113663edc8fe9b821fe0ec9a0a5ad57e2bcda667dab9cf6289052e60c4be9",
+      "size": 48554,
+      "assetType": "audio",
+      "groupId": "flow-audio",
+      "used": true
+    },
+    "assets/reclaim/audio/land_thump.wav": {
+      "path": "/manus-storage/game/sha256/ba14cf853c17e1a29f39c5d9c96ba13c4f3bfae8a14d2d3a8b0d8693aa3f10fd.wav",
+      "sha256": "sha256:ba14cf853c17e1a29f39c5d9c96ba13c4f3bfae8a14d2d3a8b0d8693aa3f10fd",
+      "size": 30912,
+      "assetType": "audio",
+      "groupId": "flow-audio",
+      "used": true
+    },
+    "assets/reclaim/audio/radio.wav": {
+      "path": "/manus-storage/game/sha256/b9d37844351407f5ea2a538f5d8ed63605049473e19a4cd2f27d38340a16f9ee.wav",
+      "sha256": "sha256:b9d37844351407f5ea2a538f5d8ed63605049473e19a4cd2f27d38340a16f9ee",
+      "size": 19888,
+      "assetType": "audio",
+      "groupId": "flow-audio",
+      "used": true
+    },
+    "assets/reclaim/audio/rotor_loop.wav": {
+      "path": "/manus-storage/game/sha256/f8c3003e281c8313b5b3659404488d4430fee2cd91abba48b363861982190c23.wav",
+      "sha256": "sha256:f8c3003e281c8313b5b3659404488d4430fee2cd91abba48b363861982190c23",
+      "size": 88244,
+      "assetType": "audio",
+      "groupId": "flow-audio",
+      "used": true
+    },
+    "assets/reclaim/audio/ui_click.wav": {
+      "path": "/manus-storage/game/sha256/9b98ddcf37fb7b82923788ebcf4c29f65ffaf9d3b6f1372563ec0a4db1c8f399.wav",
+      "sha256": "sha256:9b98ddcf37fb7b82923788ebcf4c29f65ffaf9d3b6f1372563ec0a4db1c8f399",
+      "size": 4012,
+      "assetType": "audio",
+      "groupId": "flow-audio",
+      "used": true
+    },
+    "assets/reclaim/audio/ui_confirm.wav": {
+      "path": "/manus-storage/game/sha256/32104a99b928ef0a1d41caaf6d0b8c1b1521eda0d18d184ad9d50b99126a88a9.wav",
+      "sha256": "sha256:32104a99b928ef0a1d41caaf6d0b8c1b1521eda0d18d184ad9d50b99126a88a9",
+      "size": 15478,
+      "assetType": "audio",
+      "groupId": "flow-audio",
+      "used": true
+    },
+    "assets/reclaim/audio/wind.wav": {
+      "path": "/manus-storage/game/sha256/87e50fa913650fc8ce4db3d5840fe8556cb304913f076bc522b8bf8cdf2c9804.wav",
+      "sha256": "sha256:87e50fa913650fc8ce4db3d5840fe8556cb304913f076bc522b8bf8cdf2c9804",
+      "size": 132344,
+      "assetType": "audio",
+      "groupId": "flow-audio",
+      "used": true
+    },
+    "assets/reclaim/characters/harin_sheet.png": {
+      "path": "assets/reclaim/characters/harin_sheet.png",
+      "sha256": "sha256:37349ff750eb002c5fe8ff644bfdc5aa09846487399a99e7d61ce1c0efa78c9c",
+      "size": 555031,
+      "assetType": "image",
+      "groupId": "characters",
+      "used": true
+    },
+    "assets/reclaim/portraits/harin_full.png": {
+      "path": "/manus-storage/game/sha256/4a7ccfe093de1d15a1965510735957fa1a10932fbd0574073ee3357860343c26.png",
+      "sha256": "sha256:4a7ccfe093de1d15a1965510735957fa1a10932fbd0574073ee3357860343c26",
+      "size": 362614,
+      "assetType": "image",
+      "groupId": "portraits",
+      "used": true
+    },
+    "assets/reclaim/portraits/si_full.png": {
+      "path": "/manus-storage/game/sha256/c3c3a5c563168fec30af36bc436c50b686c2171f3b88a3ae8abeb2bbb786f262.png",
+      "sha256": "sha256:c3c3a5c563168fec30af36bc436c50b686c2171f3b88a3ae8abeb2bbb786f262",
+      "size": 745789,
+      "assetType": "image",
+      "groupId": "portraits",
+      "used": true
+    },
+    "assets/reclaim/portraits/tae_full.png": {
+      "path": "/manus-storage/game/sha256/c7dfff9fc00867c640096f7d57cab282ee3e867089ad9dcc3d9165f34db69a9f.png",
+      "sha256": "sha256:c7dfff9fc00867c640096f7d57cab282ee3e867089ad9dcc3d9165f34db69a9f",
+      "size": 552980,
+      "assetType": "image",
+      "groupId": "portraits",
+      "used": true
+    },
+    "assets/reclaim/portraits/yujin_full.png": {
+      "path": "/manus-storage/game/sha256/adec33f5223ca27d2dcf578e63b0e8c0350eb4d9b45b292acc3ed0f18a85b9e2.png",
+      "sha256": "sha256:adec33f5223ca27d2dcf578e63b0e8c0350eb4d9b45b292acc3ed0f18a85b9e2",
+      "size": 380151,
+      "assetType": "image",
+      "groupId": "portraits",
+      "used": true
+    },
+    "assets/reclaim/ui/loading_art.png": {
+      "path": "/manus-storage/game/sha256/18238bae7f4654a7693307253d557044c1b7cee771b1de6e18989d24210823ce.png",
+      "sha256": "sha256:18238bae7f4654a7693307253d557044c1b7cee771b1de6e18989d24210823ce",
+      "size": 2833789,
+      "assetType": "image",
+      "groupId": "title-ui",
+      "used": true
+    },
+    "assets/reclaim/ui/main_menu_art.png": {
+      "path": "/manus-storage/game/sha256/0f824e071f1406ba79efc09651a7c363c7aa54cf401bde2d821235ba18497c44.png",
+      "sha256": "sha256:0f824e071f1406ba79efc09651a7c363c7aa54cf401bde2d821235ba18497c44",
+      "size": 2707806,
+      "assetType": "image",
+      "groupId": "title-ui",
+      "used": true
+    },
+    "assets/reclaim/world/jeju_ground_tile.png": {
+      "path": "/manus-storage/game/sha256/39e5d9f13decd1b41c1e1617b8e27deee6329479dc35be73564de8ea527378e7.png",
+      "sha256": "sha256:39e5d9f13decd1b41c1e1617b8e27deee6329479dc35be73564de8ea527378e7",
+      "size": 4909277,
+      "assetType": "image",
+      "groupId": "jeju-world",
+      "used": true
+    },
+    "assets/reclaim/world/jeju_props_atlas.png": {
+      "path": "/manus-storage/game/sha256/60ae051320c3a547e653c0dc7298ef715f1848df423dc5aea6457f7dc373c687.png",
+      "sha256": "sha256:60ae051320c3a547e653c0dc7298ef715f1848df423dc5aea6457f7dc373c687",
+      "size": 3706247,
+      "assetType": "image",
+      "groupId": "jeju-world",
+      "used": true
+    },
+    "assets/share/favicon.png": {
+      "path": "/manus-storage/game/sha256/afa83e9080adfba53292f8cd2e15813cb3a2fde34f743ce52e2c26c6d1e03359.png",
+      "sha256": "sha256:afa83e9080adfba53292f8cd2e15813cb3a2fde34f743ce52e2c26c6d1e03359",
+      "size": 1277,
+      "assetType": "image",
+      "groupId": "share",
+      "used": true
+    },
+    "assets/share/og.png": {
+      "path": "/manus-storage/game/sha256/58f32fe546d9e8984957d64551121187e45f4e86b36d718cab962f09cebe3b35.png",
+      "sha256": "sha256:58f32fe546d9e8984957d64551121187e45f4e86b36d718cab962f09cebe3b35",
+      "size": 4230518,
+      "assetType": "image",
+      "groupId": "share",
+      "used": true
+    },
+    "assets/template/characters/runner.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/c88485773d6ff9361e036f37d8ac76fb77b8c3f7c041c3f52c8dd222adc8cc21/assets/characters/runner.png",
+      "sha256": "sha256:c88485773d6ff9361e036f37d8ac76fb77b8c3f7c041c3f52c8dd222adc8cc21",
+      "size": 68885,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/characters/sentinel.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/0d9fb751bca5507ba14f7090573e6605a94753390a9e7c53bf2f590f0a24918d/assets/characters/sentinel.png",
+      "sha256": "sha256:0d9fb751bca5507ba14f7090573e6605a94753390a9e7c53bf2f590f0a24918d",
+      "size": 64998,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/environment/backdrop.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/ec4ab7867e60fb483dd438459f587b478aac4c1e71ec4fe509ce74a18de34216/assets/environment/backdrop.png",
+      "sha256": "sha256:ec4ab7867e60fb483dd438459f587b478aac4c1e71ec4fe509ce74a18de34216",
+      "size": 971282,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/environment/foreground.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/4b6916024c69961fbfa7cdc929c68f547fea4561e61ebdb3405b3aba0efbd94d/assets/environment/foreground.png",
+      "sha256": "sha256:4b6916024c69961fbfa7cdc929c68f547fea4561e61ebdb3405b3aba0efbd94d",
+      "size": 58603,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/fonts/Figtree-VF.subset.woff2": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/25/game-template/game-generic/2026.09.25-typography-v1/b3976c5969c8b1afd81dc3e314b61d8ffe3f3f58cf40906443105d330e6e0bdf/assets/template/fonts/Figtree-VF.subset.woff2",
+      "sha256": "sha256:b3976c5969c8b1afd81dc3e314b61d8ffe3f3f58cf40906443105d330e6e0bdf",
+      "size": 23660,
+      "assetType": "font",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/fonts/NotoSansSC-VF.subset.woff2": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/25/game-template/game-generic/2026.09.25-typography-v1/38f4c5f927f746b3dfa4c3a5d7edf0b7a3e828e27438418fa54f9e1565289412/assets/template/fonts/NotoSansSC-VF.subset.woff2",
+      "sha256": "sha256:38f4c5f927f746b3dfa4c3a5d7edf0b7a3e828e27438418fa54f9e1565289412",
+      "size": 1869368,
+      "assetType": "font",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/fonts/display/Sora-VF.subset.woff2": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/25/game-template/game-generic/2026.09.25-typography-v1/438fbf4582548e76b266a738f2c11bcbd5137978f2d2e2f3aaabd49df69186f2/assets/template/fonts/display/Sora-VF.subset.woff2",
+      "sha256": "sha256:438fbf4582548e76b266a738f2c11bcbd5137978f2d2e2f3aaabd49df69186f2",
+      "size": 41696,
+      "assetType": "font",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/powerups/energy.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/ffd7906f240f928e785d7c19a9e7a7b5dfab0d7483be5205dda3e4ba17ebe06a/assets/powerups/energy.png",
+      "sha256": "sha256:ffd7906f240f928e785d7c19a9e7a7b5dfab0d7483be5205dda3e4ba17ebe06a",
+      "size": 50950,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/powerups/magnet.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/6e7354aa6510a462717218b09b9d784bb161b87878bff62ef4f2a9d03c053de7/assets/powerups/magnet.png",
+      "sha256": "sha256:6e7354aa6510a462717218b09b9d784bb161b87878bff62ef4f2a9d03c053de7",
+      "size": 53724,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/powerups/overdrive.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/6a48a85886c0551c1af0df576b0225f0ec3ae86b326fd84fc614083fbfe2908b/assets/powerups/overdrive.png",
+      "sha256": "sha256:6a48a85886c0551c1af0df576b0225f0ec3ae86b326fd84fc614083fbfe2908b",
+      "size": 37238,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/powerups/shield.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/8cebf0cf730ca35c8c8697192ef78121c926442328a0725e0bd3e31701d64f13/assets/powerups/shield.png",
+      "sha256": "sha256:8cebf0cf730ca35c8c8697192ef78121c926442328a0725e0bd3e31701d64f13",
+      "size": 39659,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/powerups/slow_field.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/96874c000866b2e7503b40da73888afb918ae36e462f51488415157da52a8637/assets/powerups/slow_field.png",
+      "sha256": "sha256:96874c000866b2e7503b40da73888afb918ae36e462f51488415157da52a8637",
+      "size": 49145,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/ui/loading-background.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/25/game-template/game-generic/2026.09.25-typography-v1/16dde3061f4e60802f8f0d1a6b875e72b6add05192237b03fef1fd313968a13a/assets/template/ui/loading-background.png",
+      "sha256": "sha256:16dde3061f4e60802f8f0d1a6b875e72b6add05192237b03fef1fd313968a13a",
+      "size": 473356,
+      "assetType": "image",
+      "groupId": "template",
+      "used": false
+    },
+    "assets/template/ui/pause_glass.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/c88a4725838df85e72c7270865848f275b62c525c5679a2a8b7ecefb1af82d4b/assets/ui/pause_glass.png",
+      "sha256": "sha256:c88a4725838df85e72c7270865848f275b62c525c5679a2a8b7ecefb1af82d4b",
+      "size": 115691,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    },
+    "assets/template/ui/title_glass.png": {
+      "path": "https://d1oupeiobkpcny.cloudfront.net/assets/dashboard/materials/2026/09/06/game-template/game-generic/2026.09.07-minimalist-v1/8860db07768f093d4effea10b51431f76a1552d4bc7fd4e57757f189c51f0429/assets/ui/title_glass.png",
+      "sha256": "sha256:8860db07768f093d4effea10b51431f76a1552d4bc7fd4e57757f189c51f0429",
+      "size": 155592,
+      "assetType": "image",
+      "groupId": "template",
+      "used": true
+    }
+  }
+}

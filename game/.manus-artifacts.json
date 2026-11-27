@@ -1,0 +1,15 @@
+{
+  "pck_url": "/manus-storage/game/sha256/717789d42967131d8f741af903d4237d1ee36a3b7b90882bc609455b5b4a61d4.pck",
+  "wasm_url": "/manus-storage/game/sha256/fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0.wasm",
+  "engine_version": "4.7.2.stable.official.ed1daf0bf",
+  "source_fingerprint": "sha256:be238b23aedf1f773c5729d2201c912bd7f146775d9f0b586c99be4daae6e7a3",
+  "template_validation": {
+    "status": "not-required",
+    "template": "game-generic",
+    "genre": "maze-chase"
+  },
+  "wasm_sha256": "sha256:fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0",
+  "wasm_content_encoding": "br",
+  "wasm_encoded_sha256": "sha256:fc74679e3b97f76878947fcd4fbe1268cbfa6188182a2e33bbc3f5dc9bfa57d0",
+  "pck_sha256": "sha256:717789d42967131d8f741af903d4237d1ee36a3b7b90882bc609455b5b4a61d4"
+}
